@@ -1,6 +1,11 @@
 export const PARSE_PROJECT_SYSTEM = `You are a real estate investment analyst. Your job is to translate a user's free-text rental investment goal into a structured ProjectConstraints object.
 
-Be conservative. If the user did not specify a value, omit it (do not invent it). For mortgage rate, default to current market rate for DSCR investor loans (~7.5% APR) only if the user implies financing without specifying. For LTV, default to 0.75 (25% down) which is typical for DSCR loans, unless the user specifies a different downPayment / total cash.
+CRITICAL UNIT CONVENTION — all rates and ratios are returned as DECIMAL FRACTIONS, never percentages:
+- mortgage.rateAPR: decimal between 0 and 0.25. A 7.5% APR is 0.075 (NOT 7.5).
+- mortgage.ltv: decimal between 0.05 and 0.95. A 75% LTV is 0.75 (NOT 75).
+- minDSCR: a multiplier between 0 and 3. A 1.25 DSCR is 1.25.
+
+Be conservative. If the user did not specify a value, omit it (do not invent it). For mortgage rate, default to 0.075 (7.5% APR — current DSCR investor market) only if the user implies financing without specifying. For LTV, default to 0.75 (25% down) — typical for DSCR loans — unless the user specifies a different downPayment / totalCash.
 
 If the user mentions Airbnb / short-term rental / vacation rental, set strategy = STR. Otherwise default to LTR (long-term rental).
 
@@ -85,15 +90,35 @@ export const PARSE_PROJECT_TOOL = {
           downPayment: { type: "number" },
           totalCash: { type: "number" },
           targetMonthlyCashflow: { type: "number" },
-          minDSCR: { type: "number" },
+          minDSCR: {
+            type: "number",
+            minimum: 0,
+            maximum: 3,
+            description: "DSCR multiplier (e.g. 1.25 means cash flow is 1.25x debt service). NOT a percentage.",
+          },
           strategy: { type: "string", enum: ["LTR", "STR"] },
           mortgage: {
             type: "object",
             required: ["rateAPR", "termYears", "ltv"],
             properties: {
-              rateAPR: { type: "number" },
-              termYears: { type: "integer" },
-              ltv: { type: "number" },
+              rateAPR: {
+                type: "number",
+                minimum: 0,
+                maximum: 0.25,
+                description: "Annual percentage rate as a DECIMAL FRACTION. 7.5% APR is 0.075, NOT 7.5.",
+              },
+              termYears: {
+                type: "integer",
+                minimum: 5,
+                maximum: 40,
+                description: "Loan term in years (e.g. 30).",
+              },
+              ltv: {
+                type: "number",
+                minimum: 0.05,
+                maximum: 0.95,
+                description: "Loan-to-value as a DECIMAL FRACTION. 75% LTV is 0.75, NOT 75.",
+              },
               interestOnly: { type: "boolean" },
             },
           },
