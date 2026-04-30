@@ -25,7 +25,7 @@ export class ClaudeProvider implements LLMProvider {
       apiKey: opts.apiKey,
       baseURL: opts.baseURL,
     });
-    this.model = opts.model ?? "claude-3-5-sonnet-20241022";
+    this.model = opts.model ?? "claude-sonnet-4-6";
     this.maxTokens = opts.maxTokens ?? 2048;
   }
 

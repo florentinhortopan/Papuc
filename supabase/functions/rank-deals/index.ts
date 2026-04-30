@@ -105,7 +105,7 @@ Deno.serve(async (req: Request) => {
     JSON.stringify(deals, null, 2),
   ].join("\n");
 
-  const model = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-3-5-sonnet-20241022";
+  const model = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-sonnet-4-6";
   let parsed: ToolOutput;
   try {
     const res = await anthropicMessages({

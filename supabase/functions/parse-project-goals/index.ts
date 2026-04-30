@@ -36,7 +36,7 @@ Deno.serve(async (req: Request) => {
   const prompt = (body.prompt ?? "").trim();
   if (!prompt) return jsonResponse({ error: "prompt is required" }, 400);
 
-  const model = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-3-5-sonnet-20241022";
+  const model = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-sonnet-4-6";
 
   try {
     const res = await anthropicMessages({
