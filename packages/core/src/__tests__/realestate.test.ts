@@ -80,7 +80,7 @@ describe("RealEstateAPIClient", () => {
       expect(body.state).toBe("FL");
       expect(body.value_min).toBe(150000);
       expect(body.value_max).toBe(300000);
-      expect(body.bedrooms_min).toBe(3);
+      expect(body.beds_min).toBe(3);
       expect(body.mls_active).toBe(true);
       return new Response(
         JSON.stringify({
@@ -119,7 +119,7 @@ describe("RealEstateAPIClient", () => {
       state: "FL",
       value_min: 150000,
       value_max: 300000,
-      bedrooms_min: 3,
+      beds_min: 3,
       mls_active: true,
     });
 

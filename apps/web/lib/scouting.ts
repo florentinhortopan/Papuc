@@ -233,10 +233,8 @@ function buildPropertyFilters(
     filters.value_min = constraints.priceMin;
   if (constraints.priceMax !== undefined)
     filters.value_max = constraints.priceMax;
-  if (constraints.bedsMin !== undefined)
-    filters.bedrooms_min = constraints.bedsMin;
-  if (constraints.bathsMin !== undefined)
-    filters.bathrooms_min = constraints.bathsMin;
+  if (constraints.bedsMin !== undefined) filters.beds_min = constraints.bedsMin;
+  if (constraints.bathsMin !== undefined) filters.baths_min = constraints.bathsMin;
   if (constraints.sqftMin !== undefined)
     filters.building_size_min = constraints.sqftMin;
   if (

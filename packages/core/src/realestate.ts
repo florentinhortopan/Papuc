@@ -41,8 +41,8 @@ export interface PropertySearchFilters {
   /** AVM lower bound (estimatedValue), used when MLS price filters are gated. */
   value_min?: number;
   value_max?: number;
-  bedrooms_min?: number;
-  bathrooms_min?: number;
+  beds_min?: number;
+  baths_min?: number;
   building_size_min?: number;
   year_built_min?: number;
   property_type?: string[];
@@ -164,10 +164,8 @@ export class RealEstateAPIClient {
     if (filters.polygon) body.polygon = filters.polygon;
     if (filters.value_min !== undefined) body.value_min = filters.value_min;
     if (filters.value_max !== undefined) body.value_max = filters.value_max;
-    if (filters.bedrooms_min !== undefined)
-      body.bedrooms_min = filters.bedrooms_min;
-    if (filters.bathrooms_min !== undefined)
-      body.bathrooms_min = filters.bathrooms_min;
+    if (filters.beds_min !== undefined) body.beds_min = filters.beds_min;
+    if (filters.baths_min !== undefined) body.baths_min = filters.baths_min;
     if (filters.building_size_min !== undefined)
       body.building_size_min = filters.building_size_min;
     if (filters.year_built_min !== undefined)
