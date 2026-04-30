@@ -43,9 +43,14 @@ export function DealCard({ deal }: { deal: DealWithScore }) {
           <p className="text-text font-semibold truncate flex-1">
             {deal.address ?? "Address pending"}
           </p>
-          <p className="text-text font-semibold">
-            {formatMoney(deal.price ?? 0)}
-          </p>
+          <div className="text-right">
+            <p className="text-text font-semibold">
+              {formatMoney(deal.price ?? deal.est_value)}
+            </p>
+            <p className="text-textMuted text-[10px] uppercase tracking-wide">
+              {deal.price ? "List price" : "Est. value"}
+            </p>
+          </div>
         </div>
 
         <p className="text-textMuted text-xs mb-3">

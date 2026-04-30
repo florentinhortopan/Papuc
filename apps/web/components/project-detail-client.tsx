@@ -170,6 +170,17 @@ export function ProjectDetailClient({
       <h2 className="text-lg font-semibold mt-8 mb-3">
         Deals {deals.length ? `(${deals.length})` : ""}
       </h2>
+      {deals.length > 0 && deals.every((d) => !d.price) ? (
+        <div className="bg-surface border border-border rounded-xl p-3 mb-3">
+          <p className="text-textMuted text-xs leading-5">
+            <span className="text-text font-semibold">Off-market data only.</span>{" "}
+            None of these candidates are currently listed on MLS — you're seeing
+            property records ranked by AVM-based DSCR fit. Active for-sale data
+            requires upgrading RealEstateAPI from pay-as-you-go to Starter, or
+            switching providers.
+          </p>
+        </div>
+      ) : null}
       {deals.length === 0 ? (
         <div className="bg-surface border border-border rounded-2xl p-6 text-center">
           <p className="text-textMuted text-sm">

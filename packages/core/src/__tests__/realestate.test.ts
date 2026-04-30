@@ -129,14 +129,16 @@ describe("RealEstateAPIClient", () => {
     const listed = res.data[0]!;
     expect(listed.id).toBe("12345");
     expect(listed.address).toBe("123 Palm St");
-    expect(listed.price).toBe(285000); // prefers MLS listing price when present
+    expect(listed.price).toBe(285000); // MLS listing price
+    expect(listed.estimatedValue).toBe(275000); // AVM kept separately
     expect(listed.beds).toBe(3);
     expect(listed.daysOnMarket).toBe(12);
     expect(listed.primaryListingImageUrl).toBe("https://cdn/p123.jpg");
 
     const offMarket = res.data[1]!;
     expect(offMarket.id).toBe("67890");
-    expect(offMarket.price).toBe(220000); // falls back to AVM when no MLS price
+    expect(offMarket.price).toBeUndefined(); // not currently listed
+    expect(offMarket.estimatedValue).toBe(220000); // AVM available for proforma
   });
 
   it("normalizes property detail with HUD FMR and suggested rent", async () => {

@@ -194,8 +194,10 @@ export function DealDetailClient({
   }
 
   async function shareDeal() {
+    const priceLabel = deal.price ? "list" : "est. value";
+    const priceValue = formatMoney(deal.price ?? deal.est_value);
     const lines = [
-      `${deal.address ?? "Property"} · ${formatMoney(deal.price ?? 0)}`,
+      `${deal.address ?? "Property"} · ${priceLabel} ${priceValue}`,
       `${deal.beds ?? "?"} bd · ${deal.baths ?? "?"} ba · ${
         deal.sqft ? `${Math.round(Number(deal.sqft))} sqft` : "size unknown"
       }`,
@@ -253,7 +255,10 @@ export function DealDetailClient({
               .join(" · ")}
           </p>
           <div className="flex flex-wrap gap-2 mt-3">
-            <Badge variant="primary">{formatMoney(deal.price ?? 0)}</Badge>
+            <Badge variant="primary">
+              {deal.price ? "List" : "Est. value"}{" "}
+              {formatMoney(deal.price ?? deal.est_value)}
+            </Badge>
             <DscrBadge dscr={result.dscr} />
             <Badge
               variant={result.annualPreTaxProfit >= 0 ? "success" : "danger"}

@@ -85,18 +85,23 @@ export async function scoutProjectInternal(
     const targetCashflow = constraints.targetMonthlyCashflow ?? 0;
 
     for (const { listing, detail } of hydrated) {
-      if (!listing.id || !listing.price) continue;
+      if (!listing.id) continue;
+      const mlsPrice = listing.price;
+      const avm = listing.estimatedValue ?? detail?.estimatedValue;
+      const effectivePrice = mlsPrice ?? avm;
+      if (!effectivePrice) continue;
 
-      const price = listing.price;
       const effectiveDown =
-        downPayment > 0 ? downPayment : price * (1 - constraints.mortgage.ltv);
+        downPayment > 0
+          ? downPayment
+          : effectivePrice * (1 - constraints.mortgage.ltv);
       const monthlyRent =
         detail?.suggestedRent ??
         pickHudFmrRent(detail?.hudFairMarketRent, listing.beds ?? 3) ??
-        estimateRentFromPrice(price);
+        estimateRentFromPrice(effectivePrice);
 
       const proforma = computeProForma({
-        price,
+        price: effectivePrice,
         downPayment: effectiveDown,
         rateAPR: constraints.mortgage.rateAPR,
         termYears: constraints.mortgage.termYears,
@@ -138,14 +143,14 @@ export async function scoutProjectInternal(
             zip: listing.zip ?? null,
             lat: detail?.lat ?? null,
             lng: detail?.lng ?? null,
-            price: listing.price ?? null,
+            price: mlsPrice ?? null,
             beds: listing.beds ?? detail?.beds ?? null,
             baths: listing.baths ?? detail?.baths ?? null,
             sqft: listing.sqft ?? detail?.sqft ?? null,
             photos,
             primary_image_url: listing.primaryListingImageUrl ?? null,
             mls_data: listing.raw ?? null,
-            est_value: detail?.estimatedValue ?? null,
+            est_value: avm ?? null,
             est_rent: monthlyRent,
             hud_fmr: detail?.hudFairMarketRent ?? null,
             last_refreshed_at: new Date().toISOString(),

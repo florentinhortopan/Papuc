@@ -62,7 +62,14 @@ export interface MLSListingSummary {
   city?: string;
   state?: string;
   zip?: string;
+  /**
+   * Active MLS listing price. Only set when the property is currently for
+   * sale. For off-market candidates from /PropertySearch this is undefined;
+   * use `estimatedValue` (AVM) as a proxy for acquisition price.
+   */
   price?: number;
+  /** Lender-grade AVM (RealEstateAPI estimated market value). */
+  estimatedValue?: number;
   beds?: number;
   baths?: number;
   sqft?: number;
@@ -280,14 +287,14 @@ function normalizeListing(item: any): MLSListingSummary {
 
 /**
  * Normalize a /PropertySearch row into the shared MLSListingSummary shape so
- * the scout pipeline can stay endpoint-agnostic. Price prefers MLS listing
- * price, falls back to AVM (estimatedValue) for off-market candidates.
+ * the scout pipeline can stay endpoint-agnostic. Keeps `price` (MLS listing
+ * price) and `estimatedValue` (AVM) strictly separate so callers can tell
+ * active listings apart from off-market candidates.
  */
 function normalizePropertyRecord(item: any): MLSListingSummary {
   const addr = item.address ?? {};
   const mlsPrice = toFiniteNumber(item.mlsListingPrice);
   const avm = toFiniteNumber(item.estimatedValue);
-  const price = mlsPrice && mlsPrice > 0 ? mlsPrice : avm;
   const imageUrl: string | undefined = item.imageUrl;
   return {
     id: String(item.id ?? item.propertyId ?? ""),
@@ -295,7 +302,8 @@ function normalizePropertyRecord(item: any): MLSListingSummary {
     city: addr.city,
     state: addr.state,
     zip: addr.zip,
-    price,
+    price: mlsPrice && mlsPrice > 0 ? mlsPrice : undefined,
+    estimatedValue: avm,
     beds: toFiniteNumber(item.bedrooms),
     baths: toFiniteNumber(item.bathrooms),
     sqft: toFiniteNumber(item.squareFeet),

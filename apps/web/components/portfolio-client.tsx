@@ -100,7 +100,10 @@ export function PortfolioClient({
                   </p>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-text text-sm font-semibold">
-                      {formatMoney(deal.price ?? 0)}
+                      {formatMoney(deal.price ?? deal.est_value)}
+                    </span>
+                    <span className="text-textMuted text-[10px] uppercase tracking-wide">
+                      {deal.price ? "list" : "est. value"}
                     </span>
                     <DscrBadge dscr={deal.score?.dscr ?? null} />
                   </div>
