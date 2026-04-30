@@ -72,6 +72,73 @@ describe("RealEstateAPIClient", () => {
     await expect(client.mlsSearch({})).rejects.toBeInstanceOf(RealEstateAPIError);
   });
 
+  it("calls PropertySearch with mapped filters and normalizes property records", async () => {
+    const fetchFn = mockFetch(async (url, init) => {
+      expect(url).toContain("/PropertySearch");
+      const body = JSON.parse((init.body as string) ?? "{}");
+      expect(body.city).toBe("Tampa");
+      expect(body.state).toBe("FL");
+      expect(body.value_min).toBe(150000);
+      expect(body.value_max).toBe(300000);
+      expect(body.bedrooms_min).toBe(3);
+      expect(body.mls_active).toBe(true);
+      return new Response(
+        JSON.stringify({
+          recordCount: 2,
+          resultCount: 2,
+          data: [
+            {
+              id: 12345,
+              address: { address: "123 Palm St", city: "Tampa", state: "FL", zip: "33602" },
+              bedrooms: 3,
+              bathrooms: 2,
+              squareFeet: 1500,
+              estimatedValue: 275000,
+              mlsListingPrice: 285000,
+              mlsDaysOnMarket: 12,
+              imageUrl: "https://cdn/p123.jpg",
+            },
+            {
+              id: 67890,
+              address: { address: "456 Bay Dr", city: "Tampa", state: "FL", zip: "33606" },
+              bedrooms: 4,
+              bathrooms: 3,
+              squareFeet: 2100,
+              estimatedValue: 220000,
+              mlsListingPrice: 0,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    const client = new RealEstateAPIClient({ apiKey: "k", fetchFn });
+    const res = await client.propertySearch({
+      city: "Tampa",
+      state: "FL",
+      value_min: 150000,
+      value_max: 300000,
+      bedrooms_min: 3,
+      mls_active: true,
+    });
+
+    expect(res.total).toBe(2);
+    expect(res.data).toHaveLength(2);
+
+    const listed = res.data[0]!;
+    expect(listed.id).toBe("12345");
+    expect(listed.address).toBe("123 Palm St");
+    expect(listed.price).toBe(285000); // prefers MLS listing price when present
+    expect(listed.beds).toBe(3);
+    expect(listed.daysOnMarket).toBe(12);
+    expect(listed.primaryListingImageUrl).toBe("https://cdn/p123.jpg");
+
+    const offMarket = res.data[1]!;
+    expect(offMarket.id).toBe("67890");
+    expect(offMarket.price).toBe(220000); // falls back to AVM when no MLS price
+  });
+
   it("normalizes property detail with HUD FMR and suggested rent", async () => {
     const fetchFn = mockFetch(async () => {
       return new Response(

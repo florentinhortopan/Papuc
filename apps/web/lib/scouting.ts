@@ -5,6 +5,7 @@ import {
   type MLSListingSummary,
   type ProjectConstraints,
   type PropertyDetail,
+  type PropertySearchFilters,
 } from "@papuc/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -19,9 +20,17 @@ export interface ScoutResult {
 }
 
 /**
- * Map a project's constraints to RealEstateAPI MLS Search, hydrate each candidate,
- * compute pro-forma, persist deals + deal_scores. Service-role client required so
- * background runs (cron) bypass RLS while still scoping by `owner_id`.
+ * Map a project's constraints to RealEstateAPI Property Search, hydrate each
+ * candidate, compute pro-forma, persist deals + deal_scores. Service-role
+ * client required so background runs (cron) bypass RLS while still scoping
+ * by `owner_id`.
+ *
+ * NOTE: This now uses /PropertySearch instead of /MLSSearch because the latter
+ * is gated to Starter+ plans. PropertySearch is wallet-eligible on PAYG and
+ * returns property records with optional embedded MLS fields. Price filtering
+ * uses AVM (`value_min/max`); the scout will surface both currently-listed
+ * and off-market candidates. We try `mls_active: true` first to prefer active
+ * listings, and fall back to no MLS filter if PAYG rejects it.
  */
 export async function scoutProjectInternal(
   sb: SupabaseClient,
@@ -65,8 +74,8 @@ export async function scoutProjectInternal(
     const market = constraints.markets[0];
     if (!market) throw new Error("project has no market");
 
-    const filters = buildFilters(constraints, market, options.size ?? 25);
-    const search = await rea.mlsSearch(filters);
+    const baseFilters = buildPropertyFilters(constraints, market, options.size ?? 25);
+    const search = await searchWithFallback(rea, baseFilters);
     const candidates = search.data;
     candidatesSeen = candidates.length;
 
@@ -204,15 +213,12 @@ export async function scoutProjectInternal(
   }
 }
 
-function buildFilters(
+function buildPropertyFilters(
   constraints: ProjectConstraints,
   market: Market,
   size: number,
-) {
-  const filters: Parameters<RealEstateAPIClient["mlsSearch"]>[0] = {
-    size,
-    status: "active",
-  };
+): PropertySearchFilters {
+  const filters: PropertySearchFilters = { size };
   if (market.kind === "city") {
     filters.city = market.city;
     filters.state = market.state;
@@ -224,13 +230,15 @@ function buildFilters(
     filters.polygon = market.polygon;
   }
   if (constraints.priceMin !== undefined)
-    filters.mls_listing_price_min = constraints.priceMin;
+    filters.value_min = constraints.priceMin;
   if (constraints.priceMax !== undefined)
-    filters.mls_listing_price_max = constraints.priceMax;
-  if (constraints.bedsMin !== undefined) filters.beds_min = constraints.bedsMin;
+    filters.value_max = constraints.priceMax;
+  if (constraints.bedsMin !== undefined)
+    filters.bedrooms_min = constraints.bedsMin;
   if (constraints.bathsMin !== undefined)
-    filters.baths_min = constraints.bathsMin;
-  if (constraints.sqftMin !== undefined) filters.sqft_min = constraints.sqftMin;
+    filters.bathrooms_min = constraints.bathsMin;
+  if (constraints.sqftMin !== undefined)
+    filters.building_size_min = constraints.sqftMin;
   if (
     constraints.propertyTypes.length &&
     !constraints.propertyTypes.includes("any")
@@ -238,6 +246,35 @@ function buildFilters(
     filters.property_type = constraints.propertyTypes.map(mapPropertyType);
   }
   return filters;
+}
+
+/**
+ * Try PropertySearch with `mls_active: true` first to prefer currently-listed
+ * deals. If RealEstateAPI rejects that (PAYG plans don't have MLS data
+ * access), retry without the MLS filter — the scout then ranges over
+ * off-market property records too.
+ */
+async function searchWithFallback(
+  rea: RealEstateAPIClient,
+  baseFilters: PropertySearchFilters,
+) {
+  try {
+    return await rea.propertySearch({ ...baseFilters, mls_active: true });
+  } catch (err) {
+    if (isWalletGatedError(err)) {
+      return rea.propertySearch(baseFilters);
+    }
+    throw err;
+  }
+}
+
+function isWalletGatedError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes("WALLET_ENDPOINT_NOT_AVAILABLE") ||
+    msg.includes("mls_data") ||
+    msg.includes("403")
+  );
 }
 
 function mapPropertyType(t: string): string {

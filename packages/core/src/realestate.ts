@@ -23,6 +23,39 @@ export interface MLSSearchFilters {
   resultIndex?: number;
 }
 
+/**
+ * Filters for /PropertySearch — the property-records endpoint.
+ *
+ * PAYG plans on RealEstateAPI cannot call /MLSSearch (the MLS-feed endpoint),
+ * but /PropertySearch is wallet-eligible. PropertySearch returns property
+ * records (assessor data + AVM + suggested rent), with optional embedded MLS
+ * fields when available. Price filtering uses AVM (`value_min/max`) since
+ * `mls_listing_price_*` only matches currently-listed properties and may be
+ * gated under PAYG.
+ */
+export interface PropertySearchFilters {
+  city?: string;
+  state?: string;
+  zip?: string;
+  polygon?: Array<[number, number]>;
+  /** AVM lower bound (estimatedValue), used when MLS price filters are gated. */
+  value_min?: number;
+  value_max?: number;
+  bedrooms_min?: number;
+  bathrooms_min?: number;
+  building_size_min?: number;
+  year_built_min?: number;
+  property_type?: string[];
+  /**
+   * If true, restricts to currently-listed MLS properties. May trigger a
+   * wallet error on PAYG; caller should be prepared to retry without it.
+   */
+  mls_active?: boolean;
+  absentee_owner?: boolean;
+  size?: number;
+  resultIndex?: number;
+}
+
 export interface MLSListingSummary {
   id: string;
   address?: string;
@@ -111,6 +144,55 @@ export class RealEstateAPIClient {
     throw lastErr ?? new Error("RealEstateAPI request failed");
   }
 
+  /**
+   * Search property records via /PropertySearch (PAYG-eligible).
+   *
+   * Returned `MLSListingSummary.price` prefers `mlsListingPrice` if present,
+   * else `estimatedValue` (AVM). Photos come from the single `imageUrl` field
+   * (PropertyDetail returns the full photo list).
+   */
+  async propertySearch(
+    filters: PropertySearchFilters,
+  ): Promise<MLSSearchResult> {
+    const body: Record<string, unknown> = {
+      size: filters.size ?? 25,
+      resultIndex: filters.resultIndex ?? 0,
+    };
+    if (filters.city) body.city = filters.city;
+    if (filters.state) body.state = filters.state;
+    if (filters.zip) body.zip = filters.zip;
+    if (filters.polygon) body.polygon = filters.polygon;
+    if (filters.value_min !== undefined) body.value_min = filters.value_min;
+    if (filters.value_max !== undefined) body.value_max = filters.value_max;
+    if (filters.bedrooms_min !== undefined)
+      body.bedrooms_min = filters.bedrooms_min;
+    if (filters.bathrooms_min !== undefined)
+      body.bathrooms_min = filters.bathrooms_min;
+    if (filters.building_size_min !== undefined)
+      body.building_size_min = filters.building_size_min;
+    if (filters.year_built_min !== undefined)
+      body.year_built_min = filters.year_built_min;
+    if (filters.property_type) body.property_type = filters.property_type;
+    if (filters.mls_active !== undefined) body.mls_active = filters.mls_active;
+    if (filters.absentee_owner !== undefined)
+      body.absentee_owner = filters.absentee_owner;
+
+    const raw = await this.request<{
+      data?: unknown[];
+      resultCount?: number;
+      recordCount?: number;
+    }>("/PropertySearch", body);
+    const data = (raw.data ?? []).map((item: any) =>
+      normalizePropertyRecord(item),
+    );
+    return {
+      total: raw.recordCount ?? raw.resultCount ?? data.length,
+      resultCount: data.length,
+      data,
+      raw,
+    };
+  }
+
   async mlsSearch(filters: MLSSearchFilters): Promise<MLSSearchResult> {
     const body: Record<string, unknown> = {
       size: filters.size ?? 25,
@@ -196,6 +278,45 @@ function normalizeListing(item: any): MLSListingSummary {
     listingAgent: m.listingAgent,
     raw: item,
   };
+}
+
+/**
+ * Normalize a /PropertySearch row into the shared MLSListingSummary shape so
+ * the scout pipeline can stay endpoint-agnostic. Price prefers MLS listing
+ * price, falls back to AVM (estimatedValue) for off-market candidates.
+ */
+function normalizePropertyRecord(item: any): MLSListingSummary {
+  const addr = item.address ?? {};
+  const mlsPrice = toFiniteNumber(item.mlsListingPrice);
+  const avm = toFiniteNumber(item.estimatedValue);
+  const price = mlsPrice && mlsPrice > 0 ? mlsPrice : avm;
+  const imageUrl: string | undefined = item.imageUrl;
+  return {
+    id: String(item.id ?? item.propertyId ?? ""),
+    address: addr.address ?? addr.street ?? undefined,
+    city: addr.city,
+    state: addr.state,
+    zip: addr.zip,
+    price,
+    beds: toFiniteNumber(item.bedrooms),
+    baths: toFiniteNumber(item.bathrooms),
+    sqft: toFiniteNumber(item.squareFeet),
+    primaryListingImageUrl: imageUrl,
+    photosCount: imageUrl ? 1 : 0,
+    photosList: imageUrl ? [{ url: imageUrl }] : undefined,
+    daysOnMarket: toFiniteNumber(item.mlsDaysOnMarket),
+    listingAgent: undefined,
+    raw: item,
+  };
+}
+
+function toFiniteNumber(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
 }
 
 function normalizeDetail(d: any): PropertyDetail {
