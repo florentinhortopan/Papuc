@@ -49,8 +49,15 @@ enabled = false
 client_id = ""
 secret = ""
 
-[functions]
-verify_jwt = true
+# Per-function settings for Edge Functions. These have no effect unless
+# `supabase functions deploy <name>` is run for that function. The
+# functions under supabase/functions/ are kept as REFERENCE only — see
+# supabase/functions/README.md. The web app (Next.js API routes) is
+# what actually serves traffic.
+#
+# (Removed the bare [functions] global block — Supabase CLI v2 changed
+# the schema so verify_jwt at the top level conflicts with parsing
+# per-function entries.)
 
 [functions.scout-project]
 verify_jwt = true
