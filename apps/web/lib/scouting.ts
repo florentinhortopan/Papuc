@@ -24,12 +24,41 @@ interface ScoutCandidate {
   sourceUrl: string | null;
 }
 
+interface ProviderSearchResult {
+  candidates: ScoutCandidate[];
+  /** Resolved query payload echoed back for debugging. */
+  query: Record<string, unknown>;
+  /** First raw record off the wire, for shape verification. */
+  firstSample: Record<string, unknown> | null;
+}
+
+export interface ScoutDiagnostics {
+  /** Provider actually used. */
+  provider: CandidateSource;
+  /** Where each dropped candidate fell out of the funnel. */
+  dropped: {
+    noId: number;
+    noPrice: number;
+    dscrTooLow: number;
+    cashflowTooLow: number;
+    upsertFailed: number;
+  };
+  /** A redacted peek at the first raw provider record — useful when 0 results
+   *  to verify the upstream is returning what we expect. */
+  firstSample: Record<string, unknown> | null;
+  /** Last upsert error string, if any. */
+  lastUpsertError: string | null;
+  /** Resolved keyword/filters sent to the provider, for easy reproduction. */
+  query: Record<string, unknown>;
+}
+
 export interface ScoutResult {
   scoutRunId: string;
   candidatesSeen: number;
   dealsAdded: number;
   dealsScored: number;
   elapsedMs: number;
+  diagnostics: ScoutDiagnostics;
 }
 
 /**
@@ -87,25 +116,48 @@ export async function scoutProjectInternal(
   let dealsAdded = 0;
   let dealsScored = 0;
 
+  const dropped = {
+    noId: 0,
+    noPrice: 0,
+    dscrTooLow: 0,
+    cashflowTooLow: 0,
+    upsertFailed: 0,
+  };
+  let lastUpsertError: string | null = null;
+  let providerQuery: Record<string, unknown> = {};
+  let firstSample: Record<string, unknown> | null = null;
+  const provider: CandidateSource = hasDataKey ? "hasdata" : "realestateapi";
+
   try {
     const market = constraints.markets[0];
     if (!market) throw new Error("project has no market");
 
     const size = options.size ?? 25;
-    const candidates: ScoutCandidate[] = hasDataKey
+    const search: ProviderSearchResult = hasDataKey
       ? await searchHasData(hasDataKey, constraints, market, size)
       : await searchRealEstateAPI(reaKey!, constraints, market, size);
+    const candidates = search.candidates;
+    providerQuery = search.query;
+    firstSample = search.firstSample;
     candidatesSeen = candidates.length;
+
+    console.log("[scout] provider=%s query=%j candidates=%d", provider, search.query, candidates.length);
 
     const downPayment = constraints.downPayment ?? 0;
     const targetCashflow = constraints.targetMonthlyCashflow ?? 0;
 
     for (const { listing, detail, source, sourceUrl } of candidates) {
-      if (!listing.id) continue;
+      if (!listing.id) {
+        dropped.noId += 1;
+        continue;
+      }
       const mlsPrice = listing.price;
       const avm = listing.estimatedValue ?? detail?.estimatedValue;
       const effectivePrice = mlsPrice ?? avm;
-      if (!effectivePrice) continue;
+      if (!effectivePrice) {
+        dropped.noPrice += 1;
+        continue;
+      }
 
       const effectiveDown =
         downPayment > 0
@@ -134,7 +186,14 @@ export async function scoutProjectInternal(
       const matchesDSCR = proforma.dscr >= constraints.minDSCR;
       const matchesCashflow =
         targetCashflow > 0 ? monthlyCashflow >= targetCashflow * 0.8 : true;
-      if (!matchesDSCR || !matchesCashflow) continue;
+      if (!matchesDSCR) {
+        dropped.dscrTooLow += 1;
+        continue;
+      }
+      if (!matchesCashflow) {
+        dropped.cashflowTooLow += 1;
+        continue;
+      }
 
       const baseScore = computeBaseScore({
         dscr: proforma.dscr,
@@ -176,7 +235,14 @@ export async function scoutProjectInternal(
         )
         .select("id")
         .single();
-      if (dealErr || !dealRow) continue;
+      if (dealErr || !dealRow) {
+        dropped.upsertFailed += 1;
+        if (dealErr) {
+          lastUpsertError = dealErr.message ?? String(dealErr);
+          console.warn("[scout] deals upsert failed: %s", lastUpsertError);
+        }
+        continue;
+      }
       dealsAdded += 1;
 
       const { error: scoreErr } = await sb.from("deal_scores").upsert(
@@ -219,13 +285,22 @@ export async function scoutProjectInternal(
       dealsAdded,
       dealsScored,
       elapsedMs: Date.now() - startedAt,
+      diagnostics: {
+        provider,
+        dropped,
+        firstSample,
+        lastUpsertError,
+        query: providerQuery,
+      },
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[scout] failed: %s", message);
     await sb
       .from("scout_runs")
       .update({
         finished_at: new Date().toISOString(),
-        error: err instanceof Error ? err.message : String(err),
+        error: message,
         candidates_seen: candidatesSeen,
         deals_added: dealsAdded,
         deals_scored: dealsScored,
@@ -246,12 +321,21 @@ async function searchHasData(
   constraints: ProjectConstraints,
   market: Market,
   size: number,
-): Promise<ScoutCandidate[]> {
+): Promise<ProviderSearchResult> {
   const client = new HasDataClient({ apiKey });
   const filters = buildHasDataFilters(constraints, market);
+  console.log("[scout/hasdata] filters=%j", filters);
   const result = await client.searchZillow(filters);
+  console.log(
+    "[scout/hasdata] total=%d resultCount=%d page=%s/%s",
+    result.total,
+    result.resultCount,
+    result.page ?? "?",
+    result.totalPages ?? "?",
+  );
 
-  const candidates = result.data.slice(0, size).map((row) => {
+  const sliced = result.data.slice(0, size);
+  const candidates = sliced.map((row) => {
     const listing = zillowToMLSListing(row);
     const detail = zillowToSyntheticDetail(row);
     return {
@@ -261,7 +345,17 @@ async function searchHasData(
       sourceUrl: row.detailUrl ?? null,
     };
   });
-  return candidates;
+
+  const firstRaw = sliced[0]?.raw;
+  const firstSample = firstRaw && typeof firstRaw === "object"
+    ? sanitizeSample(firstRaw as Record<string, unknown>)
+    : null;
+
+  return {
+    candidates,
+    query: filters as unknown as Record<string, unknown>,
+    firstSample,
+  };
 }
 
 function buildHasDataFilters(
@@ -376,17 +470,28 @@ async function searchRealEstateAPI(
   constraints: ProjectConstraints,
   market: Market,
   size: number,
-): Promise<ScoutCandidate[]> {
+): Promise<ProviderSearchResult> {
   const rea = new RealEstateAPIClient({ apiKey });
   const baseFilters = buildPropertyFilters(constraints, market, size);
   const search = await searchWithFallback(rea, baseFilters);
   const hydrated = await hydrateInBatches(rea, search.data, MAX_HYDRATE_PARALLEL);
-  return hydrated.map(({ listing, detail }) => ({
+  const candidates = hydrated.map(({ listing, detail }) => ({
     listing,
     detail,
     source: "realestateapi" as const,
     sourceUrl: null,
   }));
+
+  const firstRaw = search.data[0]?.raw;
+  const firstSample = firstRaw && typeof firstRaw === "object"
+    ? sanitizeSample(firstRaw as Record<string, unknown>)
+    : null;
+
+  return {
+    candidates,
+    query: baseFilters as unknown as Record<string, unknown>,
+    firstSample,
+  };
 }
 
 function buildPropertyFilters(
@@ -528,6 +633,47 @@ function computeBaseScore(args: {
   if (args.cashOnCash < 0) s -= 10;
 
   return Math.max(0, Math.min(100, s));
+}
+
+/**
+ * Pick a small, high-signal subset of fields from a provider's raw record
+ * so the diagnostics payload is helpful without bloating the response or
+ * accidentally leaking PII (e.g. agent emails). When debugging a "0 deals"
+ * scout, this is what tells you whether the upstream returned junk, the
+ * wrong area, or no price data.
+ */
+function sanitizeSample(raw: Record<string, unknown>): Record<string, unknown> {
+  const fields = [
+    "zpid",
+    "id",
+    "address",
+    "city",
+    "state",
+    "zip",
+    "zipcode",
+    "price",
+    "unformattedPrice",
+    "estimatedValue",
+    "zestimate",
+    "rentZestimate",
+    "bedrooms",
+    "beds",
+    "bathrooms",
+    "baths",
+    "livingArea",
+    "sqft",
+    "homeType",
+    "homeStatus",
+    "daysOnZillow",
+    "imgSrc",
+    "detailUrl",
+  ];
+  const out: Record<string, unknown> = {};
+  for (const k of fields) {
+    if (k in raw) out[k] = raw[k];
+  }
+  out._allKeys = Object.keys(raw);
+  return out;
 }
 
 function round(n: number, digits: number): number {
