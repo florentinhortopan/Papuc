@@ -19,11 +19,18 @@ export async function GET(
 
   const { data: deal, error } = await supabase
     .from("deals")
-    .select("source_property_id, project_id")
+    .select("source, source_property_id, project_id")
     .eq("id", dealId)
     .single();
   if (error || !deal) {
     return NextResponse.json({ error: "deal not found" }, { status: 404 });
+  }
+
+  if (deal.source !== "realestateapi") {
+    return NextResponse.json({
+      comparables: [],
+      note: `Comparables not available for source "${deal.source}"`,
+    });
   }
 
   const reaKey = process.env.REALESTATEAPI_KEY;

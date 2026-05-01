@@ -1,15 +1,26 @@
 import {
   computeProForma,
+  HasDataClient,
   RealEstateAPIClient,
   type Market,
   type MLSListingSummary,
   type ProjectConstraints,
   type PropertyDetail,
   type PropertySearchFilters,
+  type ZillowListingSummary,
+  type ZillowSearchFilters,
 } from "@papuc/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const MAX_HYDRATE_PARALLEL = 5;
+
+type CandidateSource = "hasdata" | "realestateapi";
+
+interface ScoutCandidate {
+  listing: MLSListingSummary;
+  detail: PropertyDetail | null;
+  source: CandidateSource;
+}
 
 export interface ScoutResult {
   scoutRunId: string;
@@ -20,17 +31,19 @@ export interface ScoutResult {
 }
 
 /**
- * Map a project's constraints to RealEstateAPI Property Search, hydrate each
+ * Map a project's constraints to a real-estate provider, hydrate each
  * candidate, compute pro-forma, persist deals + deal_scores. Service-role
  * client required so background runs (cron) bypass RLS while still scoping
  * by `owner_id`.
  *
- * NOTE: This now uses /PropertySearch instead of /MLSSearch because the latter
- * is gated to Starter+ plans. PropertySearch is wallet-eligible on PAYG and
- * returns property records with optional embedded MLS fields. Price filtering
- * uses AVM (`value_min/max`); the scout will surface both currently-listed
- * and off-market candidates. We try `mls_active: true` first to prefer active
- * listings, and fall back to no MLS filter if PAYG rejects it.
+ * Provider selection (in order of preference):
+ *   1. HasData (Zillow scraper) when HASDATA_API_KEY is set. This is the
+ *      primary path: actual Zillow list prices, rentZestimate for free in
+ *      the search response, no per-listing detail call required.
+ *   2. RealEstateAPI /PropertySearch when REALESTATEAPI_KEY is set. This is
+ *      the legacy fallback. Note that PAYG plans don't have access to
+ *      /MLSSearch, so we use /PropertySearch (off-market property records
+ *      with AVM pricing) and try `mls_active: true` first.
  */
 export async function scoutProjectInternal(
   sb: SupabaseClient,
@@ -41,8 +54,11 @@ export async function scoutProjectInternal(
     size?: number;
   } = {},
 ): Promise<ScoutResult> {
+  const hasDataKey = process.env.HASDATA_API_KEY;
   const reaKey = process.env.REALESTATEAPI_KEY;
-  if (!reaKey) throw new Error("REALESTATEAPI_KEY not set");
+  if (!hasDataKey && !reaKey) {
+    throw new Error("No real-estate provider configured: set HASDATA_API_KEY or REALESTATEAPI_KEY");
+  }
 
   const { data: project, error: pErr } = await sb
     .from("projects")
@@ -70,21 +86,19 @@ export async function scoutProjectInternal(
   let dealsScored = 0;
 
   try {
-    const rea = new RealEstateAPIClient({ apiKey: reaKey });
     const market = constraints.markets[0];
     if (!market) throw new Error("project has no market");
 
-    const baseFilters = buildPropertyFilters(constraints, market, options.size ?? 25);
-    const search = await searchWithFallback(rea, baseFilters);
-    const candidates = search.data;
+    const size = options.size ?? 25;
+    const candidates: ScoutCandidate[] = hasDataKey
+      ? await searchHasData(hasDataKey, constraints, market, size)
+      : await searchRealEstateAPI(reaKey!, constraints, market, size);
     candidatesSeen = candidates.length;
-
-    const hydrated = await hydrateInBatches(rea, candidates, MAX_HYDRATE_PARALLEL);
 
     const downPayment = constraints.downPayment ?? 0;
     const targetCashflow = constraints.targetMonthlyCashflow ?? 0;
 
-    for (const { listing, detail } of hydrated) {
+    for (const { listing, detail, source } of candidates) {
       if (!listing.id) continue;
       const mlsPrice = listing.price;
       const avm = listing.estimatedValue ?? detail?.estimatedValue;
@@ -135,7 +149,7 @@ export async function scoutProjectInternal(
         .upsert(
           {
             project_id: project.id,
-            source: "realestateapi",
+            source,
             source_property_id: listing.id,
             address: listing.address ?? null,
             city: listing.city ?? null,
@@ -216,6 +230,154 @@ export async function scoutProjectInternal(
       .eq("id", runRow.id);
     throw err;
   }
+}
+
+/**
+ * HasData / Zillow path. One GET per scout (no per-listing detail call).
+ * The Zillow Listing API returns rentZestimate + zestimate inline, so we
+ * synthesize a `PropertyDetail` from each search row to keep the rest of
+ * the pipeline unchanged.
+ */
+async function searchHasData(
+  apiKey: string,
+  constraints: ProjectConstraints,
+  market: Market,
+  size: number,
+): Promise<ScoutCandidate[]> {
+  const client = new HasDataClient({ apiKey });
+  const filters = buildHasDataFilters(constraints, market);
+  const result = await client.searchZillow(filters);
+
+  const candidates = result.data.slice(0, size).map((row) => {
+    const listing = zillowToMLSListing(row);
+    const detail = zillowToSyntheticDetail(row);
+    return { listing, detail, source: "hasdata" as const };
+  });
+  return candidates;
+}
+
+function buildHasDataFilters(
+  constraints: ProjectConstraints,
+  market: Market,
+): ZillowSearchFilters {
+  const filters: ZillowSearchFilters = {
+    keyword: marketToZillowKeyword(market),
+    type: "forSale",
+  };
+  if (constraints.priceMin !== undefined) filters.priceMin = constraints.priceMin;
+  if (constraints.priceMax !== undefined) filters.priceMax = constraints.priceMax;
+  if (constraints.bedsMin !== undefined) filters.bedsMin = constraints.bedsMin;
+  if (constraints.bathsMin !== undefined) filters.bathsMin = constraints.bathsMin;
+  if (constraints.sqftMin !== undefined) filters.sqftMin = constraints.sqftMin;
+
+  if (
+    constraints.propertyTypes.length &&
+    !constraints.propertyTypes.includes("any")
+  ) {
+    filters.homeTypes = constraints.propertyTypes.map(mapPropertyTypeToZillow);
+  }
+  return filters;
+}
+
+/**
+ * Zillow's Listing API takes a free-form area string as `keyword`. For
+ * city markets we use "City, ST"; for zip we pass the zip code directly;
+ * for county we fall back to "<County> County, ST". Polygon markets aren't
+ * supported by the listing endpoint — surface a clear error rather than
+ * silently returning the wrong region.
+ */
+function marketToZillowKeyword(market: Market): string {
+  if (market.kind === "city") return `${market.city}, ${market.state}`;
+  if (market.kind === "zip") return market.zip;
+  if (market.kind === "county") return `${market.county} County, ${market.state}`;
+  throw new Error(
+    "HasData/Zillow scout does not support polygon markets — pick a city, zip, or county.",
+  );
+}
+
+function mapPropertyTypeToZillow(t: string): string {
+  switch (t) {
+    case "single_family":
+      return "SINGLE_FAMILY";
+    case "condo":
+      return "CONDO";
+    case "townhouse":
+      return "TOWNHOUSE";
+    case "multi_family_2_4":
+    case "multi_family_5_plus":
+      return "MULTI_FAMILY";
+    default:
+      return t.toUpperCase();
+  }
+}
+
+function zillowToMLSListing(row: ZillowListingSummary): MLSListingSummary {
+  return {
+    id: row.zpid,
+    address: row.address,
+    city: row.city,
+    state: row.state,
+    zip: row.zip,
+    price: row.price,
+    estimatedValue: row.zestimate,
+    beds: row.beds,
+    baths: row.baths,
+    sqft: row.sqft,
+    primaryListingImageUrl: row.imgSrc,
+    photosCount: row.imgSrc ? 1 : 0,
+    photosList: row.imgSrc ? [{ url: row.imgSrc }] : undefined,
+    daysOnMarket: row.daysOnZillow,
+    listingAgent: undefined,
+    raw: row.raw,
+  };
+}
+
+/**
+ * Build a PropertyDetail from a single Zillow search row so the rest of the
+ * scoring pipeline can stay endpoint-agnostic. `suggestedRent` comes from
+ * Zillow's rentZestimate when available (the major win of HasData over the
+ * RealEstateAPI PAYG path — no second per-listing call needed).
+ */
+function zillowToSyntheticDetail(row: ZillowListingSummary): PropertyDetail {
+  return {
+    id: row.zpid,
+    address: row.address,
+    estimatedValue: row.zestimate,
+    estimatedMortgagePayment: undefined,
+    suggestedRent: row.rentZestimate,
+    hudFairMarketRent: undefined,
+    beds: row.beds,
+    baths: row.baths,
+    sqft: row.sqft,
+    yearBuilt: undefined,
+    propertyType: row.homeType,
+    lat: row.lat,
+    lng: row.lng,
+    photos: row.imgSrc ? [row.imgSrc] : undefined,
+    raw: row.raw,
+  };
+}
+
+/**
+ * Legacy RealEstateAPI /PropertySearch path. Hydrates each candidate with
+ * a per-listing PropertyDetail call. Kept as fallback when HASDATA_API_KEY
+ * is not configured.
+ */
+async function searchRealEstateAPI(
+  apiKey: string,
+  constraints: ProjectConstraints,
+  market: Market,
+  size: number,
+): Promise<ScoutCandidate[]> {
+  const rea = new RealEstateAPIClient({ apiKey });
+  const baseFilters = buildPropertyFilters(constraints, market, size);
+  const search = await searchWithFallback(rea, baseFilters);
+  const hydrated = await hydrateInBatches(rea, search.data, MAX_HYDRATE_PARALLEL);
+  return hydrated.map(({ listing, detail }) => ({
+    listing,
+    detail,
+    source: "realestateapi" as const,
+  }));
 }
 
 function buildPropertyFilters(
