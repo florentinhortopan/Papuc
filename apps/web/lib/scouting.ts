@@ -376,7 +376,10 @@ function buildHasDataFilters(
     constraints.propertyTypes.length &&
     !constraints.propertyTypes.includes("any")
   ) {
-    filters.homeTypes = constraints.propertyTypes.map(mapPropertyTypeToZillow);
+    const mapped = constraints.propertyTypes
+      .map(mapPropertyTypeToZillow)
+      .filter((t): t is string => t !== null);
+    if (mapped.length) filters.homeTypes = mapped;
   }
   return filters;
 }
@@ -397,19 +400,25 @@ function marketToZillowKeyword(market: Market): string {
   );
 }
 
-function mapPropertyTypeToZillow(t: string): string {
+/**
+ * Map our internal PropertyType enum to HasData/Zillow's homeTypes enum.
+ * HasData accepts only this set (validated server-side, 422 otherwise):
+ *   house | townhome | multiFamily | condo | lot | apartment | manufactured
+ */
+function mapPropertyTypeToZillow(t: string): string | null {
   switch (t) {
     case "single_family":
-      return "SINGLE_FAMILY";
+      return "house";
     case "condo":
-      return "CONDO";
+      return "condo";
     case "townhouse":
-      return "TOWNHOUSE";
+      return "townhome";
     case "multi_family_2_4":
+      return "multiFamily";
     case "multi_family_5_plus":
-      return "MULTI_FAMILY";
+      return "apartment";
     default:
-      return t.toUpperCase();
+      return null;
   }
 }
 
