@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildZillowParams,
+  extractZillowPhotos,
   HasDataClient,
   HasDataError,
   normalizeZillowListing,
@@ -184,5 +185,99 @@ describe("HasDataClient.searchZillow", () => {
       HasDataError,
     );
     expect(calls).toBe(1);
+  });
+});
+
+describe("extractZillowPhotos", () => {
+  it("pulls .photos[].url, de-duped and ordered", () => {
+    const photos = extractZillowPhotos({
+      photos: [
+        { url: "https://cdn/a.jpg" },
+        { url: "https://cdn/b.jpg" },
+        { url: "https://cdn/a.jpg" },
+      ],
+    });
+    expect(photos).toEqual(["https://cdn/a.jpg", "https://cdn/b.jpg"]);
+  });
+
+  it("falls back to .images string array when .photos is absent", () => {
+    const photos = extractZillowPhotos({
+      images: ["https://cdn/x.jpg", "https://cdn/y.jpg"],
+    });
+    expect(photos).toEqual(["https://cdn/x.jpg", "https://cdn/y.jpg"]);
+  });
+
+  it("walks .originalPhotos[].mixedSources.jpeg and picks the widest", () => {
+    const photos = extractZillowPhotos({
+      originalPhotos: [
+        {
+          mixedSources: {
+            jpeg: [
+              { url: "https://cdn/sm.jpg", width: 384 },
+              { url: "https://cdn/lg.jpg", width: 1536 },
+              { url: "https://cdn/md.jpg", width: 768 },
+            ],
+          },
+        },
+      ],
+    });
+    expect(photos).toEqual(["https://cdn/lg.jpg"]);
+  });
+
+  it("falls back to imgSrc as a last resort", () => {
+    expect(extractZillowPhotos({ imgSrc: "https://cdn/cover.jpg" })).toEqual([
+      "https://cdn/cover.jpg",
+    ]);
+  });
+});
+
+describe("HasDataClient.getZillowProperty", () => {
+  it("calls /scrape/zillow/property with the URL and returns the photo array", async () => {
+    const fetchFn = mockFetch(async (url) => {
+      expect(url).toContain("/scrape/zillow/property");
+      expect(url).toContain(encodeURIComponent("https://www.zillow.com/homedetails/x/123_zpid/"));
+      return new Response(
+        JSON.stringify({
+          requestMetadata: { status: "ok", id: "req-2" },
+          property: {
+            zpid: 123,
+            url: "https://www.zillow.com/homedetails/x/123_zpid/",
+            address: { streetAddress: "9 Test Ln", city: "Brooklyn", state: "NY", zipcode: "11215" },
+            price: 1100000,
+            bedrooms: 3,
+            bathrooms: 2,
+            livingArea: 1400,
+            photos: [
+              { url: "https://cdn/p1.jpg" },
+              { url: "https://cdn/p2.jpg" },
+              { url: "https://cdn/p3.jpg" },
+            ],
+            yearBuilt: 1925,
+          },
+        }),
+        { status: 200 },
+      );
+    });
+
+    const client = new HasDataClient({ apiKey: "k", fetchFn });
+    const detail = await client.getZillowProperty(
+      "https://www.zillow.com/homedetails/x/123_zpid/",
+    );
+
+    expect(detail.zpid).toBe("123");
+    expect(detail.address).toBe("9 Test Ln");
+    expect(detail.price).toBe(1100000);
+    expect(detail.beds).toBe(3);
+    expect(detail.photos).toEqual([
+      "https://cdn/p1.jpg",
+      "https://cdn/p2.jpg",
+      "https://cdn/p3.jpg",
+    ]);
+    expect(detail.yearBuilt).toBe(1925);
+  });
+
+  it("rejects URLs that aren't http(s)", async () => {
+    const client = new HasDataClient({ apiKey: "k", fetchFn: mockFetch(async () => new Response("")) });
+    await expect(client.getZillowProperty("not-a-url")).rejects.toThrow();
   });
 });

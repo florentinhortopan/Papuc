@@ -99,6 +99,37 @@ export interface ZillowSearchResult {
   raw?: unknown;
 }
 
+/**
+ * Result of /scrape/zillow/property — the per-listing detail page.
+ * The big win over the Listing API is `photos`: the full photo set
+ * Zillow displays in the gallery (10–50 photos), vs. the single cover
+ * image you get on Listing.
+ */
+export interface ZillowPropertyDetail {
+  /** Zillow property id (string for db storage). */
+  zpid: string;
+  url: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  price?: number;
+  zestimate?: number;
+  rentZestimate?: number;
+  beds?: number;
+  baths?: number;
+  sqft?: number;
+  yearBuilt?: number;
+  homeType?: string;
+  homeStatus?: string;
+  /** Ordered list of photo URLs as Zillow displays them. */
+  photos: string[];
+  description?: string;
+  lat?: number;
+  lng?: number;
+  raw?: unknown;
+}
+
 export class HasDataError extends Error {
   constructor(
     public status: number,
@@ -123,6 +154,39 @@ export class HasDataClient {
     this.baseUrl = opts.baseUrl ?? HASDATA_BASE;
     this.maxRetries = opts.maxRetries ?? 3;
     this.timeoutMs = opts.timeoutMs ?? 310_000;
+  }
+
+  /**
+   * Fetch full Zillow property detail (including the gallery photo set)
+   * via /scrape/zillow/property. Costs 5 credits per call. Pass the full
+   * Zillow URL — `zpid` alone is not accepted by the upstream endpoint.
+   *
+   * Throws HasDataError on non-2xx or if `requestMetadata.status` is not
+   * "ok". Caller is expected to cache the result; we never pre-fetch in
+   * the scout hot path.
+   */
+  async getZillowProperty(zillowUrl: string): Promise<ZillowPropertyDetail> {
+    if (!zillowUrl || !/^https?:\/\//i.test(zillowUrl)) {
+      throw new Error("getZillowProperty: zillowUrl must be a full http(s) URL");
+    }
+    const params = new URLSearchParams({ url: zillowUrl });
+    const url = `${this.baseUrl}/scrape/zillow/property?${params.toString()}`;
+
+    const raw = await this.requestGet<{
+      requestMetadata?: { status?: string; id?: string; url?: string };
+      property?: unknown;
+      [k: string]: unknown;
+    }>(url);
+
+    const status = raw.requestMetadata?.status;
+    if (status && status !== "ok") {
+      throw new HasDataError(
+        200,
+        `requestMetadata.status=${status} id=${raw.requestMetadata?.id ?? "?"}`,
+      );
+    }
+
+    return normalizeZillowProperty(raw.property ?? raw, zillowUrl);
   }
 
   /**
@@ -268,6 +332,109 @@ export function normalizeZillowListing(item: unknown): ZillowListingSummary {
     daysOnZillow: toFiniteNumber(o.daysOnZillow),
     imgSrc: typeof o.imgSrc === "string" ? o.imgSrc : o.image,
     detailUrl: typeof o.detailUrl === "string" ? o.detailUrl : o.url,
+    lat: toFiniteNumber(o.latitude ?? o.lat),
+    lng: toFiniteNumber(o.longitude ?? o.lng ?? o.lon),
+    raw: o,
+  };
+}
+
+/**
+ * Defensively extract photo URLs from a Zillow property payload. Zillow
+ * (and HasData's scraper) returns photos under several different shapes
+ * across listing types. We try them in order of richness and de-dupe.
+ *
+ * Known shapes:
+ *   - `photos: [{ url, caption?, mixedSources? }]`        (most common)
+ *   - `images: ["https://...", ...]`                       (string[])
+ *   - `originalPhotos: [{ mixedSources: { jpeg: [{url,width}] } }]`  (legacy)
+ *   - `imgSrc`                                              (cover only)
+ */
+export function extractZillowPhotos(o: Record<string, any>): string[] {
+  const out: string[] = [];
+
+  const photos = o.photos;
+  if (Array.isArray(photos)) {
+    for (const p of photos) {
+      const url = pickPhotoUrl(p);
+      if (url) out.push(url);
+    }
+  }
+
+  if (out.length === 0 && Array.isArray(o.images)) {
+    for (const url of o.images) {
+      if (typeof url === "string") out.push(url);
+    }
+  }
+
+  if (out.length === 0 && Array.isArray(o.originalPhotos)) {
+    for (const p of o.originalPhotos) {
+      const url = pickPhotoUrl(p);
+      if (url) out.push(url);
+    }
+  }
+
+  if (out.length === 0 && typeof o.imgSrc === "string") {
+    out.push(o.imgSrc);
+  }
+
+  const seen = new Set<string>();
+  return out.filter((u) => (seen.has(u) ? false : (seen.add(u), true)));
+}
+
+function pickPhotoUrl(p: unknown): string | undefined {
+  if (typeof p === "string") return p;
+  if (!p || typeof p !== "object") return undefined;
+  const o = p as Record<string, any>;
+  if (typeof o.url === "string") return o.url;
+  if (typeof o.src === "string") return o.src;
+  const mixed = o.mixedSources;
+  if (mixed && typeof mixed === "object") {
+    const jpegs = (mixed as Record<string, any>).jpeg;
+    if (Array.isArray(jpegs) && jpegs.length) {
+      const best = jpegs.reduce(
+        (a: Record<string, any>, b: Record<string, any>) =>
+          (Number(b?.width) || 0) > (Number(a?.width) || 0) ? b : a,
+        jpegs[0],
+      );
+      if (typeof best?.url === "string") return best.url;
+    }
+    const webp = (mixed as Record<string, any>).webp;
+    if (Array.isArray(webp) && webp.length && typeof webp[0]?.url === "string") {
+      return webp[0].url;
+    }
+  }
+  return undefined;
+}
+
+export function normalizeZillowProperty(
+  raw: unknown,
+  fallbackUrl: string,
+): ZillowPropertyDetail {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  const addr = typeof o.address === "object" && o.address !== null ? o.address : {};
+  const addressString =
+    typeof o.address === "string"
+      ? o.address
+      : addr.streetAddress ?? addr.address ?? o.streetAddress ?? undefined;
+
+  return {
+    zpid: String(o.zpid ?? o.id ?? ""),
+    url: typeof o.url === "string" ? o.url : fallbackUrl,
+    address: addressString,
+    city: addr.city ?? o.city,
+    state: addr.state ?? o.state,
+    zip: addr.zipcode ?? addr.zip ?? o.zipcode ?? o.zip,
+    price: toFiniteNumber(o.price ?? o.unformattedPrice),
+    zestimate: toFiniteNumber(o.zestimate),
+    rentZestimate: toFiniteNumber(o.rentZestimate),
+    beds: toFiniteNumber(o.bedrooms ?? o.beds),
+    baths: toFiniteNumber(o.bathrooms ?? o.baths),
+    sqft: toFiniteNumber(o.livingArea ?? o.sqft),
+    yearBuilt: toFiniteNumber(o.yearBuilt),
+    homeType: typeof o.homeType === "string" ? o.homeType : undefined,
+    homeStatus: typeof o.homeStatus === "string" ? o.homeStatus : undefined,
+    photos: extractZillowPhotos(o),
+    description: typeof o.description === "string" ? o.description : undefined,
     lat: toFiniteNumber(o.latitude ?? o.lat),
     lng: toFiniteNumber(o.longitude ?? o.lng ?? o.lon),
     raw: o,

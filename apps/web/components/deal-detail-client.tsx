@@ -228,19 +228,55 @@ export function DealDetailClient({
     }
   }
 
-  const photos: string[] = (() => {
+  const cachedPhotos: string[] = (() => {
     if (Array.isArray(deal.photos) && deal.photos.length)
       return deal.photos as string[];
     if (deal.primary_image_url) return [deal.primary_image_url];
     return [];
   })();
+  const [photos, setPhotos] = useState<string[]>(cachedPhotos);
+  const [photosLoading, setPhotosLoading] = useState(false);
   const isSaved = deal.action === "saved";
   const sourceLink = getDealSourceLink(deal);
+
+  // Lazy-fetch the full Zillow photo gallery the first time this deal is
+  // opened. The /photos route caches the result back into deals.photos so
+  // subsequent visits skip the upstream call (and the credit cost).
+  useEffect(() => {
+    if (deal.source !== "hasdata") return;
+    if (cachedPhotos.length > 1) return;
+    let cancelled = false;
+    setPhotosLoading(true);
+    fetch(`/api/deals/${deal.id}/photos`)
+      .then((r) => r.json())
+      .then((body) => {
+        if (cancelled) return;
+        if (Array.isArray(body?.photos) && body.photos.length > 0) {
+          setPhotos(body.photos);
+        }
+      })
+      .catch(() => {
+        // soft-fail: keep showing whatever cover photo we had
+      })
+      .finally(() => {
+        if (!cancelled) setPhotosLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deal.id, deal.source, cachedPhotos.length]);
 
   return (
     <div className="mt-2 grid lg:grid-cols-[1.4fr,1fr] gap-6">
       <div className="space-y-6">
-        <PhotoCarousel photos={photos} />
+        <div className="relative">
+          <PhotoCarousel photos={photos} />
+          {photosLoading ? (
+            <div className="absolute left-3 top-3 bg-black/65 rounded-full px-2 py-1">
+              <span className="text-white text-[11px]">Loading photos…</span>
+            </div>
+          ) : null}
+        </div>
 
         <div>
           <h1 className="text-2xl font-bold">
