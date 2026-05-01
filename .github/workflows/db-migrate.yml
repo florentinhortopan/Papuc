@@ -1,0 +1,65 @@
+# Apply Supabase database migrations automatically.
+#
+# Triggers:
+#   - push to main when anything under supabase/migrations/** changes
+#   - manual run from the Actions tab (workflow_dispatch)
+#
+# Idempotency: `supabase db push` consults the
+# `supabase_migrations.schema_migrations` table on the remote project and only
+# applies files that haven't been recorded there yet. Re-running this workflow
+# on a no-op commit is safe.
+#
+# Required GitHub secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_ACCESS_TOKEN  Personal access token, https://supabase.com/dashboard/account/tokens
+#   SUPABASE_DB_PASSWORD   Database password, Project Settings → Database → Connection string
+#   SUPABASE_PROJECT_REF   Your project ref, e.g. "abcd1234efghij" from the dashboard URL
+#                          (technically not secret, but kept here so the repo is portable)
+name: db-migrate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/config.toml"
+      - ".github/workflows/db-migrate.yml"
+  workflow_dispatch:
+
+# Don't run two migration jobs against the same project at once.
+concurrency:
+  group: db-migrate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Print CLI + plan
+        run: |
+          supabase --version
+          echo "Migration files in repo:"
+          ls -1 supabase/migrations || true
+
+      - name: Link to remote project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+
+      # Show what would be applied. Useful for the run log even on success.
+      - name: Plan migrations (dry run)
+        run: supabase db push --dry-run --password "${{ secrets.SUPABASE_DB_PASSWORD }}"
+
+      - name: Apply migrations
+        run: supabase db push --password "${{ secrets.SUPABASE_DB_PASSWORD }}"

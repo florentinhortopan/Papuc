@@ -15,7 +15,12 @@
     "mobile": "pnpm --filter @papuc/mobile",
     "test": "pnpm --filter @papuc/core test",
     "typecheck": "pnpm --filter @papuc/web typecheck && pnpm --filter @papuc/core typecheck",
-    "lint": "pnpm --filter @papuc/web lint"
+    "lint": "pnpm --filter @papuc/web lint",
+    "db:link": "supabase link --project-ref \"$SUPABASE_PROJECT_REF\"",
+    "db:status": "supabase migration list",
+    "db:push": "supabase db push",
+    "db:push:dry": "supabase db push --dry-run",
+    "db:diff": "supabase db diff --linked"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
