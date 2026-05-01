@@ -4,12 +4,14 @@ import { DscrBadge } from "@/components/dscr-badge";
 import { Badge } from "@/components/ui/badge";
 import type { DealWithScore } from "@/lib/deals";
 import { formatMoney } from "@/lib/format";
+import { getDealSourceLink } from "@/lib/source-url";
 
 export function DealCard({ deal }: { deal: DealWithScore }) {
   const score = deal.score;
   const photo =
     deal.primary_image_url ??
     (Array.isArray(deal.photos) ? (deal.photos as string[])[0] : undefined);
+  const sourceLink = getDealSourceLink(deal);
 
   return (
     <Link
@@ -83,6 +85,24 @@ export function DealCard({ deal }: { deal: DealWithScore }) {
           </p>
         ) : score ? (
           <p className="text-textMuted text-xs italic">Ranking…</p>
+        ) : null}
+
+        {sourceLink ? (
+          <a
+            href={sourceLink.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1 text-primary text-xs hover:underline mt-3"
+            title={
+              sourceLink.isExact
+                ? `Open this listing on ${sourceLink.provider}`
+                : `${sourceLink.provider} address search (no deep link from data provider)`
+            }
+          >
+            {sourceLink.label}
+            <span aria-hidden>↗</span>
+          </a>
         ) : null}
       </div>
     </Link>

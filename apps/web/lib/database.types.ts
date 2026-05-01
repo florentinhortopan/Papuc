@@ -50,6 +50,7 @@ export type DealsRow = {
   sqft: number | null;
   photos: unknown;
   primary_image_url: string | null;
+  source_url: string | null;
   mls_data: unknown;
   est_value: number | null;
   est_rent: number | null;

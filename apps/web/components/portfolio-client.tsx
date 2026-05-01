@@ -7,6 +7,7 @@ import { DscrBadge } from "@/components/dscr-badge";
 import { Button } from "@/components/ui/button";
 import type { DealWithScore } from "@/lib/deals";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
+import { getDealSourceLink } from "@/lib/source-url";
 import { cn } from "@/lib/utils";
 
 export function PortfolioClient({
@@ -62,6 +63,7 @@ export function PortfolioClient({
             (Array.isArray(deal.photos)
               ? (deal.photos as string[])[0]
               : undefined);
+          const sourceLink = getDealSourceLink(deal);
           return (
             <div
               key={deal.id}
@@ -112,12 +114,29 @@ export function PortfolioClient({
                   {selected ? "Selected" : "Tap to select"}
                 </span>
               </button>
-              <Link
-                href={`/deals/${deal.id}`}
-                className="text-primary text-xs hover:underline shrink-0"
-              >
-                Open
-              </Link>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                <Link
+                  href={`/deals/${deal.id}`}
+                  className="text-primary text-xs hover:underline"
+                >
+                  Open
+                </Link>
+                {sourceLink ? (
+                  <a
+                    href={sourceLink.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-textMuted text-[11px] hover:text-primary hover:underline"
+                    title={
+                      sourceLink.isExact
+                        ? `Open this listing on ${sourceLink.provider}`
+                        : `${sourceLink.provider} address search (no deep link from data provider)`
+                    }
+                  >
+                    {sourceLink.label} ↗
+                  </a>
+                ) : null}
+              </div>
             </div>
           );
         })}

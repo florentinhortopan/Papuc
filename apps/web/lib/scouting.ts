@@ -20,6 +20,8 @@ interface ScoutCandidate {
   listing: MLSListingSummary;
   detail: PropertyDetail | null;
   source: CandidateSource;
+  /** Canonical URL on the source provider, when it returned a deep link. */
+  sourceUrl: string | null;
 }
 
 export interface ScoutResult {
@@ -98,7 +100,7 @@ export async function scoutProjectInternal(
     const downPayment = constraints.downPayment ?? 0;
     const targetCashflow = constraints.targetMonthlyCashflow ?? 0;
 
-    for (const { listing, detail, source } of candidates) {
+    for (const { listing, detail, source, sourceUrl } of candidates) {
       if (!listing.id) continue;
       const mlsPrice = listing.price;
       const avm = listing.estimatedValue ?? detail?.estimatedValue;
@@ -163,6 +165,7 @@ export async function scoutProjectInternal(
             sqft: listing.sqft ?? detail?.sqft ?? null,
             photos,
             primary_image_url: listing.primaryListingImageUrl ?? null,
+            source_url: sourceUrl,
             mls_data: listing.raw ?? null,
             est_value: avm ?? null,
             est_rent: monthlyRent,
@@ -251,7 +254,12 @@ async function searchHasData(
   const candidates = result.data.slice(0, size).map((row) => {
     const listing = zillowToMLSListing(row);
     const detail = zillowToSyntheticDetail(row);
-    return { listing, detail, source: "hasdata" as const };
+    return {
+      listing,
+      detail,
+      source: "hasdata" as const,
+      sourceUrl: row.detailUrl ?? null,
+    };
   });
   return candidates;
 }
@@ -377,6 +385,7 @@ async function searchRealEstateAPI(
     listing,
     detail,
     source: "realestateapi" as const,
+    sourceUrl: null,
   }));
 }
 

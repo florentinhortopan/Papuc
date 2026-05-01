@@ -16,6 +16,7 @@ import { actOnDeal, clearDealAction, type DealWithScore } from "@/lib/deals";
 import { exportProFormaCsv } from "@/lib/export";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
 import type { ProjectRow } from "@/lib/projects";
+import { getDealSourceLink } from "@/lib/source-url";
 import { createClient } from "@/lib/supabase/client";
 
 interface ProFormaState {
@@ -234,6 +235,7 @@ export function DealDetailClient({
     return [];
   })();
   const isSaved = deal.action === "saved";
+  const sourceLink = getDealSourceLink(deal);
 
   return (
     <div className="mt-2 grid lg:grid-cols-[1.4fr,1fr] gap-6">
@@ -268,6 +270,22 @@ export function DealDetailClient({
             </Badge>
             <Badge>CoC {formatPct(result.cashOnCashReturn)}</Badge>
           </div>
+          {sourceLink ? (
+            <a
+              href={sourceLink.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-primary text-sm hover:underline mt-3"
+              title={
+                sourceLink.isExact
+                  ? `Open this listing on ${sourceLink.provider}`
+                  : `${sourceLink.provider} address search (no deep link from data provider)`
+              }
+            >
+              {sourceLink.label}
+              <span aria-hidden>↗</span>
+            </a>
+          ) : null}
         </div>
 
         {deal.score?.rationale ? (
