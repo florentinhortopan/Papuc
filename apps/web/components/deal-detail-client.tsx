@@ -5,11 +5,13 @@ import {
   computeBreakevenADR,
   computeProForma,
   DEFAULT_INSURANCE_RATE_PCT,
+  solveBreakevenDownPayment,
+  solveBreakevenPrice,
   type ProFormaInputs,
   type Strategy,
 } from "@papuc/core";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CashflowBadge } from "@/components/cashflow-badge";
 import { CashflowChart } from "@/components/cashflow-chart";
@@ -22,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
 import { actOnDeal, clearDealAction, type DealWithScore } from "@/lib/deals";
 import { exportProFormaCsv } from "@/lib/export";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
@@ -100,6 +103,22 @@ export function DealDetailClient({
       strategy: c.strategy,
     };
   });
+
+  /**
+   * Snapshot of the original price + downPayment captured on mount, so the
+   * Scenario Simulator's "Reset" button can restore the baseline after the
+   * user has dragged the sliders or invoked a break-even solver.
+   */
+  const baselineRef = useRef<{ price: number; downPayment: number } | null>(
+    null,
+  );
+  if (baselineRef.current === null) {
+    baselineRef.current = {
+      price: toNum(state.price),
+      downPayment: toNum(state.downPayment),
+    };
+  }
+  const baseline = baselineRef.current;
 
   /**
    * Side-channel derivations used by the input UI (auto PMI rate, current
@@ -632,6 +651,21 @@ export function DealDetailClient({
           />
         </div>
 
+        <ScenarioSimulator
+          baseline={baseline}
+          currentPrice={derived.price}
+          currentDownPayment={derived.downPayment}
+          monthlyCashflow={result.annualPreTaxProfit / 12}
+          onChange={(next) => {
+            setState((s) => ({
+              ...s,
+              price: String(Math.round(next.price)),
+              downPayment: String(Math.round(next.downPayment)),
+            }));
+          }}
+          inputs={inputs}
+        />
+
         {state.strategy === "STR" ? (
           <StrMatrix value={strMatrix} onChange={setStrMatrix} />
         ) : null}
@@ -657,6 +691,213 @@ export function DealDetailClient({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * "What-if" panel: drag the price or the down payment to see how it moves
+ * monthly cashflow, with one-tap buttons to snap either lever to the value
+ * that makes cashflow exactly zero (binary search via @papuc/core solvers).
+ *
+ * The simulator never owns state of its own — it writes the new price /
+ * downPayment back through `onChange` to the parent, so the chart, badges,
+ * PITIA breakdown, and DSCR all stay in lockstep with whatever the user
+ * has dragged to.
+ */
+function ScenarioSimulator({
+  baseline,
+  currentPrice,
+  currentDownPayment,
+  monthlyCashflow,
+  onChange,
+  inputs,
+}: {
+  baseline: { price: number; downPayment: number };
+  currentPrice: number;
+  currentDownPayment: number;
+  monthlyCashflow: number;
+  onChange: (next: { price: number; downPayment: number }) => void;
+  inputs: ProFormaInputs;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  // Slider ranges anchored to the baseline so the original price always
+  // sits at a sensible spot on the track even after the user has dragged
+  // beyond it. Min: 50% of baseline (can't reasonably offer less). Max:
+  // 110% of baseline so a small over-asking scenario is visible.
+  const priceMin = Math.max(1, Math.round(baseline.price * 0.5));
+  const priceMax = Math.max(
+    Math.round(baseline.price * 1.1),
+    Math.round(currentPrice * 1.05),
+  );
+  // Down payment range: 5%-50% of the current scenario price.
+  const downMin = Math.max(0, Math.round(currentPrice * 0.05));
+  const downMax = Math.max(Math.round(currentPrice * 0.5), downMin + 1);
+  const safeDown = Math.min(downMax, Math.max(downMin, currentDownPayment));
+  const downPct = currentPrice > 0 ? currentDownPayment / currentPrice : 0;
+
+  const priceDelta = currentPrice - baseline.price;
+  const downDelta = currentDownPayment - baseline.downPayment;
+
+  const isDirty =
+    Math.abs(priceDelta) > 0.5 || Math.abs(downDelta) > 0.5;
+
+  function solveForPrice() {
+    setError(null);
+    const bePrice = solveBreakevenPrice({
+      ...inputs,
+      price: currentPrice,
+      downPayment: currentDownPayment,
+    });
+    if (bePrice === null) {
+      setError(
+        "No break-even price exists within the search range with these other inputs.",
+      );
+      return;
+    }
+    // Clamp into the visible slider range so the thumb doesn't disappear.
+    const clamped = Math.min(Math.max(bePrice, priceMin), priceMax * 3);
+    onChange({ price: clamped, downPayment: currentDownPayment });
+  }
+
+  function solveForDown() {
+    setError(null);
+    const beDown = solveBreakevenDownPayment({
+      ...inputs,
+      price: currentPrice,
+      downPayment: currentDownPayment,
+    });
+    if (beDown === null) {
+      setError(
+        "No down payment between $0 and the full price makes this deal break even.",
+      );
+      return;
+    }
+    onChange({ price: currentPrice, downPayment: beDown });
+  }
+
+  function reset() {
+    setError(null);
+    onChange(baseline);
+  }
+
+  const cashflowTone =
+    monthlyCashflow >= 100
+      ? "text-success"
+      : monthlyCashflow >= -100
+        ? "text-warning"
+        : "text-danger";
+
+  return (
+    <div className="bg-surface border border-border rounded-2xl p-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <p className="text-text text-base font-semibold">
+          Scenario simulator
+        </p>
+        <p className="text-textMuted text-xs">
+          Drag to test what-ifs · solvers find exact break-even
+        </p>
+      </div>
+
+      <div className="mb-4">
+        <div className="flex items-baseline justify-between mb-1">
+          <Label htmlFor="sim-price">Offer price</Label>
+          <span className="text-text text-sm font-semibold">
+            ${Math.round(currentPrice).toLocaleString()}{" "}
+            <span
+              className={`text-xs ${
+                priceDelta === 0
+                  ? "text-textMuted"
+                  : priceDelta < 0
+                    ? "text-success"
+                    : "text-danger"
+              }`}
+            >
+              ({priceDelta >= 0 ? "+" : ""}
+              {Math.round((priceDelta / baseline.price) * 100)}%)
+            </span>
+          </span>
+        </div>
+        <Slider
+          id="sim-price"
+          min={priceMin}
+          max={priceMax}
+          step={1000}
+          value={[Math.min(Math.max(currentPrice, priceMin), priceMax)]}
+          onValueChange={(v) =>
+            onChange({ price: v[0] ?? currentPrice, downPayment: currentDownPayment })
+          }
+        />
+        <div className="flex justify-between text-[10px] text-textMuted mt-1">
+          <span>${priceMin.toLocaleString()}</span>
+          <span>baseline ${baseline.price.toLocaleString()}</span>
+          <span>${priceMax.toLocaleString()}</span>
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <div className="flex items-baseline justify-between mb-1">
+          <Label htmlFor="sim-down">Down payment</Label>
+          <span className="text-text text-sm font-semibold">
+            ${Math.round(currentDownPayment).toLocaleString()}{" "}
+            <span className="text-xs text-textMuted">
+              ({(downPct * 100).toFixed(1)}% of price)
+            </span>
+          </span>
+        </div>
+        <Slider
+          id="sim-down"
+          min={downMin}
+          max={downMax}
+          step={1000}
+          value={[safeDown]}
+          onValueChange={(v) =>
+            onChange({ price: currentPrice, downPayment: v[0] ?? currentDownPayment })
+          }
+        />
+        <div className="flex justify-between text-[10px] text-textMuted mt-1">
+          <span>${downMin.toLocaleString()}</span>
+          <span>baseline ${Math.round(baseline.downPayment).toLocaleString()}</span>
+          <span>${downMax.toLocaleString()}</span>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between bg-surfaceAlt border border-border rounded-xl px-3 py-2 mb-3">
+        <span className="text-textMuted text-sm">Monthly cashflow</span>
+        <span className={`text-sm font-semibold ${cashflowTone}`}>
+          {monthlyCashflow >= 0 ? "+" : ""}
+          {formatMoney(monthlyCashflow)}/mo
+        </span>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2">
+        <Button
+          variant="secondary"
+          onClick={solveForPrice}
+          title="Find the highest price you could pay and still break even, holding the current down payment"
+        >
+          ↓ Break-even price
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={solveForDown}
+          title="Find the down payment that makes monthly cashflow zero, holding the current price"
+        >
+          ↑ Break-even down
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={reset}
+          disabled={!isDirty}
+        >
+          Reset
+        </Button>
+      </div>
+
+      {error ? (
+        <p className="text-danger text-xs mt-2">{error}</p>
+      ) : null}
     </div>
   );
 }

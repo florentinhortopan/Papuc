@@ -5,6 +5,8 @@ import {
   computeIRR,
   computeProForma,
   estimateSTRAdrFromLTRRent,
+  solveBreakevenDownPayment,
+  solveBreakevenPrice,
 } from "../proforma";
 import {
   computeAutoPMIRate,
@@ -424,6 +426,66 @@ describe("Cashflow & break-even include every cost", () => {
       total,
       6,
     );
+  });
+});
+
+describe("solveBreakevenPrice / solveBreakevenDownPayment", () => {
+  // A meaningfully unprofitable LTR baseline: rent only covers part of PITIA.
+  const baseline = {
+    price: 600000,
+    downPayment: 60000, // 10% down → LTV 90% → PMI applies
+    rateAPR: 0.07,
+    termYears: 30,
+    strategy: "LTR" as const,
+    monthlyRentLTR: 3200,
+    propertyTaxRatePct: 0.011,
+    utilitiesMonthly: 0,
+    maintenanceMonthly: 100,
+    miscMonthly: 100,
+  };
+
+  it("solveBreakevenPrice returns a price where annualPreTaxProfit ~= 0", () => {
+    const baseProfit = computeProForma(baseline).annualPreTaxProfit;
+    expect(baseProfit).toBeLessThan(0); // baseline must be unprofitable
+
+    const bePrice = solveBreakevenPrice(baseline);
+    expect(bePrice).not.toBeNull();
+    expect(bePrice!).toBeLessThan(baseline.price);
+
+    const verify = computeProForma({
+      ...baseline,
+      price: bePrice!,
+    }).annualPreTaxProfit;
+    expect(Math.abs(verify)).toBeLessThan(50); // within $50/yr of zero
+  });
+
+  it("solveBreakevenDownPayment returns a down where annualPreTaxProfit ~= 0", () => {
+    const beDown = solveBreakevenDownPayment(baseline);
+    expect(beDown).not.toBeNull();
+    expect(beDown!).toBeGreaterThan(baseline.downPayment);
+
+    const verify = computeProForma({
+      ...baseline,
+      downPayment: beDown!,
+    }).annualPreTaxProfit;
+    expect(Math.abs(verify)).toBeLessThan(50);
+  });
+
+  it("solveBreakevenPrice for a profitable deal returns a price above current", () => {
+    // A deal that's already in the black has a break-even price; it's
+    // just *higher* than current (the most you could pay and still
+    // break even on cashflow).
+    const profitable = { ...baseline, monthlyRentLTR: 10000 };
+    const bePrice = solveBreakevenPrice(profitable);
+    expect(bePrice).not.toBeNull();
+    expect(bePrice!).toBeGreaterThan(profitable.price);
+  });
+
+  it("solveBreakevenDownPayment returns null for a hopelessly unprofitable deal", () => {
+    // Rent so low that even an all-cash purchase still loses money to
+    // taxes + insurance + maintenance.
+    const hopeless = { ...baseline, monthlyRentLTR: 100 };
+    expect(solveBreakevenDownPayment(hopeless)).toBeNull();
   });
 });
 

@@ -405,3 +405,94 @@ export function computeProForma(inputs: ProFormaInputs): ProFormaResult {
     dscrLenderHaircut,
   };
 }
+
+/**
+ * What-if solvers used by the deal-detail "Scenario Simulator" panel.
+ * Each function asks "holding the rest of the pro-forma constant, what
+ * value of <X> makes annual pre-tax profit equal zero?".
+ *
+ * We use bisection rather than algebra because the pro-forma isn't
+ * strictly linear in price or down-payment:
+ *   - Property tax + insurance scale with price.
+ *   - PMI is bucketed by LTV (discrete jumps at 80/85/90/95%).
+ *   - Default insurance also depends on price when not overridden.
+ * Bisection handles those discontinuities gracefully and converges in
+ * ~30 iterations at $1 precision over realistic price ranges.
+ *
+ * Returns `null` when the function can't be made to cross zero within
+ * the search bounds (e.g. the deal is unprofitable even at zero price,
+ * or already so profitable it would require a negative-down-payment to
+ * break even).
+ */
+const SOLVER_MAX_ITERATIONS = 60;
+const SOLVER_TOLERANCE = 1; // $1 of annual pre-tax profit
+
+function cashflowAt(inputs: ProFormaInputs, overrides: Partial<ProFormaInputs>): number {
+  return computeProForma({ ...inputs, ...overrides }).annualPreTaxProfit;
+}
+
+/**
+ * Find the offer price that makes annual pre-tax profit ≈ 0, holding
+ * the current downPayment **dollar amount** constant. Lower price → less
+ * loan → less PITIA → more cashflow, so cashflow is monotonically
+ * decreasing in price. We bracket and bisect.
+ */
+export function solveBreakevenPrice(inputs: ProFormaInputs): number | null {
+  const downPayment = inputs.downPayment;
+  // Lower bound: price must exceed downPayment by at least $1 so loan ≥ 0.
+  // Upper bound: expand geometrically until we bracket a sign flip (or run
+  // out of headroom). Even a wildly profitable deal has a break-even
+  // price; it's just higher than the current asking price.
+  let lo = Math.max(downPayment + 1, 1);
+  let hi = Math.max(inputs.price * 3, lo + 1);
+
+  let fLo = cashflowAt(inputs, { price: lo });
+  let fHi = cashflowAt(inputs, { price: hi });
+  if (fLo <= 0) return null; // unprofitable even at the cheapest price
+  for (let i = 0; i < 6 && fHi >= 0; i++) {
+    hi *= 3;
+    fHi = cashflowAt(inputs, { price: hi });
+  }
+  if (fHi >= 0) return null; // sign never flips → ill-conditioned input
+  void fLo;
+
+  for (let i = 0; i < SOLVER_MAX_ITERATIONS; i++) {
+    const mid = (lo + hi) / 2;
+    const f = cashflowAt(inputs, { price: mid });
+    if (Math.abs(f) < SOLVER_TOLERANCE) return mid;
+    if (f > 0) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
+ * Find the down-payment that makes annual pre-tax profit ≈ 0, holding
+ * the current price constant. More down → smaller loan → less PITIA →
+ * more cashflow, so cashflow is monotonically increasing in downPayment.
+ *
+ * The search is bounded to [0, price] (you can't put more down than the
+ * purchase price). Returns null when the deal can't break even within
+ * that range.
+ */
+export function solveBreakevenDownPayment(
+  inputs: ProFormaInputs,
+): number | null {
+  const price = inputs.price;
+  let lo = 0;
+  let hi = price;
+
+  const fLo = cashflowAt(inputs, { downPayment: lo });
+  const fHi = cashflowAt(inputs, { downPayment: hi });
+  if (fHi <= 0) return null; // unprofitable even fully cash-bought
+  if (fLo >= 0) return null; // already profitable with 0% down
+
+  for (let i = 0; i < SOLVER_MAX_ITERATIONS; i++) {
+    const mid = (lo + hi) / 2;
+    const f = cashflowAt(inputs, { downPayment: mid });
+    if (Math.abs(f) < SOLVER_TOLERANCE) return mid;
+    if (f > 0) hi = mid;
+    else lo = mid;
+  }
+  return (lo + hi) / 2;
+}
