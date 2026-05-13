@@ -177,6 +177,11 @@ export async function scoutProjectInternal(
         pickHudFmrRent(detail?.hudFairMarketRent, listing.beds ?? 3) ??
         estimateRentFromPrice(effectivePrice);
 
+      // HOA: prefer listing-level value (free, came back on the search call)
+      // and fall back to detail (paid call, only when we already had to make
+      // one). `undefined` from both means the API simply did not return one.
+      const hoaMonthly = listing.hoaMonthly ?? detail?.hoaMonthly;
+
       // For STR we estimate an Average Daily Rate from the LTR-equivalent
       // monthly rent. monthlyRent / 30 (the old behavior) treated STR like
       // a daily slice of long-term rent and dramatically under-counted
@@ -199,6 +204,7 @@ export async function scoutProjectInternal(
           constraints.strategy === "STR"
             ? new Array(12).fill(estimatedADR)
             : undefined,
+        hoaMonthly: hoaMonthly,
       });
 
       const monthlyCashflow = proforma.annualPreTaxProfit / 12;
@@ -251,6 +257,7 @@ export async function scoutProjectInternal(
             mls_data: listing.raw ?? null,
             est_value: avm ?? null,
             est_rent: monthlyRent,
+            hoa_monthly: hoaMonthly ?? null,
             hud_fmr: detail?.hudFairMarketRent ?? null,
             last_refreshed_at: new Date().toISOString(),
           },

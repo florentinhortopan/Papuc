@@ -32,7 +32,9 @@ export async function GET(
 
   const { data: deal, error } = await supabase
     .from("deals")
-    .select("id, source, source_url, photos, primary_image_url, address, city, state, zip")
+    .select(
+      "id, source, source_url, photos, primary_image_url, hoa_monthly, address, city, state, zip",
+    )
     .eq("id", dealId)
     .single();
   if (error || !deal) {
@@ -71,18 +73,30 @@ export async function GET(
     const detail = await client.getZillowProperty(deal.source_url);
     const photos = detail.photos.length ? detail.photos : cached;
 
+    // Opportunistically backfill HOA when the property detail exposes one
+    // and we didn't already capture it during scouting (listings often
+    // omit it). This keeps a single paid call doing double duty.
+    const shouldBackfillHoa =
+      detail.hoaMonthly !== undefined && deal.hoa_monthly == null;
+
+    const update: Record<string, unknown> = {};
     if (photos.length > cached.length) {
-      await supabase
-        .from("deals")
-        .update({
-          photos,
-          primary_image_url: photos[0] ?? deal.primary_image_url,
-          last_refreshed_at: new Date().toISOString(),
-        })
-        .eq("id", dealId);
+      update.photos = photos;
+      update.primary_image_url = photos[0] ?? deal.primary_image_url;
+    }
+    if (shouldBackfillHoa) {
+      update.hoa_monthly = detail.hoaMonthly;
+    }
+    if (Object.keys(update).length > 0) {
+      update.last_refreshed_at = new Date().toISOString();
+      await supabase.from("deals").update(update).eq("id", dealId);
     }
 
-    return NextResponse.json({ photos, cached: false });
+    return NextResponse.json({
+      photos,
+      cached: false,
+      hoaMonthly: detail.hoaMonthly ?? deal.hoa_monthly ?? null,
+    });
   } catch (err) {
     return NextResponse.json(
       {

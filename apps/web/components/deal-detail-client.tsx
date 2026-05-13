@@ -74,7 +74,7 @@ export function DealDetailClient({
       termYears: String(c.mortgage.termYears),
       propertyTaxRatePct: "0.011",
       insuranceMonthly: "100",
-      hoaMonthly: "0",
+      hoaMonthly: String(deal.hoa_monthly ?? 0),
       pmiRatePct: "0.01",
       utilitiesMonthly: c.strategy === "STR" ? "400" : "0",
       maintenanceMonthly: "100",
@@ -280,6 +280,19 @@ export function DealDetailClient({
         if (Array.isArray(body?.photos) && body.photos.length > 0) {
           setPhotos(body.photos);
         }
+        // /photos doubles as an HOA backfill when the listing didn't ship
+        // one. Only auto-update if the user hasn't deviated from the
+        // initial seed (zero), so we never clobber manual edits.
+        if (
+          typeof body?.hoaMonthly === "number" &&
+          Number.isFinite(body.hoaMonthly)
+        ) {
+          setState((prev) =>
+            toNum(prev.hoaMonthly, 0) === 0
+              ? { ...prev, hoaMonthly: String(body.hoaMonthly) }
+              : prev,
+          );
+        }
       })
       .catch(() => {
         // soft-fail: keep showing whatever cover photo we had
@@ -429,7 +442,17 @@ export function DealDetailClient({
             <Field label="Tax rate" type="number" inputMode="decimal" value={state.taxRate} onChange={(e) => patch("taxRate", e.target.value)} hint="On rental profits" />
             <Field label="Prop tax %/yr" type="number" inputMode="decimal" value={state.propertyTaxRatePct} onChange={(e) => patch("propertyTaxRatePct", e.target.value)} hint="Berkeley default 0.011" />
             <Field label="Insurance ($/mo)" type="number" value={state.insuranceMonthly} onChange={(e) => patch("insuranceMonthly", e.target.value)} />
-            <Field label="HOA ($/mo)" type="number" value={state.hoaMonthly} onChange={(e) => patch("hoaMonthly", e.target.value)} />
+            <Field
+              label="HOA ($/mo)"
+              type="number"
+              value={state.hoaMonthly}
+              onChange={(e) => patch("hoaMonthly", e.target.value)}
+              hint={
+                deal.hoa_monthly != null
+                  ? `Provider reported $${deal.hoa_monthly}/mo`
+                  : "Not reported by provider — enter manually if known"
+              }
+            />
             <Field label="PMI %/yr" type="number" inputMode="decimal" value={state.pmiRatePct} onChange={(e) => patch("pmiRatePct", e.target.value)} hint="Auto 0 if LTV ≤ 80%" />
             <Field label="Utilities ($/mo)" type="number" value={state.utilitiesMonthly} onChange={(e) => patch("utilitiesMonthly", e.target.value)} />
             <Field label="Maintenance ($/mo)" type="number" value={state.maintenanceMonthly} onChange={(e) => patch("maintenanceMonthly", e.target.value)} />

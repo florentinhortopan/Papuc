@@ -54,6 +54,7 @@ export type DealsRow = {
   mls_data: unknown;
   est_value: number | null;
   est_rent: number | null;
+  hoa_monthly: number | null;
   hud_fmr: unknown;
   last_refreshed_at: string;
   created_at: string;

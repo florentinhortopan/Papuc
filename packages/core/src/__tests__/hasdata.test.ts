@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildZillowParams,
+  extractHoaMonthly,
   extractZillowPhotos,
   HasDataClient,
   HasDataError,
@@ -279,5 +280,47 @@ describe("HasDataClient.getZillowProperty", () => {
   it("rejects URLs that aren't http(s)", async () => {
     const client = new HasDataClient({ apiKey: "k", fetchFn: mockFetch(async () => new Response("")) });
     await expect(client.getZillowProperty("not-a-url")).rejects.toThrow();
+  });
+});
+
+describe("extractHoaMonthly", () => {
+  it("reads top-level monthlyHoaFee verbatim", () => {
+    expect(extractHoaMonthly({ monthlyHoaFee: 250 })).toBe(250);
+  });
+
+  it("converts annual hoaFee with frequency to monthly", () => {
+    expect(extractHoaMonthly({ hoaFee: 1200, hoaFeeFrequency: "Annually" })).toBe(100);
+  });
+
+  it("parses a string like '$300/month'", () => {
+    expect(extractHoaMonthly({ hoaFee: "$300/month" })).toBe(300);
+  });
+
+  it("parses '1500/year' as 125/mo", () => {
+    expect(extractHoaMonthly({ hoaFee: "1500/year" })).toBe(125);
+  });
+
+  it("treats 'none' string as $0/mo", () => {
+    expect(extractHoaMonthly({ hoaFee: "None" })).toBe(0);
+  });
+
+  it("falls back to resoFacts.monthlyHoaFee", () => {
+    expect(
+      extractHoaMonthly({ resoFacts: { monthlyHoaFee: 175 } }),
+    ).toBe(175);
+  });
+
+  it("reads from hdpData.homeInfo.monthlyHoaFee", () => {
+    expect(
+      extractHoaMonthly({ hdpData: { homeInfo: { monthlyHoaFee: 90 } } }),
+    ).toBe(90);
+  });
+
+  it("returns 0 when hasAssociation is explicitly false", () => {
+    expect(extractHoaMonthly({ hasAssociation: false })).toBe(0);
+  });
+
+  it("returns undefined when nothing usable is present", () => {
+    expect(extractHoaMonthly({ price: 500000 })).toBeUndefined();
   });
 });

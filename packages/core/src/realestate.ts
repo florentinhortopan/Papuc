@@ -78,6 +78,9 @@ export interface MLSListingSummary {
   photosList?: Array<{ url: string; type?: string }>;
   daysOnMarket?: number;
   listingAgent?: { fullName?: string; phone?: string };
+  /** Monthly HOA fee in USD when the MLS / property record exposes it.
+   *  `undefined` means unknown, `0` means confirmed-no-HOA. */
+  hoaMonthly?: number;
   raw?: unknown;
 }
 
@@ -102,6 +105,9 @@ export interface PropertyDetail {
   propertyType?: string;
   lat?: number;
   lng?: number;
+  /** Monthly HOA fee in USD. `undefined` means unknown, `0` means
+   *  confirmed-no-HOA. */
+  hoaMonthly?: number;
   photos?: string[];
   raw?: unknown;
 }
@@ -281,6 +287,7 @@ function normalizeListing(item: any): MLSListingSummary {
     photosList: media.photosList,
     daysOnMarket: item.daysOnMarket ?? m.daysOnMarket,
     listingAgent: m.listingAgent,
+    hoaMonthly: extractRealEstateHoa(item),
     raw: item,
   };
 }
@@ -312,8 +319,67 @@ function normalizePropertyRecord(item: any): MLSListingSummary {
     photosList: imageUrl ? [{ url: imageUrl }] : undefined,
     daysOnMarket: toFiniteNumber(item.mlsDaysOnMarket),
     listingAgent: undefined,
+    hoaMonthly: extractRealEstateHoa(item),
     raw: item,
   };
+}
+
+/**
+ * Pull a monthly HOA fee out of a RealEstateAPI payload (PropertySearch
+ * row, MLSSearch row, or PropertyDetail). MLS records expose this most
+ * reliably; off-market property records rarely have it.
+ *
+ * Field paths checked:
+ *   - top-level `hoaFee` / `monthlyHoaFee` / `hoa.monthlyHoaFee`
+ *   - `mlsListing.hoaFee` / `mlsListing.hoaFeeFrequency`
+ *   - `propertyInfo.hoaFee` / `propertyInfo.monthlyHoaFee`
+ */
+export function extractRealEstateHoa(o: Record<string, any>): number | undefined {
+  const direct = toFiniteNumber(o.monthlyHoaFee);
+  if (direct !== undefined) return direct;
+
+  const hoaObj = o.hoa;
+  if (hoaObj && typeof hoaObj === "object") {
+    const v = toFiniteNumber((hoaObj as any).monthlyHoaFee ?? (hoaObj as any).hoaFee);
+    if (v !== undefined) {
+      const freq = String((hoaObj as any).hoaFeeFrequency ?? "monthly").toLowerCase();
+      return hoaToMonthly(v, freq);
+    }
+  }
+
+  const mls = o.mlsListing;
+  if (mls && typeof mls === "object") {
+    const v = toFiniteNumber((mls as any).hoaFee ?? (mls as any).monthlyHoaFee);
+    if (v !== undefined) {
+      const freq = String((mls as any).hoaFeeFrequency ?? "monthly").toLowerCase();
+      return hoaToMonthly(v, freq);
+    }
+  }
+
+  const info = o.propertyInfo;
+  if (info && typeof info === "object") {
+    const v = toFiniteNumber((info as any).monthlyHoaFee ?? (info as any).hoaFee);
+    if (v !== undefined) {
+      const freq = String((info as any).hoaFeeFrequency ?? "monthly").toLowerCase();
+      return hoaToMonthly(v, freq);
+    }
+    if ((info as any).hasHoa === false) return 0;
+  }
+
+  const flat = toFiniteNumber(o.hoaFee);
+  if (flat !== undefined) {
+    const freq = String(o.hoaFeeFrequency ?? "monthly").toLowerCase();
+    return hoaToMonthly(flat, freq);
+  }
+
+  return undefined;
+}
+
+function hoaToMonthly(value: number, frequency: string): number {
+  if (frequency.startsWith("year") || frequency === "annually") return value / 12;
+  if (frequency.startsWith("quarter")) return value / 3;
+  if (frequency.startsWith("week")) return (value * 52) / 12;
+  return value;
 }
 
 function toFiniteNumber(v: unknown): number | undefined {
@@ -348,6 +414,7 @@ function normalizeDetail(d: any): PropertyDetail {
     propertyType: propertyInfo.propertyType ?? d.propertyType,
     lat: d.propertyAddress?.latitude ?? d.lat,
     lng: d.propertyAddress?.longitude ?? d.lng,
+    hoaMonthly: extractRealEstateHoa(d),
     photos,
     raw: d,
   };

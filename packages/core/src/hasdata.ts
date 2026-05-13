@@ -87,6 +87,10 @@ export interface ZillowListingSummary {
   detailUrl?: string;
   lat?: number;
   lng?: number;
+  /** Monthly HOA fee in USD when the listing exposes it. Often absent on
+   *  the listing endpoint; populated via the Property endpoint on lazy
+   *  hydrate. `undefined` means unknown, `0` means confirmed-no-HOA. */
+  hoaMonthly?: number;
   raw?: unknown;
 }
 
@@ -127,6 +131,10 @@ export interface ZillowPropertyDetail {
   description?: string;
   lat?: number;
   lng?: number;
+  /** Monthly HOA fee in USD. `undefined` means unknown, `0` means
+   *  confirmed-no-HOA. Zillow Property pages almost always include this
+   *  when an HOA exists. */
+  hoaMonthly?: number;
   raw?: unknown;
 }
 
@@ -334,6 +342,7 @@ export function normalizeZillowListing(item: unknown): ZillowListingSummary {
     detailUrl: typeof o.detailUrl === "string" ? o.detailUrl : o.url,
     lat: toFiniteNumber(o.latitude ?? o.lat),
     lng: toFiniteNumber(o.longitude ?? o.lng ?? o.lon),
+    hoaMonthly: extractHoaMonthly(o),
     raw: o,
   };
 }
@@ -437,8 +446,89 @@ export function normalizeZillowProperty(
     description: typeof o.description === "string" ? o.description : undefined,
     lat: toFiniteNumber(o.latitude ?? o.lat),
     lng: toFiniteNumber(o.longitude ?? o.lng ?? o.lon),
+    hoaMonthly: extractHoaMonthly(o),
     raw: o,
   };
+}
+
+/**
+ * Defensively pull a monthly HOA fee from a Zillow record. Zillow puts
+ * this in several different places depending on listing type / data
+ * completeness — single-family detached usually has no HOA at all,
+ * condos/townhomes/HOA-governed developments do.
+ *
+ * Field paths we check (in order):
+ *   - top-level `monthlyHoaFee` (newer Zillow listing+property payloads)
+ *   - top-level `hoaFee` (string like "$250/month" or number)
+ *   - `resoFacts.hoaFee` + `resoFacts.hoaFeeFrequency`
+ *   - `hdpData.homeInfo.monthlyHoaFee`
+ *
+ * Returns:
+ *   - a positive number for "HOA is $N/month"
+ *   - `0` for "no HOA" (e.g. `hasAssociation === false`)
+ *   - `undefined` for "unknown / not in the payload"
+ */
+export function extractHoaMonthly(o: Record<string, any>): number | undefined {
+  const direct = toFiniteNumber(o.monthlyHoaFee);
+  if (direct !== undefined) return direct;
+
+  const hoaFee = o.hoaFee;
+  if (typeof hoaFee === "number" && Number.isFinite(hoaFee)) {
+    const freq = String(o.hoaFeeFrequency ?? "monthly").toLowerCase();
+    return normalizeHoaToMonthly(hoaFee, freq);
+  }
+  if (typeof hoaFee === "string") {
+    const parsed = parseHoaFeeString(hoaFee);
+    if (parsed !== undefined) return parsed;
+  }
+
+  const reso = o.resoFacts;
+  if (reso && typeof reso === "object") {
+    const r = reso as Record<string, any>;
+    const v = toFiniteNumber(r.monthlyHoaFee ?? r.hoaFee);
+    if (v !== undefined) {
+      const freq = String(r.hoaFeeFrequency ?? "monthly").toLowerCase();
+      return normalizeHoaToMonthly(v, freq);
+    }
+  }
+
+  const hdp = o.hdpData;
+  if (hdp && typeof hdp === "object") {
+    const info = (hdp as Record<string, any>).homeInfo;
+    if (info && typeof info === "object") {
+      const v = toFiniteNumber(
+        (info as Record<string, any>).monthlyHoaFee ??
+          (info as Record<string, any>).hoaFee,
+      );
+      if (v !== undefined) return v;
+    }
+  }
+
+  // Last resort: explicit "no association" flag.
+  if (o.hasAssociation === false) return 0;
+
+  return undefined;
+}
+
+function normalizeHoaToMonthly(value: number, frequency: string): number {
+  if (frequency.startsWith("year") || frequency === "annually") return value / 12;
+  if (frequency.startsWith("quarter")) return value / 3;
+  if (frequency.startsWith("week")) return value * 52 / 12;
+  // Default: monthly.
+  return value;
+}
+
+function parseHoaFeeString(s: string): number | undefined {
+  const lower = s.toLowerCase().trim();
+  if (!lower || lower === "none" || lower === "n/a" || lower === "no hoa") {
+    return 0;
+  }
+  const n = Number(s.replace(/[^0-9.]/g, ""));
+  if (!Number.isFinite(n)) return undefined;
+  if (/year|annual|annually|yr|yearly/.test(lower)) return n / 12;
+  if (/quarter|quarterly/.test(lower)) return n / 3;
+  if (/week|weekly/.test(lower)) return (n * 52) / 12;
+  return n;
 }
 
 function toFiniteNumber(v: unknown): number | undefined {
