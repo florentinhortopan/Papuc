@@ -7,6 +7,7 @@ import {
   DEFAULT_INSURANCE_RATE_PCT,
   solveBreakevenDownPayment,
   solveBreakevenPrice,
+  solveBreakevenRent,
   type ProFormaInputs,
   type Strategy,
 } from "@papuc/core";
@@ -29,6 +30,14 @@ import { actOnDeal, clearDealAction, type DealWithScore } from "@/lib/deals";
 import { exportProFormaCsv } from "@/lib/export";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
 import type { ProjectRow } from "@/lib/projects";
+import {
+  asScenarioInputs,
+  createScenario,
+  deleteScenario,
+  listScenarios,
+  type ScenarioInputs,
+  type ScenarioRow,
+} from "@/lib/scenarios";
 import { getDealSourceLink } from "@/lib/source-url";
 import { createClient } from "@/lib/supabase/client";
 
@@ -370,6 +379,143 @@ export function DealDetailClient({
     };
   }, [deal.id, deal.source, cachedPhotos.length]);
 
+  /**
+   * Saved scenarios: hydrate on mount so the picker is populated, then
+   * keep in sync after save/delete operations. We intentionally don't
+   * subscribe to realtime here — multi-device editing of scenarios is
+   * out of scope for now.
+   */
+  const [scenarios, setScenarios] = useState<ScenarioRow[]>([]);
+  const [scenariosLoading, setScenariosLoading] = useState(true);
+  const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setScenariosLoading(true);
+    listScenarios(deal.id)
+      .then((rows) => {
+        if (!cancelled) setScenarios(rows);
+      })
+      .catch(() => {
+        // Soft-fail: scenarios are non-critical and we don't want a
+        // network blip to crash the deal page.
+      })
+      .finally(() => {
+        if (!cancelled) setScenariosLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deal.id]);
+
+  /**
+   * Re-hydrate the entire pro-forma editor from a saved scenario. Missing
+   * fields fall back to the current state so old scenarios stay loadable
+   * even after we add new pro-forma inputs.
+   */
+  function loadScenario(row: ScenarioRow) {
+    const inputs = asScenarioInputs(row.inputs);
+    if (!inputs) {
+      setError("This scenario is in an unrecognized format.");
+      return;
+    }
+    setState((s) => ({
+      ...s,
+      price: inputs.price ?? s.price,
+      downPayment: inputs.downPayment ?? s.downPayment,
+      improvements: inputs.improvements ?? s.improvements,
+      taxRate: inputs.taxRate ?? s.taxRate,
+      rateAPR: inputs.rateAPR ?? s.rateAPR,
+      termYears: inputs.termYears ?? s.termYears,
+      propertyTaxRatePct: inputs.propertyTaxRatePct ?? s.propertyTaxRatePct,
+      insuranceAnnual: inputs.insuranceAnnual ?? s.insuranceAnnual,
+      hoaMonthly: inputs.hoaMonthly ?? s.hoaMonthly,
+      pmiOverride:
+        inputs.pmiOverride === undefined ? s.pmiOverride : inputs.pmiOverride,
+      utilitiesMonthly: inputs.utilitiesMonthly ?? s.utilitiesMonthly,
+      maintenanceMonthly: inputs.maintenanceMonthly ?? s.maintenanceMonthly,
+      miscMonthly: inputs.miscMonthly ?? s.miscMonthly,
+      monthlyRentLTR: inputs.monthlyRentLTR ?? s.monthlyRentLTR,
+      strategy: inputs.strategy ?? s.strategy,
+    }));
+    if (inputs.strMatrix) {
+      setStrMatrix({
+        monthlyNights: inputs.strMatrix.monthlyNights,
+        monthlyADR: inputs.strMatrix.monthlyADR,
+        monthlyOccupancy: inputs.strMatrix.monthlyOccupancy,
+        monthlyAvgStays: inputs.strMatrix.monthlyAvgStays,
+      });
+    }
+    setActiveScenarioId(row.id);
+    setError(null);
+  }
+
+  /**
+   * Snapshot the current editor as a new scenario row. Prompts for a
+   * label inline so the user can give meaningful names ("After
+   * negotiation", "20% down", "STR optimistic").
+   */
+  async function saveScenario() {
+    const name = window.prompt(
+      "Name this scenario (e.g. \"After negotiation\")",
+      `Scenario ${scenarios.length + 1}`,
+    );
+    if (!name || !name.trim()) return;
+    setBusy("save-scenario");
+    setError(null);
+    try {
+      const snapshot: ScenarioInputs = {
+        price: state.price,
+        downPayment: state.downPayment,
+        improvements: state.improvements,
+        taxRate: state.taxRate,
+        rateAPR: state.rateAPR,
+        termYears: state.termYears,
+        propertyTaxRatePct: state.propertyTaxRatePct,
+        insuranceAnnual: state.insuranceAnnual,
+        hoaMonthly: state.hoaMonthly,
+        pmiOverride: state.pmiOverride,
+        utilitiesMonthly: state.utilitiesMonthly,
+        maintenanceMonthly: state.maintenanceMonthly,
+        miscMonthly: state.miscMonthly,
+        monthlyRentLTR: state.monthlyRentLTR,
+        strategy: state.strategy,
+        strMatrix: {
+          monthlyNights: strMatrix.monthlyNights,
+          monthlyADR: strMatrix.monthlyADR,
+          monthlyOccupancy: strMatrix.monthlyOccupancy,
+          monthlyAvgStays: strMatrix.monthlyAvgStays,
+        },
+      };
+      const row = await createScenario({
+        dealId: deal.id,
+        name: name.trim(),
+        inputs: snapshot,
+        monthlyCashflow: result.annualPreTaxProfit / 12,
+      });
+      setScenarios((prev) => [row, ...prev]);
+      setActiveScenarioId(row.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function removeScenario(id: string) {
+    if (!window.confirm("Delete this scenario?")) return;
+    setBusy("delete-scenario");
+    setError(null);
+    try {
+      await deleteScenario(id);
+      setScenarios((prev) => prev.filter((s) => s.id !== id));
+      if (activeScenarioId === id) setActiveScenarioId(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div className="mt-2 grid lg:grid-cols-[1.4fr,1fr] gap-6">
       <div className="space-y-6">
@@ -666,6 +812,31 @@ export function DealDetailClient({
           inputs={inputs}
         />
 
+        <GapDiagnosis
+          inputs={inputs}
+          monthlyCashflow={result.annualPreTaxProfit / 12}
+          onApplyPrice={(price) =>
+            setState((s) => ({ ...s, price: String(Math.round(price)) }))
+          }
+          onApplyDown={(down) =>
+            setState((s) => ({ ...s, downPayment: String(Math.round(down)) }))
+          }
+          onApplyRent={(rent) =>
+            setState((s) => ({ ...s, monthlyRentLTR: String(Math.round(rent)) }))
+          }
+        />
+
+        <ScenariosPanel
+          scenarios={scenarios}
+          loading={scenariosLoading}
+          activeId={activeScenarioId}
+          onSave={saveScenario}
+          onLoad={loadScenario}
+          onDelete={removeScenario}
+          saving={busy === "save-scenario"}
+          deleting={busy === "delete-scenario"}
+        />
+
         {state.strategy === "STR" ? (
           <StrMatrix value={strMatrix} onChange={setStrMatrix} />
         ) : null}
@@ -690,6 +861,293 @@ export function DealDetailClient({
             Dismiss
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Saved-scenario picker. Each row shows the scenario name, the monthly
+ * cashflow snapshot captured at save time, and two actions: "Load"
+ * re-hydrates the editor from the saved JSON; "Delete" removes the row.
+ * The "Save current" button at the top serializes the live editor state
+ * into a new scenario row.
+ *
+ * Scenarios are deal-scoped — the picker is empty until the user saves
+ * the first one, with a one-line hint pointing at the save action.
+ */
+function ScenariosPanel({
+  scenarios,
+  loading,
+  activeId,
+  onSave,
+  onLoad,
+  onDelete,
+  saving,
+  deleting,
+}: {
+  scenarios: ScenarioRow[];
+  loading: boolean;
+  activeId: string | null;
+  onSave: () => void;
+  onLoad: (row: ScenarioRow) => void;
+  onDelete: (id: string) => void;
+  saving: boolean;
+  deleting: boolean;
+}) {
+  return (
+    <div className="bg-surface border border-border rounded-2xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-text text-base font-semibold">Saved scenarios</p>
+        <Button
+          variant="secondary"
+          onClick={onSave}
+          loading={saving}
+          className="!text-xs !px-3 !py-1.5"
+        >
+          + Save current
+        </Button>
+      </div>
+
+      {loading ? (
+        <p className="text-textMuted text-xs italic">Loading…</p>
+      ) : scenarios.length === 0 ? (
+        <p className="text-textMuted text-xs">
+          No scenarios yet. Tune the inputs (or run the break-even solvers
+          above), then hit{" "}
+          <span className="text-text">Save current</span> to keep this
+          snapshot for later.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {scenarios.map((s) => {
+            const cashflow = s.monthly_cashflow_at_save;
+            const tone =
+              cashflow == null
+                ? "text-textMuted"
+                : cashflow >= 100
+                  ? "text-success"
+                  : cashflow >= -100
+                    ? "text-warning"
+                    : "text-danger";
+            const isActive = activeId === s.id;
+            return (
+              <li
+                key={s.id}
+                className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 ${
+                  isActive
+                    ? "border-primary bg-primary/5"
+                    : "border-border bg-surfaceAlt"
+                }`}
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-text text-sm font-semibold truncate">
+                    {s.name}
+                  </p>
+                  <p className="text-textMuted text-[11px]">
+                    {new Date(s.created_at).toLocaleDateString()} ·{" "}
+                    <span className={tone}>
+                      {cashflow == null
+                        ? "no snapshot"
+                        : `${cashflow >= 0 ? "+" : ""}${formatMoney(cashflow)}/mo at save`}
+                    </span>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onLoad(s)}
+                  className="text-xs text-primary hover:underline"
+                  disabled={isActive}
+                >
+                  {isActive ? "Loaded" : "Load"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(s.id)}
+                  className="text-xs text-danger/80 hover:text-danger hover:underline"
+                  disabled={deleting}
+                >
+                  Delete
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Layer 1 "Gap diagnosis": for the current scenario, surface the *exact*
+ * size of each independent lever that would zero out monthly cashflow.
+ * This converts "this deal doesn't work" into concrete asks like
+ * "negotiate $42k off, OR put $58k more down, OR find $310/mo more rent",
+ * so the user can pick the path that's actually achievable.
+ *
+ * The card is read-only by default; each row's "Apply" button writes the
+ * proposed value into the parent state so the rest of the page (chart,
+ * PITIA, badges) updates live.
+ */
+function GapDiagnosis({
+  inputs,
+  monthlyCashflow,
+  onApplyPrice,
+  onApplyDown,
+  onApplyRent,
+}: {
+  inputs: ProFormaInputs;
+  monthlyCashflow: number;
+  onApplyPrice: (price: number) => void;
+  onApplyDown: (down: number) => void;
+  onApplyRent: (rent: number) => void;
+}) {
+  const bePrice = useMemo(() => solveBreakevenPrice(inputs), [inputs]);
+  const beDown = useMemo(() => solveBreakevenDownPayment(inputs), [inputs]);
+  const beRent = useMemo(() => solveBreakevenRent(inputs), [inputs]);
+
+  const isPositive = monthlyCashflow >= 0;
+  const gapMonthly = -monthlyCashflow; // amount short of break-even
+  const headline = isPositive
+    ? `Already $${Math.round(monthlyCashflow).toLocaleString()}/mo above break-even`
+    : `Need ${formatMoney(gapMonthly)}/mo more to break even`;
+
+  // Compute % deltas relative to current values so the user sees the
+  // magnitude of each ask at a glance.
+  const priceDeltaPct =
+    bePrice !== null && inputs.price > 0
+      ? ((bePrice - inputs.price) / inputs.price) * 100
+      : null;
+  const downDeltaPct =
+    beDown !== null && inputs.price > 0
+      ? ((beDown - inputs.downPayment) / inputs.price) * 100
+      : null;
+  const rentDeltaPct =
+    beRent !== null && (inputs.monthlyRentLTR ?? 0) > 0
+      ? ((beRent - (inputs.monthlyRentLTR ?? 0)) /
+          (inputs.monthlyRentLTR ?? 1)) *
+        100
+      : null;
+
+  return (
+    <div className="bg-surface border border-border rounded-2xl p-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <p className="text-text text-base font-semibold">Equivalent levers</p>
+        <p
+          className={`text-xs ${isPositive ? "text-success" : "text-warning"}`}
+        >
+          {headline}
+        </p>
+      </div>
+      <p className="text-textMuted text-xs mb-3">
+        Any one of these changes (holding the rest constant) would put
+        monthly cashflow at exactly $0. Pick the lever you can realistically
+        move.
+      </p>
+
+      <LeverRow
+        label="Negotiate price to"
+        value={bePrice}
+        deltaPct={priceDeltaPct}
+        deltaPrefix="vs ask"
+        format={(v) => `$${Math.round(v).toLocaleString()}`}
+        onApply={bePrice !== null ? () => onApplyPrice(bePrice) : null}
+        unsolvable={
+          bePrice === null
+            ? "No price in the search range fits — the deal might be unfixable on this lever alone."
+            : null
+        }
+      />
+      <LeverRow
+        label="Down payment to"
+        value={beDown}
+        deltaPct={downDeltaPct}
+        deltaPrefix="of price"
+        format={(v) => `$${Math.round(v).toLocaleString()}`}
+        onApply={beDown !== null ? () => onApplyDown(beDown) : null}
+        unsolvable={
+          beDown === null
+            ? "Even putting the full price down still loses money to carry costs."
+            : null
+        }
+      />
+      {inputs.strategy === "STR" ? (
+        <p className="text-textMuted text-xs italic">
+          STR rent break-even is the "Break-even ADR" shown in the pro-forma
+          summary (the matrix below drives nightly revenue).
+        </p>
+      ) : (
+        <LeverRow
+          label="Monthly rent to"
+          value={beRent}
+          deltaPct={rentDeltaPct}
+          deltaPrefix="vs current"
+          format={(v) => `${formatMoney(v)}/mo`}
+          onApply={beRent !== null ? () => onApplyRent(beRent) : null}
+          unsolvable={
+            beRent === null
+              ? "Rent doesn't move cashflow enough at these inputs."
+              : null
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+function LeverRow({
+  label,
+  value,
+  deltaPct,
+  deltaPrefix,
+  format,
+  onApply,
+  unsolvable,
+}: {
+  label: string;
+  value: number | null;
+  deltaPct: number | null;
+  deltaPrefix: string;
+  format: (v: number) => string;
+  onApply: (() => void) | null;
+  unsolvable: string | null;
+}) {
+  if (unsolvable) {
+    return (
+      <div className="flex items-center justify-between py-2 border-t border-border first:border-t-0">
+        <span className="text-textMuted text-sm">{label}</span>
+        <span className="text-textMuted text-xs italic">{unsolvable}</span>
+      </div>
+    );
+  }
+  const deltaTone =
+    deltaPct === null
+      ? "text-textMuted"
+      : deltaPct > 0
+        ? "text-warning"
+        : "text-success";
+  return (
+    <div className="flex items-center justify-between py-2 border-t border-border first:border-t-0">
+      <span className="text-textMuted text-sm">{label}</span>
+      <div className="flex items-center gap-3">
+        <span className="text-text text-sm font-semibold">
+          {value !== null ? format(value) : "—"}
+        </span>
+        {deltaPct !== null ? (
+          <span className={`text-xs ${deltaTone} min-w-[64px] text-right`}>
+            {deltaPct > 0 ? "+" : ""}
+            {deltaPct.toFixed(1)}% {deltaPrefix}
+          </span>
+        ) : null}
+        {onApply ? (
+          <button
+            type="button"
+            onClick={onApply}
+            className="text-xs text-primary hover:underline"
+          >
+            Apply
+          </button>
+        ) : null}
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import {
   estimateSTRAdrFromLTRRent,
   solveBreakevenDownPayment,
   solveBreakevenPrice,
+  solveBreakevenRent,
 } from "../proforma";
 import {
   computeAutoPMIRate,
@@ -486,6 +487,24 @@ describe("solveBreakevenPrice / solveBreakevenDownPayment", () => {
     // taxes + insurance + maintenance.
     const hopeless = { ...baseline, monthlyRentLTR: 100 };
     expect(solveBreakevenDownPayment(hopeless)).toBeNull();
+  });
+
+  it("solveBreakevenRent finds the rent that zeros cashflow", () => {
+    const rent = solveBreakevenRent(baseline);
+    expect(rent).not.toBeNull();
+    expect(rent!).toBeGreaterThan(baseline.monthlyRentLTR);
+
+    const verify = computeProForma({
+      ...baseline,
+      monthlyRentLTR: rent!,
+    }).annualPreTaxProfit;
+    expect(Math.abs(verify)).toBeLessThan(10);
+  });
+
+  it("solveBreakevenRent returns null for STR (uses ADR break-even instead)", () => {
+    expect(
+      solveBreakevenRent({ ...baseline, strategy: "STR" }),
+    ).toBeNull();
   });
 });
 

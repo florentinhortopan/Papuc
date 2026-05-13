@@ -85,6 +85,20 @@ export type DealActionsRow = {
   created_at: string;
 };
 
+export type ScenariosRow = {
+  id: string;
+  deal_id: string;
+  owner_id: string;
+  name: string;
+  notes: string | null;
+  /** Full ProFormaState plus StrMatrixValue. The shape is opaque at the
+   *  DB layer; the typed contract lives in `apps/web/lib/scenarios.ts`. */
+  inputs: unknown;
+  monthly_cashflow_at_save: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ScoutRunsRow = {
   id: string;
   project_id: string;

@@ -467,6 +467,37 @@ export function solveBreakevenPrice(inputs: ProFormaInputs): number | null {
 }
 
 /**
+ * Find the monthly rent (LTR) that makes annual pre-tax profit ≈ 0,
+ * holding everything else constant. More rent → more cashflow, so the
+ * function is monotonically increasing in monthlyRentLTR.
+ *
+ * STR deals use `computeBreakevenADR` instead (the ADR fans out across
+ * the 12-month matrix). For STR strategies this solver short-circuits
+ * with null and the caller should route to ADR break-even.
+ */
+export function solveBreakevenRent(inputs: ProFormaInputs): number | null {
+  if (inputs.strategy === "STR") return null;
+
+  // Cashflow is linear in rent (just adds 12 × rent to annual revenue),
+  // so a single Newton step suffices. We still verify with a recompute
+  // so any non-linear bits (e.g. taxes scaling separately) are caught.
+  const baseProfit = computeProForma({
+    ...inputs,
+    monthlyRentLTR: 0,
+  }).annualPreTaxProfit;
+  const oneDollarMore = computeProForma({
+    ...inputs,
+    monthlyRentLTR: 1,
+  }).annualPreTaxProfit;
+  const marginalPerDollar = oneDollarMore - baseProfit; // ~= 12 for LTR
+  if (marginalPerDollar <= 0) return null;
+
+  const breakevenRent = -baseProfit / marginalPerDollar;
+  if (!Number.isFinite(breakevenRent) || breakevenRent < 0) return null;
+  return breakevenRent;
+}
+
+/**
  * Find the down-payment that makes annual pre-tax profit ≈ 0, holding
  * the current price constant. More down → smaller loan → less PITIA →
  * more cashflow, so cashflow is monotonically increasing in downPayment.
