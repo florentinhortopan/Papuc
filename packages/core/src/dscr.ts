@@ -18,6 +18,27 @@ const DEFAULT_INSURANCE_MONTHLY = 100;
 const DEFAULT_HOA_MONTHLY = 0;
 
 /**
+ * Default annual home-owner insurance premium as a fraction of price. The US
+ * average is ~0.35% of home value per year (NAIC / Bankrate 2025); coastal
+ * and wildfire-prone markets run higher (often 0.6–1.0%). 0.35% is a
+ * reasonable starting point that callers can override.
+ */
+export const DEFAULT_INSURANCE_RATE_PCT = 0.0035;
+
+/**
+ * Convert a property price to an estimated monthly insurance premium using
+ * the price-percentage rule of thumb. Returns 0 for non-positive prices so
+ * the proforma doesn't crash on a malformed input.
+ */
+export function estimateInsuranceMonthly(
+  price: number,
+  ratePct: number = DEFAULT_INSURANCE_RATE_PCT,
+): number {
+  if (!Number.isFinite(price) || price <= 0) return 0;
+  return (price * ratePct) / 12;
+}
+
+/**
  * Auto-derived annual PMI rate as a decimal of the loan amount, bucketed by
  * LTV. PMI is only required when LTV exceeds 80%. Rates are industry averages
  * for conforming conventional loans (Freddie Mac / Bankrate 2024-2026); DSCR

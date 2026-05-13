@@ -4,6 +4,7 @@ import {
   computeAutoPMIRateFromLoan,
   computeBreakevenADR,
   computeProForma,
+  DEFAULT_INSURANCE_RATE_PCT,
   type ProFormaInputs,
   type Strategy,
 } from "@papuc/core";
@@ -71,17 +72,24 @@ export function DealDetailClient({
   );
   const [state, setState] = useState<ProFormaState>(() => {
     const c = project.constraints;
-    const priceForDown = Number(deal.price ?? 0);
-    const fallbackDown = priceForDown * (1 - c.mortgage.ltv);
+    const seedPrice = Number(deal.price ?? c.priceMax ?? 400000);
+    const fallbackDown = seedPrice * (1 - c.mortgage.ltv);
+    // Seed insurance from price at 0.35%/yr (US average) so expensive deals
+    // don't start with a misleading $100/mo placeholder. Users still see
+    // and can adjust the dollar figure directly.
+    const seedInsuranceAnnual = Math.max(
+      400,
+      Math.round(seedPrice * DEFAULT_INSURANCE_RATE_PCT),
+    );
     return {
-      price: String(deal.price ?? c.priceMax ?? 400000),
+      price: String(seedPrice),
       downPayment: String(c.downPayment ?? fallbackDown ?? 0),
       improvements: "0",
       taxRate: "0.30",
       rateAPR: c.mortgage.rateAPR.toFixed(4),
       termYears: String(c.mortgage.termYears),
       propertyTaxRatePct: "0.011",
-      insuranceAnnual: "1200",
+      insuranceAnnual: String(seedInsuranceAnnual),
       hoaMonthly: String(deal.hoa_monthly ?? 0),
       pmiOverride: null,
       utilitiesMonthly: c.strategy === "STR" ? "400" : "0",
@@ -457,6 +465,37 @@ export function DealDetailClient({
             value={formatDscr(result.dscrLenderHaircut)}
           />
           <SummaryRow label="Monthly PITIA" value={formatMoney(result.pitiaMonthly.total)} />
+          <div className="ml-4 mt-1 mb-2 space-y-1">
+            <SummaryRow
+              label="↳ Principal + Interest"
+              value={formatMoney(result.pitiaMonthly.principalAndInterest)}
+              muted
+            />
+            <SummaryRow
+              label="↳ Property taxes"
+              value={formatMoney(result.pitiaMonthly.taxes)}
+              muted
+            />
+            <SummaryRow
+              label="↳ Insurance"
+              value={formatMoney(result.pitiaMonthly.insurance)}
+              muted
+            />
+            <SummaryRow
+              label="↳ HOA"
+              value={formatMoney(result.pitiaMonthly.hoa)}
+              muted
+            />
+            <SummaryRow
+              label="↳ PMI"
+              value={
+                result.pitiaMonthly.pmi > 0
+                  ? formatMoney(result.pitiaMonthly.pmi)
+                  : "—"
+              }
+              muted
+            />
+          </div>
           {state.strategy === "STR" ? (
             <SummaryRow
               label="Break-even ADR"
@@ -613,11 +652,31 @@ export function DealDetailClient({
   );
 }
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
+function SummaryRow({
+  label,
+  value,
+  muted,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
   return (
-    <div className="flex justify-between py-1">
-      <span className="text-textMuted text-sm">{label}</span>
-      <span className="text-text text-sm font-semibold">{value}</span>
+    <div className={`flex justify-between ${muted ? "py-0.5" : "py-1"}`}>
+      <span
+        className={
+          muted ? "text-textMuted text-xs" : "text-textMuted text-sm"
+        }
+      >
+        {label}
+      </span>
+      <span
+        className={
+          muted ? "text-textMuted text-xs" : "text-text text-sm font-semibold"
+        }
+      >
+        {value}
+      </span>
     </div>
   );
 }

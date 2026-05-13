@@ -1,4 +1,10 @@
-import { computeDSCR, computeMonthlyPI, computePITIA } from "./dscr";
+import {
+  computeAutoPMIRateFromLoan,
+  computeDSCR,
+  computeMonthlyPI,
+  computePITIA,
+  estimateInsuranceMonthly,
+} from "./dscr";
 import type { PITIA, ProFormaResult, Strategy } from "./schemas";
 
 const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
@@ -114,9 +120,16 @@ export function resolveProFormaInputs(inputs: ProFormaInputs): ProFormaInputsRes
     monthlyPIOverride: inputs.monthlyPIOverride,
     propertyTaxRatePct: inputs.propertyTaxRatePct ?? 0.011,
     taxesMonthlyOverride: inputs.taxesMonthlyOverride,
-    insuranceMonthly: inputs.insuranceMonthly ?? 100,
+    // Defaults that *scale with the deal* so the cashflow and break-even
+    // shown for a $1M house don't quietly assume the same $100/mo insurance
+    // bill as a $200k house. Callers can still pass explicit values to
+    // override these (the deal-detail UI does).
+    insuranceMonthly:
+      inputs.insuranceMonthly ?? estimateInsuranceMonthly(inputs.price),
     hoaMonthly: inputs.hoaMonthly ?? 0,
-    pmiRatePct: inputs.pmiRatePct ?? 0.01,
+    pmiRatePct:
+      inputs.pmiRatePct ??
+      computeAutoPMIRateFromLoan(inputs.price, inputs.downPayment),
     pmiMonthlyOverride: inputs.pmiMonthlyOverride,
     utilitiesMonthly: inputs.utilitiesMonthly ?? (strategy === "STR" ? 400 : 0),
     maintenanceMonthly: inputs.maintenanceMonthly ?? 100,

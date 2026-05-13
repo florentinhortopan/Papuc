@@ -292,6 +292,141 @@ describe("computeBreakevenADR", () => {
   });
 });
 
+/**
+ * End-to-end sanity checks that every cost the user can see on the deal
+ * page actually moves the cashflow / break-even numbers. If one of these
+ * regresses it means we've silently dropped a line item out of the
+ * sustainability calc — which is exactly the bug the user asked us to
+ * guard against (a "positive cashflow" badge that ignored HOA or PMI).
+ */
+describe("Cashflow & break-even include every cost", () => {
+  const baseLTR = {
+    price: 500000,
+    downPayment: 100000, // LTV 80%, no PMI by default
+    rateAPR: 0.07,
+    termYears: 30,
+    strategy: "LTR" as const,
+    monthlyRentLTR: 4000,
+    propertyTaxRatePct: 0.011,
+    insuranceMonthly: 150,
+    hoaMonthly: 0,
+    utilitiesMonthly: 0,
+    maintenanceMonthly: 100,
+    miscMonthly: 100,
+  };
+
+  it("HOA reduces annual pre-tax profit by exactly hoaMonthly * 12", () => {
+    const withoutHoa = computeProForma(baseLTR);
+    const withHoa = computeProForma({ ...baseLTR, hoaMonthly: 250 });
+    const delta = withoutHoa.annualPreTaxProfit - withHoa.annualPreTaxProfit;
+    expect(delta).toBeCloseTo(250 * 12, 4);
+    expect(withHoa.pitiaMonthly.hoa).toBe(250);
+  });
+
+  it("PMI kicks in only when LTV > 80% and reduces cashflow", () => {
+    // 100k down on 500k = LTV 80%, no PMI applied
+    const ltv80 = computeProForma(baseLTR);
+    expect(ltv80.pitiaMonthly.pmi).toBe(0);
+
+    // 50k down on 500k = LTV 90%, PMI auto-rate kicks in
+    const ltv90 = computeProForma({ ...baseLTR, downPayment: 50000 });
+    expect(ltv90.pitiaMonthly.pmi).toBeGreaterThan(0);
+
+    // Going from LTV 80% to LTV 90% should reduce cashflow (more loan +
+    // PMI). Confirm both effects are present in annualPreTaxProfit.
+    const drop = ltv80.annualPreTaxProfit - ltv90.annualPreTaxProfit;
+    expect(drop).toBeGreaterThan(ltv90.pitiaMonthly.pmi * 12);
+  });
+
+  it("Insurance default scales with price (not a flat $100/mo)", () => {
+    const cheap = computeProForma({
+      price: 200000,
+      downPayment: 40000,
+      rateAPR: 0.07,
+      termYears: 30,
+      monthlyRentLTR: 2000,
+    });
+    const pricey = computeProForma({
+      price: 1500000,
+      downPayment: 300000,
+      rateAPR: 0.07,
+      termYears: 30,
+      monthlyRentLTR: 12000,
+    });
+    expect(pricey.pitiaMonthly.insurance).toBeGreaterThan(
+      cheap.pitiaMonthly.insurance * 3,
+    );
+  });
+
+  it("HOA shifts the break-even ADR for STR deals", () => {
+    const baseSTR = {
+      price: 500000,
+      downPayment: 125000,
+      rateAPR: 0.07,
+      termYears: 30,
+      strategy: "STR" as const,
+      propertyTaxRatePct: 0.011,
+      insuranceMonthly: 150,
+      utilitiesMonthly: 400,
+      maintenanceMonthly: 100,
+      miscMonthly: 100,
+      managementFeeRate: 0.15,
+      bookingFeeRate: 0.03,
+      cleaningCostPerStay: 75,
+      cleaningRevenuePerStay: 100,
+      supplyCostPerStay: 7,
+      monthlyOccupancy: new Array(12).fill(0.65),
+      monthlyAvgStays: new Array(12).fill(8),
+    };
+    const noHoa = computeBreakevenADR({ ...baseSTR, hoaMonthly: 0 });
+    const withHoa = computeBreakevenADR({ ...baseSTR, hoaMonthly: 300 });
+    expect(noHoa).not.toBeNull();
+    expect(withHoa).not.toBeNull();
+    expect(withHoa!).toBeGreaterThan(noHoa!);
+  });
+
+  it("PMI shifts the break-even ADR for STR deals", () => {
+    const baseSTR = {
+      price: 500000,
+      downPayment: 50000, // LTV 90%, PMI applies
+      rateAPR: 0.07,
+      termYears: 30,
+      strategy: "STR" as const,
+      propertyTaxRatePct: 0.011,
+      insuranceMonthly: 150,
+      utilitiesMonthly: 400,
+      maintenanceMonthly: 100,
+      miscMonthly: 100,
+      managementFeeRate: 0.15,
+      bookingFeeRate: 0.03,
+      cleaningCostPerStay: 75,
+      cleaningRevenuePerStay: 100,
+      supplyCostPerStay: 7,
+      monthlyOccupancy: new Array(12).fill(0.65),
+      monthlyAvgStays: new Array(12).fill(8),
+    };
+    const withPmi = computeBreakevenADR(baseSTR);
+    const withoutPmi = computeBreakevenADR({ ...baseSTR, pmiRatePct: 0 });
+    expect(withPmi).not.toBeNull();
+    expect(withoutPmi).not.toBeNull();
+    expect(withPmi!).toBeGreaterThan(withoutPmi!);
+  });
+
+  it("PITIA breakdown sums to PITIA.total (no costs leaked)", () => {
+    const r = computeProForma({
+      ...baseLTR,
+      hoaMonthly: 200,
+      downPayment: 25000, // force PMI on too
+    });
+    const { principalAndInterest, taxes, insurance, hoa, pmi, total } =
+      r.pitiaMonthly;
+    expect(principalAndInterest + taxes + insurance + hoa + pmi).toBeCloseTo(
+      total,
+      6,
+    );
+  });
+});
+
 describe("computeDSCR", () => {
   it("returns rent / pitia", () => {
     expect(computeDSCR({ monthlyRent: 2400, pitiaTotal: 1800 })).toBeCloseTo(

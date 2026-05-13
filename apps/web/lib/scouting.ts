@@ -1,5 +1,7 @@
 import {
+  computeAutoPMIRateFromLoan,
   computeProForma,
+  estimateInsuranceMonthly,
   estimateSTRAdrFromLTRRent,
   HasDataClient,
   RealEstateAPIClient,
@@ -192,6 +194,11 @@ export async function scoutProjectInternal(
           ? estimateSTRAdrFromLTRRent(monthlyRent)
           : 0;
 
+      // Be explicit about every cost so the cashflow we store in
+      // `deal_scores` matches what the deal-detail page recomputes live.
+      // Without this, a $1M deal scouted with the proforma's default
+      // $100/mo insurance would show a wildly rosier cashflow on the card
+      // than on the detail page (which scales insurance with price).
       const proforma = computeProForma({
         price: effectivePrice,
         downPayment: effectiveDown,
@@ -205,6 +212,8 @@ export async function scoutProjectInternal(
             ? new Array(12).fill(estimatedADR)
             : undefined,
         hoaMonthly: hoaMonthly,
+        insuranceMonthly: estimateInsuranceMonthly(effectivePrice),
+        pmiRatePct: computeAutoPMIRateFromLoan(effectivePrice, effectiveDown),
       });
 
       const monthlyCashflow = proforma.annualPreTaxProfit / 12;
