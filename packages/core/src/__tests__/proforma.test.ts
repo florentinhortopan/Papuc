@@ -6,7 +6,13 @@ import {
   computeProForma,
   estimateSTRAdrFromLTRRent,
 } from "../proforma";
-import { computeDSCR, computeMonthlyPI, computePITIA } from "../dscr";
+import {
+  computeAutoPMIRate,
+  computeAutoPMIRateFromLoan,
+  computeDSCR,
+  computeMonthlyPI,
+  computePITIA,
+} from "../dscr";
 
 import berkeley from "./fixtures/berkeley.json";
 
@@ -181,6 +187,40 @@ describe("computePITIA", () => {
     });
     expect(lowLTV.pmi).toBe(0);
     expect(highLTV.pmi).toBeGreaterThan(0);
+  });
+});
+
+describe("computeAutoPMIRate", () => {
+  it("returns 0 at and below 80% LTV", () => {
+    expect(computeAutoPMIRate(0.5)).toBe(0);
+    expect(computeAutoPMIRate(0.8)).toBe(0);
+  });
+
+  it("buckets at industry-standard rates above 80%", () => {
+    expect(computeAutoPMIRate(0.85)).toBe(0.0055);
+    expect(computeAutoPMIRate(0.9)).toBe(0.0075);
+    expect(computeAutoPMIRate(0.95)).toBe(0.011);
+    expect(computeAutoPMIRate(0.97)).toBe(0.015);
+  });
+
+  it("guards against non-finite inputs", () => {
+    expect(computeAutoPMIRate(Number.NaN)).toBe(0);
+    expect(computeAutoPMIRate(Number.POSITIVE_INFINITY)).toBe(0);
+  });
+});
+
+describe("computeAutoPMIRateFromLoan", () => {
+  it("derives 0 PMI when 20% or more is down", () => {
+    // 400k price, 80k down → LTV 80%
+    expect(computeAutoPMIRateFromLoan(400000, 80000)).toBe(0);
+  });
+
+  it("derives correct bucket for 90% LTV", () => {
+    expect(computeAutoPMIRateFromLoan(400000, 40000)).toBe(0.0075);
+  });
+
+  it("returns 0 for zero or negative price", () => {
+    expect(computeAutoPMIRateFromLoan(0, 0)).toBe(0);
   });
 });
 

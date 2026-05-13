@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  computeAutoPMIRateFromLoan,
   computeBreakevenADR,
   computeProForma,
   type ProFormaInputs,
@@ -17,6 +18,8 @@ import { StrMatrix, defaultStrMatrix, type StrMatrixValue } from "@/components/s
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { actOnDeal, clearDealAction, type DealWithScore } from "@/lib/deals";
 import { exportProFormaCsv } from "@/lib/export";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
@@ -32,9 +35,14 @@ interface ProFormaState {
   rateAPR: string;
   termYears: string;
   propertyTaxRatePct: string;
-  insuranceMonthly: string;
+  /** Source of truth for insurance: annual premium in $. Displayed alongside
+   *  a derived %/yr cell that is also editable and writes back to this. */
+  insuranceAnnual: string;
   hoaMonthly: string;
-  pmiRatePct: string;
+  /** Null = auto-derived from LTV via computeAutoPMIRateFromLoan. A string
+   *  value means the user has overridden the auto rate. The "↻ Auto" button
+   *  resets this back to null. */
+  pmiOverride: string | null;
   utilitiesMonthly: string;
   maintenanceMonthly: string;
   miscMonthly: string;
@@ -73,9 +81,9 @@ export function DealDetailClient({
       rateAPR: c.mortgage.rateAPR.toFixed(4),
       termYears: String(c.mortgage.termYears),
       propertyTaxRatePct: "0.011",
-      insuranceMonthly: "100",
+      insuranceAnnual: "1200",
       hoaMonthly: String(deal.hoa_monthly ?? 0),
-      pmiRatePct: "0.01",
+      pmiOverride: null,
       utilitiesMonthly: c.strategy === "STR" ? "400" : "0",
       maintenanceMonthly: "100",
       miscMonthly: "100",
@@ -84,18 +92,48 @@ export function DealDetailClient({
     };
   });
 
-  const inputs: ProFormaInputs = useMemo(
-    () => ({
-      price: toNum(state.price),
-      downPayment: toNum(state.downPayment),
+  /**
+   * Side-channel derivations used by the input UI (auto PMI rate, current
+   * LTV, % insurance display). Kept separate from `inputs` so the field
+   * components can render hints without re-running the proforma.
+   */
+  const derived = useMemo(() => {
+    const price = toNum(state.price);
+    const downPayment = toNum(state.downPayment);
+    const loanAmount = Math.max(0, price - downPayment);
+    const ltv = price > 0 ? loanAmount / price : 0;
+    const autoPmiRate = computeAutoPMIRateFromLoan(price, downPayment);
+    const insuranceAnnual = toNum(state.insuranceAnnual, 1200);
+    const insuranceMonthly = insuranceAnnual / 12;
+    const insuranceRatePct = price > 0 ? insuranceAnnual / price : 0;
+    return {
+      price,
+      downPayment,
+      loanAmount,
+      ltv,
+      autoPmiRate,
+      insuranceAnnual,
+      insuranceMonthly,
+      insuranceRatePct,
+    };
+  }, [state.price, state.downPayment, state.insuranceAnnual]);
+
+  const inputs: ProFormaInputs = useMemo(() => {
+    const effectivePmiRate =
+      state.pmiOverride !== null
+        ? toNum(state.pmiOverride, derived.autoPmiRate)
+        : derived.autoPmiRate;
+    return {
+      price: derived.price,
+      downPayment: derived.downPayment,
       improvements: toNum(state.improvements),
       taxRate: toNum(state.taxRate, 0.3),
       rateAPR: toNum(state.rateAPR, 0.075),
       termYears: toNum(state.termYears, 30),
       propertyTaxRatePct: toNum(state.propertyTaxRatePct, 0.011),
-      insuranceMonthly: toNum(state.insuranceMonthly, 100),
+      insuranceMonthly: derived.insuranceMonthly,
       hoaMonthly: toNum(state.hoaMonthly, 0),
-      pmiRatePct: toNum(state.pmiRatePct, 0.01),
+      pmiRatePct: effectivePmiRate,
       utilitiesMonthly: toNum(state.utilitiesMonthly, 0),
       maintenanceMonthly: toNum(state.maintenanceMonthly, 100),
       miscMonthly: toNum(state.miscMonthly, 100),
@@ -108,9 +146,8 @@ export function DealDetailClient({
         state.strategy === "STR" ? strMatrix.monthlyOccupancy : undefined,
       monthlyAvgStays:
         state.strategy === "STR" ? strMatrix.monthlyAvgStays : undefined,
-    }),
-    [state, strMatrix],
-  );
+    };
+  }, [state, strMatrix, derived]);
 
   const result = useMemo(() => computeProForma(inputs), [inputs]);
   const breakevenADR = useMemo(
@@ -441,7 +478,30 @@ export function DealDetailClient({
             <Field label="Term (yrs)" type="number" value={state.termYears} onChange={(e) => patch("termYears", e.target.value)} />
             <Field label="Tax rate" type="number" inputMode="decimal" value={state.taxRate} onChange={(e) => patch("taxRate", e.target.value)} hint="On rental profits" />
             <Field label="Prop tax %/yr" type="number" inputMode="decimal" value={state.propertyTaxRatePct} onChange={(e) => patch("propertyTaxRatePct", e.target.value)} hint="Berkeley default 0.011" />
-            <Field label="Insurance ($/mo)" type="number" value={state.insuranceMonthly} onChange={(e) => patch("insuranceMonthly", e.target.value)} />
+            <Field
+              label="Insurance ($/yr)"
+              type="number"
+              value={state.insuranceAnnual}
+              onChange={(e) => patch("insuranceAnnual", e.target.value)}
+              hint={`≈ $${(derived.insuranceMonthly).toFixed(0)}/mo`}
+            />
+            <Field
+              label="Insurance rate (%/yr)"
+              type="number"
+              inputMode="decimal"
+              step="0.0001"
+              value={derived.insuranceRatePct.toFixed(4)}
+              onChange={(e) => {
+                const pct = Number(e.target.value);
+                if (Number.isFinite(pct) && derived.price > 0) {
+                  patch(
+                    "insuranceAnnual",
+                    String(Math.round(pct * derived.price)),
+                  );
+                }
+              }}
+              hint={`% of price; 0.0035 ≈ 0.35%/yr (US avg)`}
+            />
             <Field
               label="HOA ($/mo)"
               type="number"
@@ -453,7 +513,45 @@ export function DealDetailClient({
                   : "Not reported by provider — enter manually if known"
               }
             />
-            <Field label="PMI %/yr" type="number" inputMode="decimal" value={state.pmiRatePct} onChange={(e) => patch("pmiRatePct", e.target.value)} hint="Auto 0 if LTV ≤ 80%" />
+            <div className="mb-3">
+              <Label htmlFor="pmi-input">PMI %/yr</Label>
+              <Input
+                id="pmi-input"
+                type="number"
+                inputMode="decimal"
+                step="0.0001"
+                readOnly={state.pmiOverride === null}
+                value={
+                  state.pmiOverride !== null
+                    ? state.pmiOverride
+                    : derived.autoPmiRate.toFixed(4)
+                }
+                onChange={(e) => patch("pmiOverride", e.target.value)}
+              />
+              <div className="flex items-center justify-between mt-1">
+                <p className="text-xs text-textMuted">
+                  {state.pmiOverride === null
+                    ? derived.ltv > 0.8
+                      ? `Auto: ${(derived.autoPmiRate * 100).toFixed(2)}% · LTV ${(derived.ltv * 100).toFixed(1)}%`
+                      : `Auto: 0% · LTV ${(derived.ltv * 100).toFixed(1)}% (no PMI)`
+                    : `Manual override`}
+                </p>
+                <button
+                  type="button"
+                  className="text-xs text-accent hover:underline"
+                  onClick={() =>
+                    patch(
+                      "pmiOverride",
+                      state.pmiOverride === null
+                        ? derived.autoPmiRate.toFixed(4)
+                        : null,
+                    )
+                  }
+                >
+                  {state.pmiOverride === null ? "Edit" : "↻ Auto"}
+                </button>
+              </div>
+            </div>
             <Field label="Utilities ($/mo)" type="number" value={state.utilitiesMonthly} onChange={(e) => patch("utilitiesMonthly", e.target.value)} />
             <Field label="Maintenance ($/mo)" type="number" value={state.maintenanceMonthly} onChange={(e) => patch("maintenanceMonthly", e.target.value)} />
             <Field label="Misc ($/mo)" type="number" value={state.miscMonthly} onChange={(e) => patch("miscMonthly", e.target.value)} />

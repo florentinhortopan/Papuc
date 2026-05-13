@@ -17,6 +17,42 @@ const DEFAULT_PMI_RATE_PCT = 0.01;
 const DEFAULT_INSURANCE_MONTHLY = 100;
 const DEFAULT_HOA_MONTHLY = 0;
 
+/**
+ * Auto-derived annual PMI rate as a decimal of the loan amount, bucketed by
+ * LTV. PMI is only required when LTV exceeds 80%. Rates are industry averages
+ * for conforming conventional loans (Freddie Mac / Bankrate 2024-2026); DSCR
+ * loans for investors tend to fall in the same range or slightly higher.
+ *
+ * Schedule:
+ *   LTV ≤ 80%     →  0.00% (no PMI)
+ *   80% < LTV ≤ 85% →  0.55%
+ *   85% < LTV ≤ 90% →  0.75%
+ *   90% < LTV ≤ 95% →  1.10%
+ *           LTV > 95% →  1.50%
+ *
+ * Returns a decimal (e.g. 0.0055 = 0.55%), to match `pmiRatePct` elsewhere.
+ */
+export function computeAutoPMIRate(ltv: number): number {
+  if (!Number.isFinite(ltv) || ltv <= 0.8) return 0;
+  if (ltv <= 0.85) return 0.0055;
+  if (ltv <= 0.9) return 0.0075;
+  if (ltv <= 0.95) return 0.011;
+  return 0.015;
+}
+
+/**
+ * Convenience wrapper: derive LTV from price + downPayment and look up the
+ * auto PMI rate. Returns 0 when the inputs make LTV non-positive.
+ */
+export function computeAutoPMIRateFromLoan(
+  price: number,
+  downPayment: number,
+): number {
+  if (price <= 0) return 0;
+  const ltv = Math.max(0, price - downPayment) / price;
+  return computeAutoPMIRate(ltv);
+}
+
 export function computeMonthlyPI(
   loanAmount: number,
   rateAPR: number,
