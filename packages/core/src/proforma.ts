@@ -140,6 +140,84 @@ export function resolveProFormaInputs(inputs: ProFormaInputs): ProFormaInputsRes
 }
 
 /**
+ * STR ADR estimation defaults — used both when scouting and when we don't
+ * have a real ADR baseline from the user yet. Industry rule of thumb:
+ * a property running as a vacation rental grosses roughly 1.7× its
+ * LTR-equivalent monthly rent annually, at ~65% occupancy over the year.
+ * (AirDNA / Airbnb studies put this in the 1.4–2.2× range; 1.7 is a
+ * sensible middle for unknown markets.) Override per market when you have
+ * AirDNA / comp data.
+ */
+export const STR_GROSS_VS_LTR_MULTIPLIER = 1.7;
+export const STR_DEFAULT_OCCUPANCY = 0.65;
+
+/**
+ * Convert an LTR-equivalent monthly rent (e.g. Zillow's rentZestimate) to
+ * an expected STR Average Daily Rate using the multiplier + occupancy
+ * defaults above. Use this as a *baseline* for scouting; the user can
+ * tighten it on the deal detail page once they have AirDNA comps.
+ */
+export function estimateSTRAdrFromLTRRent(monthlyLTRRent: number): number {
+  if (!Number.isFinite(monthlyLTRRent) || monthlyLTRRent <= 0) return 0;
+  const annualGrossSTR = monthlyLTRRent * 12 * STR_GROSS_VS_LTR_MULTIPLIER;
+  const expectedRentedNights = 365 * STR_DEFAULT_OCCUPANCY;
+  return annualGrossSTR / expectedRentedNights;
+}
+
+/**
+ * Solve for the single, constant ADR that would make annual pre-tax
+ * profit equal zero given the rest of the pro-forma inputs. Useful as a
+ * "what daily rate does this deal need to clear?" sanity check on the
+ * deal page. Assumes the same ADR for every month (the schedule of
+ * nights × occupancy is taken from the inputs).
+ *
+ * Algebra (constant ADR `a`):
+ *   annualRentalRev = a * Σ(nights_m * occ_m)
+ *   annualCleaningRev = cleaningRev/stay * Σ stays_m
+ *   annualVarCostsExclADR
+ *     = (cleaningCost + supplyCost)/stay * Σ stays_m
+ *     + (managementFee + bookingFee) * annualRentalRev
+ *   annualFixed = fixedMonthly * 12
+ *   profit = annualRentalRev * (1 - mgmtRate - bookingRate)
+ *          + cleaningRev/stay * Σ stays_m
+ *          - (cleaningCost + supplyCost)/stay * Σ stays_m
+ *          - annualFixed
+ *   => a = (annualFixed + perStayCostOut - perStayRevIn)
+ *          / (Σ(nights_m * occ_m) * (1 - mgmtRate - bookingRate))
+ *
+ * Returns `null` if effective rented nights is zero (can't break even at
+ * any ADR), or if the marginal-revenue multiplier (1 - mgmt - booking)
+ * is ≤ 0 (every dollar of revenue is eaten by fees — also unsolvable).
+ */
+export function computeBreakevenADR(inputs: ProFormaInputs): number | null {
+  const r = resolveProFormaInputs(inputs);
+  const pitia = computePITIAForProForma(r);
+  const fixedMonthly =
+    pitia.total + r.utilitiesMonthly + r.maintenanceMonthly + r.miscMonthly;
+
+  let effectiveNights = 0;
+  let totalStays = 0;
+  for (let m = 0; m < 12; m++) {
+    const nights = r.monthlyNights[m] ?? MONTH_DAYS[m]!;
+    const occ = r.monthlyOccupancy[m] ?? 0;
+    const stays = r.monthlyAvgStays[m] ?? 0;
+    effectiveNights += nights * occ;
+    totalStays += stays;
+  }
+
+  const marginalRate = 1 - r.managementFeeRate - r.bookingFeeRate;
+  if (effectiveNights <= 0 || marginalRate <= 0) return null;
+
+  const perStayRevIn = r.cleaningRevenuePerStay * totalStays;
+  const perStayCostOut = (r.cleaningCostPerStay + r.supplyCostPerStay) * totalStays;
+  const annualFixed = fixedMonthly * 12;
+
+  const adr = (annualFixed + perStayCostOut - perStayRevIn) /
+    (effectiveNights * marginalRate);
+  return adr;
+}
+
+/**
  * Newton-Raphson IRR. Returns null if it fails to converge.
  */
 export function computeIRR(cashflows: number[], guess = 0.1): number | null {

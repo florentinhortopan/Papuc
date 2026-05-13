@@ -1,6 +1,11 @@
 "use client";
 
-import { computeProForma, type ProFormaInputs, type Strategy } from "@papuc/core";
+import {
+  computeBreakevenADR,
+  computeProForma,
+  type ProFormaInputs,
+  type Strategy,
+} from "@papuc/core";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
@@ -108,9 +113,30 @@ export function DealDetailClient({
   );
 
   const result = useMemo(() => computeProForma(inputs), [inputs]);
+  const breakevenADR = useMemo(
+    () => (inputs.strategy === "STR" ? computeBreakevenADR(inputs) : null),
+    [inputs],
+  );
 
   function patch<K extends keyof ProFormaState>(k: K, v: ProFormaState[K]) {
     setState((s) => ({ ...s, [k]: v }));
+  }
+
+  /**
+   * When the user edits the "ADR baseline" field in STR mode, replicate
+   * that value into all 12 cells of the STR matrix. Without this cascade
+   * the field is misleading: it only feeds `monthlyRentLTR`, which is
+   * ignored in STR mode (the matrix is the source of truth), so changes
+   * looked like they did nothing.
+   */
+  function patchRentOrAdr(raw: string) {
+    patch("monthlyRentLTR", raw);
+    if (state.strategy === "STR") {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) {
+        setStrMatrix((m) => ({ ...m, monthlyADR: new Array(12).fill(n) }));
+      }
+    }
   }
 
   async function reload() {
@@ -305,6 +331,18 @@ export function DealDetailClient({
               {formatMoney(result.annualPreTaxProfit / 12)}/mo
             </Badge>
             <Badge>CoC {formatPct(result.cashOnCashReturn)}</Badge>
+            {state.strategy === "STR" && breakevenADR !== null ? (
+              <Badge
+                variant={
+                  inputs.monthlyADR && inputs.monthlyADR.some((a) => a >= breakevenADR)
+                    ? "success"
+                    : "danger"
+                }
+                title="The flat ADR at which annual pre-tax profit would equal zero, holding occupancy/nights constant."
+              >
+                BE ADR {formatMoney(breakevenADR)}/n
+              </Badge>
+            ) : null}
           </div>
           {sourceLink ? (
             <a
@@ -369,6 +407,16 @@ export function DealDetailClient({
             value={formatDscr(result.dscrLenderHaircut)}
           />
           <SummaryRow label="Monthly PITIA" value={formatMoney(result.pitiaMonthly.total)} />
+          {state.strategy === "STR" ? (
+            <SummaryRow
+              label="Break-even ADR"
+              value={
+                breakevenADR === null
+                  ? "—"
+                  : `${formatMoney(breakevenADR)}/night`
+              }
+            />
+          ) : null}
         </div>
 
         <div className="bg-surface border border-border rounded-2xl p-4">
@@ -390,12 +438,17 @@ export function DealDetailClient({
           <Field
             label={
               state.strategy === "STR"
-                ? "Average daily rate ($, baseline for STR matrix)"
+                ? "Average daily rate ($, fills all 12 months below)"
                 : "Monthly rent ($)"
             }
             type="number"
             value={state.monthlyRentLTR}
-            onChange={(e) => patch("monthlyRentLTR", e.target.value)}
+            onChange={(e) => patchRentOrAdr(e.target.value)}
+            hint={
+              state.strategy === "STR"
+                ? "Changes propagate into the 12-month matrix below"
+                : undefined
+            }
           />
           <Field
             label="Strategy"

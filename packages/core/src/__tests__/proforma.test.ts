@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { computeIRR, computeProForma } from "../proforma";
+import {
+  computeBreakevenADR,
+  computeIRR,
+  computeProForma,
+  estimateSTRAdrFromLTRRent,
+} from "../proforma";
 import { computeDSCR, computeMonthlyPI, computePITIA } from "../dscr";
 
 import berkeley from "./fixtures/berkeley.json";
@@ -176,6 +181,74 @@ describe("computePITIA", () => {
     });
     expect(lowLTV.pmi).toBe(0);
     expect(highLTV.pmi).toBeGreaterThan(0);
+  });
+});
+
+describe("estimateSTRAdrFromLTRRent", () => {
+  it("returns 0 for non-positive input", () => {
+    expect(estimateSTRAdrFromLTRRent(0)).toBe(0);
+    expect(estimateSTRAdrFromLTRRent(-100)).toBe(0);
+    expect(estimateSTRAdrFromLTRRent(NaN)).toBe(0);
+  });
+
+  it("estimates ADR as LTR_monthly * 12 * 1.7 / (365 * 0.65)", () => {
+    const adr = estimateSTRAdrFromLTRRent(3000);
+    expect(adr).toBeCloseTo((3000 * 12 * 1.7) / (365 * 0.65), 4);
+    // Sanity check: ~$258/night for $3000/mo LTR rent.
+    expect(adr).toBeGreaterThan(250);
+    expect(adr).toBeLessThan(270);
+  });
+});
+
+describe("computeBreakevenADR", () => {
+  const baseSTR = {
+    price: 500000,
+    downPayment: 125000,
+    rateAPR: 0.07,
+    termYears: 30,
+    strategy: "STR" as const,
+    propertyTaxRatePct: 0.011,
+    insuranceMonthly: 120,
+    hoaMonthly: 0,
+    utilitiesMonthly: 400,
+    maintenanceMonthly: 100,
+    miscMonthly: 100,
+    managementFeeRate: 0.15,
+    bookingFeeRate: 0.03,
+    cleaningCostPerStay: 75,
+    cleaningRevenuePerStay: 100,
+    supplyCostPerStay: 7,
+    monthlyOccupancy: new Array(12).fill(0.65),
+    monthlyAvgStays: new Array(12).fill(8),
+  };
+
+  it("yields an ADR that, when applied uniformly, makes pretax profit ~0", () => {
+    const adr = computeBreakevenADR(baseSTR);
+    expect(adr).not.toBeNull();
+
+    // Plug the break-even ADR back into the pro-forma — annual pretax should be ~0.
+    const result = computeProForma({
+      ...baseSTR,
+      monthlyADR: new Array(12).fill(adr!),
+    });
+    expect(Math.abs(result.annualPreTaxProfit)).toBeLessThan(1);
+  });
+
+  it("returns null when no nights are rented", () => {
+    const adr = computeBreakevenADR({
+      ...baseSTR,
+      monthlyOccupancy: new Array(12).fill(0),
+    });
+    expect(adr).toBeNull();
+  });
+
+  it("returns null when fees consume all revenue", () => {
+    const adr = computeBreakevenADR({
+      ...baseSTR,
+      managementFeeRate: 0.6,
+      bookingFeeRate: 0.5,
+    });
+    expect(adr).toBeNull();
   });
 });
 

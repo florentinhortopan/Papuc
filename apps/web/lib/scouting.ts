@@ -1,5 +1,6 @@
 import {
   computeProForma,
+  estimateSTRAdrFromLTRRent,
   HasDataClient,
   RealEstateAPIClient,
   type Market,
@@ -13,6 +14,14 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const MAX_HYDRATE_PARALLEL = 5;
+/**
+ * Default monthly cashflow floor for scout filtering when the project has
+ * no explicit targetMonthlyCashflow. Anything worse than this is dropped
+ * even if the DSCR check would have let it through, because deeply
+ * negative deals just clutter the portfolio. -300 = "break-even with a
+ * little wiggle for soft months".
+ */
+const DEFAULT_MIN_CASHFLOW = -300;
 
 type CandidateSource = "hasdata" | "realestateapi";
 
@@ -168,6 +177,16 @@ export async function scoutProjectInternal(
         pickHudFmrRent(detail?.hudFairMarketRent, listing.beds ?? 3) ??
         estimateRentFromPrice(effectivePrice);
 
+      // For STR we estimate an Average Daily Rate from the LTR-equivalent
+      // monthly rent. monthlyRent / 30 (the old behavior) treated STR like
+      // a daily slice of long-term rent and dramatically under-counted
+      // revenue, killing every STR deal at the cashflow filter. The
+      // estimator applies a documented industry multiplier + occupancy.
+      const estimatedADR =
+        constraints.strategy === "STR"
+          ? estimateSTRAdrFromLTRRent(monthlyRent)
+          : 0;
+
       const proforma = computeProForma({
         price: effectivePrice,
         downPayment: effectiveDown,
@@ -178,14 +197,18 @@ export async function scoutProjectInternal(
         monthlyRentLTR: constraints.strategy === "LTR" ? monthlyRent : 0,
         monthlyADR:
           constraints.strategy === "STR"
-            ? new Array(12).fill(monthlyRent / 30)
+            ? new Array(12).fill(estimatedADR)
             : undefined,
       });
 
       const monthlyCashflow = proforma.annualPreTaxProfit / 12;
       const matchesDSCR = proforma.dscr >= constraints.minDSCR;
-      const matchesCashflow =
-        targetCashflow > 0 ? monthlyCashflow >= targetCashflow * 0.8 : true;
+      // If the user set a target, require at least 80% of it.
+      // Otherwise apply the default floor so we don't surface deals that
+      // bleed several thousand a month.
+      const cashflowMin =
+        targetCashflow > 0 ? targetCashflow * 0.8 : DEFAULT_MIN_CASHFLOW;
+      const matchesCashflow = monthlyCashflow >= cashflowMin;
       if (!matchesDSCR) {
         dropped.dscrTooLow += 1;
         continue;
