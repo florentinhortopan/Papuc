@@ -61,6 +61,12 @@ export interface ScoutDiagnostics {
   lastUpsertError: string | null;
   /** Resolved keyword/filters sent to the provider, for easy reproduction. */
   query: Record<string, unknown>;
+  /**
+   * Property categories the user asked for that the selected provider
+   * can't filter on (e.g. commercial / mixed-use on Zillow). The UI uses
+   * these to display a "rerun on RealEstateAPI for these" hint.
+   */
+  unsupportedPropertyTypes?: string[];
 }
 
 export interface ScoutResult {
@@ -318,6 +324,13 @@ export async function scoutProjectInternal(
       })
       .eq("id", runRow.id);
 
+    const unsupportedPropertyTypes =
+      provider === "hasdata"
+        ? constraints.propertyTypes.filter((t) =>
+            ZILLOW_UNSUPPORTED_TYPES.has(t),
+          )
+        : [];
+
     return {
       scoutRunId: runRow.id,
       candidatesSeen,
@@ -330,6 +343,9 @@ export async function scoutProjectInternal(
         firstSample,
         lastUpsertError,
         query: providerQuery,
+        unsupportedPropertyTypes: unsupportedPropertyTypes.length
+          ? unsupportedPropertyTypes
+          : undefined,
       },
     };
   } catch (err) {
@@ -408,8 +424,13 @@ function buildHasDataFilters(
   if (constraints.priceMin !== undefined) filters.priceMin = constraints.priceMin;
   if (constraints.priceMax !== undefined) filters.priceMax = constraints.priceMax;
   if (constraints.bedsMin !== undefined) filters.bedsMin = constraints.bedsMin;
+  if (constraints.bedsMax !== undefined) filters.bedsMax = constraints.bedsMax;
   if (constraints.bathsMin !== undefined) filters.bathsMin = constraints.bathsMin;
+  if (constraints.bathsMax !== undefined) filters.bathsMax = constraints.bathsMax;
   if (constraints.sqftMin !== undefined) filters.sqftMin = constraints.sqftMin;
+  if (constraints.sqftMax !== undefined) filters.sqftMax = constraints.sqftMax;
+  if (constraints.daysOnMarketMax !== undefined)
+    filters.daysOnZillow = constraints.daysOnMarketMax;
 
   if (
     constraints.propertyTypes.length &&
@@ -422,6 +443,16 @@ function buildHasDataFilters(
   }
   return filters;
 }
+
+/**
+ * Property categories that Zillow / HasData doesn't list. Surfaced to
+ * the scout diagnostics so the UI can warn the user to route via
+ * RealEstateAPI for these.
+ */
+export const ZILLOW_UNSUPPORTED_TYPES = new Set([
+  "mixed_use",
+  "commercial",
+]);
 
 /**
  * Zillow's Listing API takes a free-form area string as `keyword`. For
@@ -443,6 +474,10 @@ function marketToZillowKeyword(market: Market): string {
  * Map our internal PropertyType enum to HasData/Zillow's homeTypes enum.
  * HasData accepts only this set (validated server-side, 422 otherwise):
  *   house | townhome | multiFamily | condo | lot | apartment | manufactured
+ *
+ * Returns null for categories Zillow doesn't model (mixed-use, commercial)
+ * — the scout pipeline routes those to RealEstateAPI when available and
+ * surfaces a warning otherwise.
  */
 function mapPropertyTypeToZillow(t: string): string | null {
   switch (t) {
@@ -456,6 +491,13 @@ function mapPropertyTypeToZillow(t: string): string | null {
       return "multiFamily";
     case "multi_family_5_plus":
       return "apartment";
+    case "manufactured":
+      return "manufactured";
+    case "land":
+      return "lot";
+    case "mixed_use":
+    case "commercial":
+    case "any":
     default:
       return null;
   }
@@ -566,6 +608,8 @@ function buildPropertyFilters(
   if (constraints.bathsMin !== undefined) filters.baths_min = constraints.bathsMin;
   if (constraints.sqftMin !== undefined)
     filters.building_size_min = constraints.sqftMin;
+  if (constraints.yearBuiltMin !== undefined)
+    filters.year_built_min = constraints.yearBuiltMin;
   if (
     constraints.propertyTypes.length &&
     !constraints.propertyTypes.includes("any")
@@ -604,6 +648,13 @@ function isWalletGatedError(err: unknown): boolean {
   );
 }
 
+/**
+ * Map our internal PropertyType enum to RealEstateAPI property_type codes.
+ * RealEstateAPI accepts a string list; the values below match the codes
+ * used in the PropertySearch documentation. Unknown values are passed
+ * through uppercased so power users can hint custom codes via notes if
+ * needed without us silently dropping them.
+ */
 function mapPropertyType(t: string): string {
   switch (t) {
     case "single_family":
@@ -616,6 +667,14 @@ function mapPropertyType(t: string): string {
       return "MFR";
     case "multi_family_5_plus":
       return "APARTMENT";
+    case "manufactured":
+      return "MOBILE";
+    case "land":
+      return "LAND";
+    case "mixed_use":
+      return "MIXED_USE";
+    case "commercial":
+      return "COMMERCIAL";
     default:
       return t.toUpperCase();
   }

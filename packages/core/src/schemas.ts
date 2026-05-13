@@ -3,15 +3,52 @@ import { z } from "zod";
 export const StrategySchema = z.enum(["LTR", "STR"]);
 export type Strategy = z.infer<typeof StrategySchema>;
 
+/**
+ * Property categories we model end-to-end. Each value maps to a concrete
+ * filter on at least one data provider (see `mapPropertyTypeToZillow` and
+ * `mapPropertyType` in scouting / realestate).
+ *
+ * Coverage notes:
+ *   - `mixed_use` and `commercial` are RealEstateAPI-only on the search
+ *     side; HasData (Zillow) is residential-only and silently skips them.
+ *     The scout diagnostics will surface this so the UI can warn.
+ *   - `land` and `manufactured` are supported on both providers.
+ *   - `multi_family_5_plus` is treated as "apartment building" by Zillow
+ *     and as a multi-family code by RealEstateAPI; small (2-4) and large
+ *     (5+) multi are intentionally separate to keep DSCR underwriting
+ *     accurate (commercial-loan territory above 4 units).
+ */
 export const PropertyTypeSchema = z.enum([
   "single_family",
   "condo",
   "townhouse",
   "multi_family_2_4",
   "multi_family_5_plus",
+  "manufactured",
+  "land",
+  "mixed_use",
+  "commercial",
   "any",
 ]);
 export type PropertyType = z.infer<typeof PropertyTypeSchema>;
+
+/**
+ * Human-readable labels for `PropertyType` values. Used in the LLM tool
+ * schema descriptions and the review-form UI so we have one source of
+ * truth for "what does multi_family_2_4 mean to a real human".
+ */
+export const PROPERTY_TYPE_LABELS: Record<PropertyType, string> = {
+  single_family: "Single-family home",
+  condo: "Condo",
+  townhouse: "Townhouse",
+  multi_family_2_4: "Multi-family (2–4 units)",
+  multi_family_5_plus: "Multi-family (5+ units, apartment)",
+  manufactured: "Manufactured / mobile home",
+  land: "Land / lot",
+  mixed_use: "Mixed-use (residential + commercial)",
+  commercial: "Commercial",
+  any: "Any",
+};
 
 export const MarketSchema = z.union([
   z.object({ kind: z.literal("city"), city: z.string(), state: z.string() }),
@@ -32,13 +69,35 @@ export const MortgageSchema = z.object({
 });
 export type Mortgage = z.infer<typeof MortgageSchema>;
 
+/**
+ * "How fresh must the listing be?" Maps directly to Zillow's
+ * `daysOnZillow` parameter when scouting via HasData. Free-form strings
+ * keep the contract loose; the canonical Zillow tokens are listed in
+ * the comment below.
+ */
+export const ListingRecencySchema = z
+  .enum(["24h", "7d", "14d", "30d", "90d", "6m", "12m"])
+  .describe("Max days on market for active listings.");
+export type ListingRecency = z.infer<typeof ListingRecencySchema>;
+
 export const ProjectConstraintsSchema = z.object({
   markets: z.array(MarketSchema).min(1),
   priceMin: z.number().nonnegative().optional(),
   priceMax: z.number().positive().optional(),
   bedsMin: z.number().int().nonnegative().optional(),
+  bedsMax: z.number().int().nonnegative().optional(),
   bathsMin: z.number().nonnegative().optional(),
+  bathsMax: z.number().nonnegative().optional(),
   sqftMin: z.number().nonnegative().optional(),
+  sqftMax: z.number().nonnegative().optional(),
+  yearBuiltMin: z
+    .number()
+    .int()
+    .min(1800)
+    .max(new Date().getFullYear())
+    .optional(),
+  /** Restrict to listings posted within the last N days/months. */
+  daysOnMarketMax: ListingRecencySchema.optional(),
   propertyTypes: z.array(PropertyTypeSchema).default(["single_family"]),
   downPayment: z.number().nonnegative().optional(),
   totalCash: z.number().nonnegative().optional(),

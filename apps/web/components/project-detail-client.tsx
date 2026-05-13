@@ -1,5 +1,6 @@
 "use client";
 
+import { PROPERTY_TYPE_LABELS } from "@papuc/core";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -91,9 +92,17 @@ export function ProjectDetailClient({
       const json = (await res.json()) as {
         candidatesSeen: number;
         dealsAdded: number;
+        diagnostics?: {
+          provider?: string;
+          unsupportedPropertyTypes?: string[];
+        };
       };
+      const unsupported = json.diagnostics?.unsupportedPropertyTypes ?? [];
+      const baseMessage = `Saw ${json.candidatesSeen} candidates · ${json.dealsAdded} match your goals`;
       setScoutStatus(
-        `Saw ${json.candidatesSeen} candidates · ${json.dealsAdded} match your goals`,
+        unsupported.length
+          ? `${baseMessage} · ${formatUnsupportedHint(unsupported)}`
+          : baseMessage,
       );
       await refreshDeals();
     } catch (err) {
@@ -134,9 +143,18 @@ export function ProjectDetailClient({
         <p className="text-textMuted text-xs mb-2">Constraints</p>
         <div className="flex flex-wrap gap-2">
           <Badge>{c.strategy}</Badge>
+          {c.propertyTypes
+            .filter((t) => t !== "any")
+            .map((t) => (
+              <Badge key={t}>{PROPERTY_TYPE_LABELS[t]}</Badge>
+            ))}
           {c.priceMax ? <Badge>≤ {formatMoney(c.priceMax)}</Badge> : null}
           {c.bedsMin ? <Badge>≥ {c.bedsMin} bd</Badge> : null}
+          {c.bedsMax ? <Badge>≤ {c.bedsMax} bd</Badge> : null}
           {c.bathsMin ? <Badge>≥ {c.bathsMin} ba</Badge> : null}
+          {c.sqftMin ? <Badge>≥ {c.sqftMin} sqft</Badge> : null}
+          {c.yearBuiltMin ? <Badge>Built ≥ {c.yearBuiltMin}</Badge> : null}
+          {c.daysOnMarketMax ? <Badge>Listed ≤ {c.daysOnMarketMax}</Badge> : null}
           {c.downPayment ? (
             <Badge>Down {formatMoney(c.downPayment)}</Badge>
           ) : null}
@@ -207,4 +225,18 @@ export function ProjectDetailClient({
       </div>
     </div>
   );
+}
+
+/**
+ * Render a "your X / Y selection isn't covered by this provider" hint
+ * using human-readable labels so users without a PropertyType cheat
+ * sheet still understand what was skipped.
+ */
+function formatUnsupportedHint(types: string[]): string {
+  const labels = types.map(
+    (t) =>
+      (PROPERTY_TYPE_LABELS as Record<string, string | undefined>)[t] ?? t,
+  );
+  const list = labels.join(" / ");
+  return `${list} not searchable on Zillow — try RealEstateAPI for these.`;
 }

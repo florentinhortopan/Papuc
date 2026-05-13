@@ -1,6 +1,11 @@
 "use client";
 
-import { ProjectConstraintsSchema, type ProjectConstraints } from "@papuc/core";
+import {
+  PROPERTY_TYPE_LABELS,
+  ProjectConstraintsSchema,
+  type ProjectConstraints,
+  type PropertyType,
+} from "@papuc/core";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -11,6 +16,25 @@ import { formatMarket } from "@/lib/format";
 import { createProject } from "@/lib/projects";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+
+/**
+ * Property types we offer in the review UI. `any` is intentionally last so
+ * the user reads through the specific categories first; selecting it
+ * clears the others (and vice versa) to keep the request semantically
+ * coherent on the API side.
+ */
+const PROPERTY_TYPE_OPTIONS: PropertyType[] = [
+  "single_family",
+  "condo",
+  "townhouse",
+  "multi_family_2_4",
+  "multi_family_5_plus",
+  "manufactured",
+  "land",
+  "mixed_use",
+  "commercial",
+  "any",
+];
 
 const SAMPLE_PROMPTS = [
   "I have $200k down and want $600/month cashflow on single family homes in Austin, TX.",
@@ -210,6 +234,26 @@ function ConstraintReview({
     });
   }
 
+  /**
+   * Toggle a property type chip. `any` is mutually exclusive with the
+   * specific types: turning it on clears the rest; turning on any
+   * specific type clears `any`. Schema also enforces at least one entry,
+   * so if the user tries to deselect the last chip we keep it.
+   */
+  function togglePropertyType(t: PropertyType) {
+    const cur = constraints.propertyTypes;
+    let next: PropertyType[];
+    if (t === "any") {
+      next = cur.includes("any") ? [] : ["any"];
+    } else if (cur.includes(t)) {
+      next = cur.filter((x) => x !== t);
+    } else {
+      next = [...cur.filter((x) => x !== "any"), t];
+    }
+    if (next.length === 0) next = ["any"];
+    patch("propertyTypes", next);
+  }
+
   return (
     <div>
       <h1 className="text-3xl font-bold mb-1">Review constraints</h1>
@@ -241,7 +285,35 @@ function ConstraintReview({
         </div>
       </Section>
 
-      <Section title="Property">
+      <Section title="Property type">
+        <p className="text-textMuted text-xs mb-2">
+          Tap to toggle. The agent guessed from your prompt — adjust as
+          needed. Mixed-use and commercial are only available on the
+          RealEstateAPI provider.
+        </p>
+        <div className="flex flex-wrap gap-2 mb-2">
+          {PROPERTY_TYPE_OPTIONS.map((t) => {
+            const active = constraints.propertyTypes.includes(t);
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => togglePropertyType(t)}
+                className={cn(
+                  "rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
+                  active
+                    ? "bg-primary/15 border-primary/60 text-primary"
+                    : "bg-surfaceAlt border-border text-text hover:border-border/80",
+                )}
+              >
+                {PROPERTY_TYPE_LABELS[t]}
+              </button>
+            );
+          })}
+        </div>
+      </Section>
+
+      <Section title="Property filters">
         <div className="grid grid-cols-3 gap-3">
           <Field
             label="Min beds"
@@ -269,6 +341,33 @@ function ConstraintReview({
             }
           />
         </div>
+        <div className="grid grid-cols-3 gap-3">
+          <Field
+            label="Max beds"
+            type="number"
+            value={String(constraints.bedsMax ?? "")}
+            onChange={(e) =>
+              patch("bedsMax", e.target.value ? Number(e.target.value) : undefined)
+            }
+          />
+          <Field
+            label="Max baths"
+            type="number"
+            inputMode="decimal"
+            value={String(constraints.bathsMax ?? "")}
+            onChange={(e) =>
+              patch("bathsMax", e.target.value ? Number(e.target.value) : undefined)
+            }
+          />
+          <Field
+            label="Max sqft"
+            type="number"
+            value={String(constraints.sqftMax ?? "")}
+            onChange={(e) =>
+              patch("sqftMax", e.target.value ? Number(e.target.value) : undefined)
+            }
+          />
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <Field
             label="Min price ($)"
@@ -286,6 +385,44 @@ function ConstraintReview({
               patch("priceMax", e.target.value ? Number(e.target.value) : undefined)
             }
           />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field
+            label="Min year built"
+            type="number"
+            value={String(constraints.yearBuiltMin ?? "")}
+            onChange={(e) =>
+              patch(
+                "yearBuiltMin",
+                e.target.value ? Number(e.target.value) : undefined,
+              )
+            }
+            hint="Skip pre-war stock, etc."
+          />
+          <div>
+            <label className="text-textMuted text-xs">Max days on market</label>
+            <select
+              value={constraints.daysOnMarketMax ?? ""}
+              onChange={(e) =>
+                patch(
+                  "daysOnMarketMax",
+                  (e.target.value || undefined) as
+                    | ProjectConstraints["daysOnMarketMax"]
+                    | undefined,
+                )
+              }
+              className="mt-1 w-full bg-surface border border-border rounded-xl px-3 py-2 text-sm"
+            >
+              <option value="">Any</option>
+              <option value="24h">24 hours</option>
+              <option value="7d">7 days</option>
+              <option value="14d">14 days</option>
+              <option value="30d">30 days</option>
+              <option value="90d">90 days</option>
+              <option value="6m">6 months</option>
+              <option value="12m">12 months</option>
+            </select>
+          </div>
         </div>
       </Section>
 
