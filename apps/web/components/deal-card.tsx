@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { CashflowBadge } from "@/components/cashflow-badge";
 import { DscrBadge } from "@/components/dscr-badge";
 import { Badge } from "@/components/ui/badge";
 import type { DealWithScore } from "@/lib/deals";
@@ -68,12 +69,7 @@ export function DealCard({ deal }: { deal: DealWithScore }) {
 
         <div className="flex flex-wrap gap-2 mb-3">
           <DscrBadge dscr={score?.dscr ?? null} />
-          {score?.monthly_cashflow != null ? (
-            <Badge variant={score.monthly_cashflow >= 0 ? "success" : "danger"}>
-              {score.monthly_cashflow >= 0 ? "+" : ""}
-              {formatMoney(score.monthly_cashflow)}/mo
-            </Badge>
-          ) : null}
+          <CashflowBadge monthlyCashflow={score?.monthly_cashflow ?? null} />
           {deal.est_rent ? (
             <Badge>Rent {formatMoney(deal.est_rent)}</Badge>
           ) : null}

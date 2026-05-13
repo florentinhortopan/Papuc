@@ -11,6 +11,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { CashflowBadge } from "@/components/cashflow-badge";
 import { CashflowChart } from "@/components/cashflow-chart";
 import { ComparablesPanel } from "@/components/comparables-panel";
 import { DscrBadge } from "@/components/dscr-badge";
@@ -382,12 +383,7 @@ export function DealDetailClient({
               {formatMoney(deal.price ?? deal.est_value)}
             </Badge>
             <DscrBadge dscr={result.dscr} />
-            <Badge
-              variant={result.annualPreTaxProfit >= 0 ? "success" : "danger"}
-            >
-              {result.annualPreTaxProfit >= 0 ? "+" : ""}
-              {formatMoney(result.annualPreTaxProfit / 12)}/mo
-            </Badge>
+            <CashflowBadge monthlyCashflow={result.annualPreTaxProfit / 12} />
             <Badge>CoC {formatPct(result.cashOnCashReturn)}</Badge>
             {state.strategy === "STR" && breakevenADR !== null ? (
               <Badge
@@ -443,6 +439,19 @@ export function DealDetailClient({
           <p className="text-text text-base font-semibold mb-3">
             Pro-forma summary
           </p>
+          <SummaryRow
+            label="Monthly cashflow"
+            value={`${result.annualPreTaxProfit >= 0 ? "+" : ""}${formatMoney(
+              result.annualPreTaxProfit / 12,
+            )}/mo`}
+            emphasis={
+              result.annualPreTaxProfit / 12 >= 100
+                ? "positive"
+                : result.annualPreTaxProfit / 12 >= -100
+                  ? "neutral"
+                  : "negative"
+            }
+          />
           <SummaryRow label="Initial sunk investment" value={formatMoney(result.initialSunkInvestment)} />
           <SummaryRow label="Annual pre-tax profit" value={formatMoney(result.annualPreTaxProfit)} />
           <SummaryRow label="Annual after-tax profit" value={formatMoney(result.annualPostTaxProfit)} />
@@ -656,11 +665,22 @@ function SummaryRow({
   label,
   value,
   muted,
+  emphasis,
 }: {
   label: string;
   value: string;
   muted?: boolean;
+  /** Tint the value to convey sustainability at a glance — used by the
+   *  top-of-summary monthly cashflow line. */
+  emphasis?: "positive" | "negative" | "neutral";
 }) {
+  let valueClass = muted
+    ? "text-textMuted text-xs"
+    : "text-text text-sm font-semibold";
+  if (emphasis === "positive") valueClass = "text-success text-sm font-semibold";
+  else if (emphasis === "negative") valueClass = "text-danger text-sm font-semibold";
+  else if (emphasis === "neutral") valueClass = "text-warning text-sm font-semibold";
+
   return (
     <div className={`flex justify-between ${muted ? "py-0.5" : "py-1"}`}>
       <span
@@ -670,13 +690,7 @@ function SummaryRow({
       >
         {label}
       </span>
-      <span
-        className={
-          muted ? "text-textMuted text-xs" : "text-text text-sm font-semibold"
-        }
-      >
-        {value}
-      </span>
+      <span className={valueClass}>{value}</span>
     </div>
   );
 }
