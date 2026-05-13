@@ -1,5 +1,7 @@
 "use client";
 
+import { defaultStrSchedule } from "@papuc/core";
+
 import { Input } from "@/components/ui/input";
 
 const MONTHS = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
@@ -110,14 +112,20 @@ export function StrMatrix({
   );
 }
 
+/**
+ * Build a 12-month STR matrix seeded with a constant ADR. Thin wrapper
+ * around the core `defaultStrSchedule` so the editor and the scout share
+ * one source of truth for the seasonal curve. To match the scout's
+ * implicit assumption (ADR = STR multiplier × LTR rent / 0.65 occupancy),
+ * derive `adr` from `estimateSTRAdrFromLTRRent(monthlyLTRRent)` instead
+ * of `monthlyLTRRent / 30`.
+ */
 export function defaultStrMatrix(adr: number): StrMatrixValue {
-  const monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const schedule = defaultStrSchedule(0);
   return {
-    monthlyNights: monthDays,
+    monthlyNights: schedule.monthlyNights,
     monthlyADR: new Array(12).fill(adr),
-    monthlyOccupancy: [
-      0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.95, 0.85, 0.75, 0.6, 0.55,
-    ],
-    monthlyAvgStays: new Array(12).fill(8),
+    monthlyOccupancy: schedule.monthlyOccupancy,
+    monthlyAvgStays: schedule.monthlyAvgStays,
   };
 }

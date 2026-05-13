@@ -9,6 +9,29 @@ import type { PITIA, ProFormaResult, Strategy } from "./schemas";
 
 const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
 
+/**
+ * Seasonal occupancy curve used as the default STR profile across the
+ * whole app (scout-time pro-forma AND the deal-detail editor). Peaks in
+ * summer (Jun-Aug), dips in winter (Dec-Feb). The average across the
+ * year sits at ~0.75; we expose it so callers can use the same shape
+ * whether they're scouting in bulk or refining a single listing.
+ *
+ * It is critical that this lives in one place: when scout and the
+ * detail editor used different curves (flat 0.7 vs. this seasonal
+ * curve), the deal card and the pro-forma summary disagreed about
+ * cashflow by 10-20% for the same property.
+ */
+export const DEFAULT_STR_MONTHLY_OCCUPANCY: readonly number[] = [
+  0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.95, 0.85, 0.75, 0.6, 0.55,
+];
+
+/** Number of bookings per month at the default 3-4 night average stay. */
+export const DEFAULT_STR_MONTHLY_AVG_STAYS: readonly number[] = new Array(
+  12,
+).fill(8);
+
+export const DEFAULT_STR_MONTHLY_NIGHTS: readonly number[] = MONTH_DAYS;
+
 export interface ProFormaInputs {
   // Acquisition
   price: number;
@@ -175,6 +198,34 @@ export function estimateSTRAdrFromLTRRent(monthlyLTRRent: number): number {
   const annualGrossSTR = monthlyLTRRent * 12 * STR_GROSS_VS_LTR_MULTIPLIER;
   const expectedRentedNights = 365 * STR_DEFAULT_OCCUPANCY;
   return annualGrossSTR / expectedRentedNights;
+}
+
+/**
+ * Default STR 12-month schedule (nights, ADR, occupancy, avg stays) for a
+ * given LTR-equivalent monthly rent. Used by:
+ *
+ *   - the scout pipeline, so the proforma it computes per-listing matches
+ *     what the detail editor will show.
+ *   - the deal-detail editor, as the initial state for its STR matrix.
+ *
+ * Both call sites must use this helper or the cashflow on the deal card
+ * will not match the cashflow on the detail page.
+ */
+export interface StrSchedule {
+  monthlyNights: number[];
+  monthlyADR: number[];
+  monthlyOccupancy: number[];
+  monthlyAvgStays: number[];
+}
+
+export function defaultStrSchedule(monthlyLTRRent: number): StrSchedule {
+  const adr = estimateSTRAdrFromLTRRent(monthlyLTRRent);
+  return {
+    monthlyNights: [...DEFAULT_STR_MONTHLY_NIGHTS],
+    monthlyADR: new Array(12).fill(adr),
+    monthlyOccupancy: [...DEFAULT_STR_MONTHLY_OCCUPANCY],
+    monthlyAvgStays: [...DEFAULT_STR_MONTHLY_AVG_STAYS],
+  };
 }
 
 /**

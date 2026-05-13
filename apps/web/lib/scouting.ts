@@ -1,8 +1,8 @@
 import {
   computeAutoPMIRateFromLoan,
   computeProForma,
+  defaultStrSchedule,
   estimateInsuranceMonthly,
-  estimateSTRAdrFromLTRRent,
   HasDataClient,
   RealEstateAPIClient,
   type Market,
@@ -190,15 +190,16 @@ export async function scoutProjectInternal(
       // one). `undefined` from both means the API simply did not return one.
       const hoaMonthly = listing.hoaMonthly ?? detail?.hoaMonthly;
 
-      // For STR we estimate an Average Daily Rate from the LTR-equivalent
-      // monthly rent. monthlyRent / 30 (the old behavior) treated STR like
-      // a daily slice of long-term rent and dramatically under-counted
-      // revenue, killing every STR deal at the cashflow filter. The
-      // estimator applies a documented industry multiplier + occupancy.
-      const estimatedADR =
-        constraints.strategy === "STR"
-          ? estimateSTRAdrFromLTRRent(monthlyRent)
-          : 0;
+      // For STR we hydrate the full 12-month schedule from the shared
+      // helper in @papuc/core so the cashflow we store in deal_scores
+      // (and surface on the deal card) matches exactly what the detail
+      // page recomputes when the user opens the listing. They used to
+      // drift because scout used the proforma's implicit flat 0.70
+      // occupancy default while the detail editor seeded a seasonal
+      // curve, off by ~10-20% in revenue — and the ADR seed differed by
+      // a factor of ~2.5x (industry multiplier vs. naive rent / 30).
+      const strSchedule =
+        constraints.strategy === "STR" ? defaultStrSchedule(monthlyRent) : null;
 
       // Be explicit about every cost so the cashflow we store in
       // `deal_scores` matches what the deal-detail page recomputes live.
@@ -213,10 +214,10 @@ export async function scoutProjectInternal(
         interestOnly: constraints.mortgage.interestOnly ?? false,
         strategy: constraints.strategy,
         monthlyRentLTR: constraints.strategy === "LTR" ? monthlyRent : 0,
-        monthlyADR:
-          constraints.strategy === "STR"
-            ? new Array(12).fill(estimatedADR)
-            : undefined,
+        monthlyNights: strSchedule?.monthlyNights,
+        monthlyADR: strSchedule?.monthlyADR,
+        monthlyOccupancy: strSchedule?.monthlyOccupancy,
+        monthlyAvgStays: strSchedule?.monthlyAvgStays,
         hoaMonthly: hoaMonthly,
         insuranceMonthly: estimateInsuranceMonthly(effectivePrice),
         pmiRatePct: computeAutoPMIRateFromLoan(effectivePrice, effectiveDown),

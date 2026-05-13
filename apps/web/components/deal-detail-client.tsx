@@ -5,6 +5,7 @@ import {
   computeBreakevenADR,
   computeProForma,
   DEFAULT_INSURANCE_RATE_PCT,
+  estimateSTRAdrFromLTRRent,
   solveBreakevenDownPayment,
   solveBreakevenPrice,
   solveBreakevenRent,
@@ -80,8 +81,20 @@ export function DealDetailClient({
   const [deal, setDeal] = useState(initialDeal);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Seed the STR matrix using the SAME helper the scout uses. Previously
+   * the editor seeded `est_rent / 30` (~$65/night for a $2k LTR rent)
+   * while the scout used `estimateSTRAdrFromLTRRent` (industry multiplier
+   * → ~$167/night). That mismatch is what made the card and the detail
+   * page disagree on cashflow by 2-3x for the same listing.
+   */
+  const seedMonthlyRent = Number(deal.est_rent ?? 2500);
+  const seedAdr =
+    project.constraints.strategy === "STR"
+      ? estimateSTRAdrFromLTRRent(seedMonthlyRent) || 200
+      : seedMonthlyRent / 30 || 200;
   const [strMatrix, setStrMatrix] = useState<StrMatrixValue>(() =>
-    defaultStrMatrix((Number(deal.est_rent ?? 2500) / 30) || 200),
+    defaultStrMatrix(seedAdr),
   );
   const [state, setState] = useState<ProFormaState>(() => {
     const c = project.constraints;
@@ -108,7 +121,15 @@ export function DealDetailClient({
       utilitiesMonthly: c.strategy === "STR" ? "400" : "0",
       maintenanceMonthly: "100",
       miscMonthly: "100",
-      monthlyRentLTR: String(deal.est_rent ?? 2500),
+      // In STR mode this field is the "ADR baseline" used by the
+      // patchRentOrAdr handler to broadcast a single daily rate into all
+      // 12 matrix cells — seed it from the same per-night value that
+      // populates the matrix so the field, the matrix, and the scout
+      // agree at first paint.
+      monthlyRentLTR:
+        c.strategy === "STR"
+          ? String(Math.round(seedAdr))
+          : String(deal.est_rent ?? 2500),
       strategy: c.strategy,
     };
   });
