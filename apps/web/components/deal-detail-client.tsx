@@ -1200,19 +1200,45 @@ function ScenarioSimulator({
   inputs: ProFormaInputs;
 }) {
   const [error, setError] = useState<string | null>(null);
+  /**
+   * When ON, the price and down-payment sliders are coupled so that the
+   * loan-to-value ratio stays constant: moving the price drags the down
+   * with it, moving the down drags the price the same way. When OFF,
+   * the sliders are independent (the old behavior).
+   *
+   * Default is OFF so the existing flow (move price alone, see cashflow
+   * change) isn't disturbed. Users who want to model "what if I close
+   * the rest of the gap with more cash?" can flip it on and the down
+   * slider will keep pace with their target LTV.
+   */
+  const [lockLtv, setLockLtv] = useState(false);
 
-  // Slider ranges anchored to the baseline so the original price always
-  // sits at a sensible spot on the track even after the user has dragged
-  // beyond it. Min: 50% of baseline (can't reasonably offer less). Max:
-  // 110% of baseline so a small over-asking scenario is visible.
-  const priceMin = Math.max(1, Math.round(baseline.price * 0.5));
-  const priceMax = Math.max(
-    Math.round(baseline.price * 1.1),
-    Math.round(currentPrice * 1.05),
+  /**
+   * Slider ranges. Anchored to the baseline so the original deal sits at
+   * a sensible spot, but they auto-grow when the user (or a solver) lands
+   * outside the default window — without that, the slider thumb
+   * disappears and the user has no way to drag back.
+   *
+   *   Price: 30% → 200% of baseline. Wider than the original 50% → 110%
+   *     so power users can model "what if comps rebound?" or a deeply
+   *     under-asking offer.
+   *   Down:  0%  → 100% of current price. The old cap at 50% silently
+   *     prevented users from exploring "raise more cash to make this
+   *     work" — which is exactly the lever the user flagged. Going all
+   *     the way to 100% means an all-cash deal (loan = $0, no P&I) is
+   *     selectable, which is a legitimate scenario.
+   */
+  const priceMin = Math.min(
+    Math.round(baseline.price * 0.3),
+    Math.round(currentPrice * 0.9),
   );
-  // Down payment range: 5%-50% of the current scenario price.
-  const downMin = Math.max(0, Math.round(currentPrice * 0.05));
-  const downMax = Math.max(Math.round(currentPrice * 0.5), downMin + 1);
+  const priceMax = Math.max(
+    Math.round(baseline.price * 2),
+    Math.round(currentPrice * 1.1),
+  );
+  const downMin = 0;
+  const downMax = Math.max(Math.round(currentPrice), 1);
+  const safePrice = Math.min(priceMax, Math.max(priceMin, currentPrice));
   const safeDown = Math.min(downMax, Math.max(downMin, currentDownPayment));
   const downPct = currentPrice > 0 ? currentDownPayment / currentPrice : 0;
 
@@ -1221,6 +1247,37 @@ function ScenarioSimulator({
 
   const isDirty =
     Math.abs(priceDelta) > 0.5 || Math.abs(downDelta) > 0.5;
+
+  /** Handle a slider drag, applying LTV coupling when locked. */
+  function applyPrice(nextPrice: number) {
+    if (lockLtv && currentPrice > 0) {
+      const ratio = currentDownPayment / currentPrice;
+      onChange({
+        price: nextPrice,
+        downPayment: Math.min(nextPrice, Math.max(0, ratio * nextPrice)),
+      });
+    } else {
+      onChange({
+        price: nextPrice,
+        downPayment: Math.min(nextPrice, currentDownPayment),
+      });
+    }
+  }
+  function applyDown(nextDown: number) {
+    if (lockLtv && currentDownPayment > 0) {
+      // Solve for the price that preserves the current LTV. ratio = down /
+      // price, so newPrice = newDown / ratio.
+      const ratio = currentDownPayment / currentPrice;
+      const nextPrice =
+        ratio > 0 ? nextDown / ratio : currentPrice;
+      onChange({
+        price: Math.max(nextDown, nextPrice),
+        downPayment: nextDown,
+      });
+    } else {
+      onChange({ price: currentPrice, downPayment: nextDown });
+    }
+  }
 
   function solveForPrice() {
     setError(null);
@@ -1231,13 +1288,13 @@ function ScenarioSimulator({
     });
     if (bePrice === null) {
       setError(
-        "No break-even price exists within the search range with these other inputs.",
+        monthlyCashflow >= 0
+          ? "Already profitable — there's no lower price needed to break even."
+          : "Even at the lowest sensible price this deal still loses money. Try raising rent or lowering rate/insurance.",
       );
       return;
     }
-    // Clamp into the visible slider range so the thumb doesn't disappear.
-    const clamped = Math.min(Math.max(bePrice, priceMin), priceMax * 3);
-    onChange({ price: clamped, downPayment: currentDownPayment });
+    onChange({ price: bePrice, downPayment: currentDownPayment });
   }
 
   function solveForDown() {
@@ -1248,8 +1305,12 @@ function ScenarioSimulator({
       downPayment: currentDownPayment,
     });
     if (beDown === null) {
+      // The solver returns null in two opposite cases — disambiguate so
+      // the user knows whether the deal is fine as-is or unfixable.
       setError(
-        "No down payment between $0 and the full price makes this deal break even.",
+        monthlyCashflow >= 0
+          ? "Already profitable — you don't need more down to break even."
+          : "Even an all-cash purchase wouldn't break even at this rent. Lower the price, raise the rent, or trim costs.",
       );
       return;
     }
@@ -1258,6 +1319,7 @@ function ScenarioSimulator({
 
   function reset() {
     setError(null);
+    setLockLtv(false);
     onChange(baseline);
   }
 
@@ -1268,6 +1330,10 @@ function ScenarioSimulator({
         ? "text-warning"
         : "text-danger";
 
+  const ltvPct = currentPrice > 0
+    ? Math.max(0, (1 - currentDownPayment / currentPrice) * 100)
+    : 0;
+
   return (
     <div className="bg-surface border border-border rounded-2xl p-4">
       <div className="flex items-baseline justify-between mb-3">
@@ -1277,6 +1343,30 @@ function ScenarioSimulator({
         <p className="text-textMuted text-xs">
           Drag to test what-ifs · solvers find exact break-even
         </p>
+      </div>
+
+      <div className="flex items-center justify-between mb-3 bg-surfaceAlt border border-border rounded-xl px-3 py-2">
+        <div>
+          <p className="text-text text-xs font-semibold">Lock LTV</p>
+          <p className="text-textMuted text-[11px] leading-4">
+            Couple sliders so {Math.round(100 - ltvPct)}% down stays
+            constant
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setLockLtv((v) => !v)}
+          aria-pressed={lockLtv}
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+            lockLtv ? "bg-primary" : "bg-border"
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
+              lockLtv ? "translate-x-6" : "translate-x-1"
+            }`}
+          />
+        </button>
       </div>
 
       <div className="mb-4">
@@ -1303,10 +1393,8 @@ function ScenarioSimulator({
           min={priceMin}
           max={priceMax}
           step={1000}
-          value={[Math.min(Math.max(currentPrice, priceMin), priceMax)]}
-          onValueChange={(v) =>
-            onChange({ price: v[0] ?? currentPrice, downPayment: currentDownPayment })
-          }
+          value={[safePrice]}
+          onValueChange={(v) => applyPrice(v[0] ?? currentPrice)}
         />
         <div className="flex justify-between text-[10px] text-textMuted mt-1">
           <span>${priceMin.toLocaleString()}</span>
@@ -1321,7 +1409,7 @@ function ScenarioSimulator({
           <span className="text-text text-sm font-semibold">
             ${Math.round(currentDownPayment).toLocaleString()}{" "}
             <span className="text-xs text-textMuted">
-              ({(downPct * 100).toFixed(1)}% of price)
+              ({(downPct * 100).toFixed(1)}% of price · LTV {Math.round(ltvPct)}%)
             </span>
           </span>
         </div>
@@ -1331,14 +1419,12 @@ function ScenarioSimulator({
           max={downMax}
           step={1000}
           value={[safeDown]}
-          onValueChange={(v) =>
-            onChange({ price: currentPrice, downPayment: v[0] ?? currentDownPayment })
-          }
+          onValueChange={(v) => applyDown(v[0] ?? currentDownPayment)}
         />
         <div className="flex justify-between text-[10px] text-textMuted mt-1">
-          <span>${downMin.toLocaleString()}</span>
+          <span>$0 (100% LTV)</span>
           <span>baseline ${Math.round(baseline.downPayment).toLocaleString()}</span>
-          <span>${downMax.toLocaleString()}</span>
+          <span>${downMax.toLocaleString()} (all cash)</span>
         </div>
       </div>
 
