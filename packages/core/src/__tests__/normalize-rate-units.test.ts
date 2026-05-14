@@ -95,3 +95,87 @@ describe("normalizeRateUnits", () => {
     expect(out.mortgage.ltv).toBe(0.05);
   });
 });
+
+describe("dollar-amount repair", () => {
+  /**
+   * Claude occasionally returns downPayment / totalCash as a percent
+   * (25), a fraction (0.25), or as thousands-shorthand (200 instead of
+   * 200000). These all pass the schema's `nonnegative` check and surface
+   * to the UI as "Down payment $25", which is broken in a way the user
+   * can't diagnose. The normalizer should rescue them when we have a
+   * price to anchor against, and drop them otherwise.
+   */
+  it("scales a fractional downPayment (0.25) against priceMax", () => {
+    const out = normalizeRateUnits({
+      ...baseConstraints,
+      priceMax: 500000,
+      downPayment: 0.25,
+    }) as Record<string, unknown>;
+    expect(out.downPayment).toBe(125000);
+  });
+
+  it("scales a percent-shaped downPayment (25) against priceMax", () => {
+    const out = normalizeRateUnits({
+      ...baseConstraints,
+      priceMax: 500000,
+      downPayment: 25,
+    }) as Record<string, unknown>;
+    expect(out.downPayment).toBe(125000);
+  });
+
+  it("scales a thousands-shorthand priceMax (500) up to 500000", () => {
+    const out = normalizeRateUnits({
+      ...baseConstraints,
+      priceMax: 500,
+    }) as Record<string, unknown>;
+    expect(out.priceMax).toBe(500000);
+  });
+
+  it("scales totalCash against the upgraded priceMax", () => {
+    const out = normalizeRateUnits({
+      ...baseConstraints,
+      priceMax: 500, // thousands-shorthand
+      totalCash: 40, // also shorthand-ish
+    }) as Record<string, unknown>;
+    // priceMax is repaired to 500000; totalCash (40) becomes
+    // (40/100) * 500000 = 200000.
+    expect(out.priceMax).toBe(500000);
+    expect(out.totalCash).toBe(200000);
+  });
+
+  it("drops a suspicious downPayment when there is no price to anchor", () => {
+    const out = normalizeRateUnits({
+      ...baseConstraints,
+      downPayment: 25,
+    }) as Record<string, unknown>;
+    expect(out.downPayment).toBeUndefined();
+  });
+
+  it("leaves a clean $200,000 downPayment alone", () => {
+    const out = normalizeRateUnits({
+      ...baseConstraints,
+      priceMax: 600000,
+      downPayment: 200000,
+    }) as Record<string, unknown>;
+    expect(out.downPayment).toBe(200000);
+  });
+
+  it("preserves a zero downPayment (no-money-down scenario)", () => {
+    const out = normalizeRateUnits({
+      ...baseConstraints,
+      priceMax: 500000,
+      downPayment: 0,
+    }) as Record<string, unknown>;
+    expect(out.downPayment).toBe(0);
+  });
+
+  it("returns constraints that pass ProjectConstraintsSchema end to end", () => {
+    const out = normalizeRateUnits({
+      ...baseConstraints,
+      priceMax: 500, // shorthand
+      downPayment: 25, // percent
+      totalCash: 40, // shorthand-like
+    }) as Record<string, unknown>;
+    expect(ProjectConstraintsSchema.safeParse(out).success).toBe(true);
+  });
+});

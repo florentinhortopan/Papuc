@@ -130,7 +130,67 @@ export function normalizeRateUnits(constraints: unknown): unknown {
     if (d > 3) d = 3;
     c.minDSCR = d;
   }
+  // Dollar-amount fields. Claude has a documented tendency to slip
+  // between "25" (percent), "0.25" (fraction), and "200000" (the real
+  // USD figure) for downPayment / totalCash / priceMax. None of those
+  // small values are useful as dollars, and they all pass the schema's
+  // `nonnegative` check, so they reach the UI as e.g. "Down payment $25"
+  // and silently break the pro-forma. We resolve them here:
+  //
+  //   - Suspicious downPayment / totalCash (< $1000):
+  //       * If it's clearly a fraction (≤ 1) AND we have a price, scale
+  //         by price. ("0.25" + priceMax=500k → 125000.)
+  //       * If it's clearly a percentage (1 < x ≤ 100) AND we have a
+  //         price, scale by price. ("25" + priceMax=500k → 125000.)
+  //       * Otherwise drop the field rather than send $25 downstream.
+  //   - Suspicious priceMin / priceMax (< 1000) we treat as
+  //     thousands-shorthand and multiply by 1000 ("500" → 500000).
+  const priceForScale = pickPriceForScale(c);
+  c.downPayment = repairDollarAmount(c.downPayment, priceForScale);
+  c.totalCash = repairDollarAmount(c.totalCash, priceForScale);
+  c.priceMin = repairPriceField(c.priceMin);
+  c.priceMax = repairPriceField(c.priceMax);
   return c;
+}
+
+function pickPriceForScale(c: Record<string, unknown>): number | undefined {
+  const max = typeof c.priceMax === "number" ? c.priceMax : undefined;
+  const min = typeof c.priceMin === "number" ? c.priceMin : undefined;
+  // If priceMin/priceMax themselves still look like shorthand (< 1000)
+  // their repaired form is what we want to scale against. We can't
+  // recurse here, so reuse the same multiplication rule inline.
+  const upgrade = (p: number | undefined) =>
+    p !== undefined && p > 0 && p < 1000 ? p * 1000 : p;
+  return upgrade(max) ?? upgrade(min);
+}
+
+function repairDollarAmount(
+  raw: unknown,
+  priceForScale: number | undefined,
+): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    return raw as number | undefined;
+  }
+  // Anything ≥ $1k is plausibly real dollars.
+  if (raw >= 1000) return raw;
+  if (raw === 0) return 0;
+  if (priceForScale && priceForScale > 0) {
+    if (raw <= 1) return Math.round(raw * priceForScale);
+    if (raw <= 100) return Math.round((raw / 100) * priceForScale);
+  }
+  // No price to anchor against; the value is more misleading than useful.
+  return undefined;
+}
+
+function repairPriceField(raw: unknown): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    return raw as number | undefined;
+  }
+  // "$500k" written as 500 → 500000. "$1.2M" written as 1.2 → 1200.
+  // The lower bound is conservative: a real price under $1000 is
+  // implausible in this market.
+  if (raw > 0 && raw < 1000) return Math.round(raw * 1000);
+  return raw;
 }
 
 function clamp(n: number, min: number, max: number): number {

@@ -1,9 +1,17 @@
 export const PARSE_PROJECT_SYSTEM = `You are a real estate investment analyst. Your job is to translate a user's free-text rental investment goal into a structured ProjectConstraints object.
 
-CRITICAL UNIT CONVENTION — all rates and ratios are returned as DECIMAL FRACTIONS, never percentages:
-- mortgage.rateAPR: decimal between 0 and 0.25. A 7.5% APR is 0.075 (NOT 7.5).
-- mortgage.ltv: decimal between 0.05 and 0.95. A 75% LTV is 0.75 (NOT 75).
+CRITICAL UNIT CONVENTION — fields fall into two camps. Get these right or downstream calculations are nonsense:
+
+A. DECIMAL FRACTIONS (rates / ratios — never return percentages):
+- mortgage.rateAPR: decimal between 0 and 0.25. A 7.5% APR is 0.075 (NOT 7.5, NOT 75).
+- mortgage.ltv: decimal between 0.05 and 0.95. A 75% LTV is 0.75 (NOT 75, NOT 0.75%).
 - minDSCR: a multiplier between 0 and 3. A 1.25 DSCR is 1.25.
+
+B. WHOLE DOLLAR AMOUNTS (cash / price fields — always full USD, never % or thousands-shorthand):
+- downPayment: full USD. "$200k down" is 200000 (NOT 200, NOT 25, NOT 0.25). NEVER a percentage. If the user only says "25% down" without a dollar figure, OMIT downPayment and instead set mortgage.ltv = 0.75 (so 25% equity).
+- totalCash: full USD same way. "$40k cash" is 40000.
+- priceMin / priceMax: full USD. "$500k" is 500000.
+- targetMonthlyCashflow: full USD per month. "$600/mo" is 600.
 
 Be conservative. If the user did not specify a value, omit it (do not invent it). For mortgage rate, default to 0.075 (7.5% APR — current DSCR investor market) only if the user implies financing without specifying. For LTV, default to 0.75 (25% down) — typical for DSCR loans — unless the user specifies a different downPayment / totalCash.
 
@@ -90,8 +98,18 @@ export const PARSE_PROJECT_TOOL = {
               ],
             },
           },
-          priceMin: { type: "number" },
-          priceMax: { type: "number" },
+          priceMin: {
+            type: "number",
+            minimum: 0,
+            description:
+              "Minimum listing price in WHOLE USD. '$300k' is 300000, NOT 300.",
+          },
+          priceMax: {
+            type: "number",
+            minimum: 0,
+            description:
+              "Maximum listing price in WHOLE USD. '$500k' is 500000, NOT 500.",
+          },
           bedsMin: { type: "integer" },
           bedsMax: { type: "integer" },
           bathsMin: { type: "number" },
@@ -130,9 +148,22 @@ export const PARSE_PROJECT_TOOL = {
               ],
             },
           },
-          downPayment: { type: "number" },
-          totalCash: { type: "number" },
-          targetMonthlyCashflow: { type: "number" },
+          downPayment: {
+            type: "number",
+            minimum: 0,
+            description:
+              "Down payment in WHOLE USD, NOT a percentage. '$200k down' is 200000, NOT 25, NOT 0.25. If the user only mentions a percentage (e.g. '25% down') without a dollar figure, OMIT this field and set mortgage.ltv instead.",
+          },
+          totalCash: {
+            type: "number",
+            minimum: 0,
+            description:
+              "Total cash on hand in WHOLE USD. '$40k cash' is 40000.",
+          },
+          targetMonthlyCashflow: {
+            type: "number",
+            description: "Target monthly cashflow in WHOLE USD. '$600/mo' is 600.",
+          },
           minDSCR: {
             type: "number",
             minimum: 0,
