@@ -175,6 +175,31 @@ describe("HasDataClient.searchZillow", () => {
     expect(calls).toBe(2);
   });
 
+  it("derives totalPages/hasNextPage from live pagination shape (nextPage + otherPages)", async () => {
+    // HasData's live responses don't include totalPages/totalCount — they
+    // return nextPage (URL) and otherPages ({"2": url, ...}). This is the
+    // exact shape observed against the real API for "Clearlake Oaks, CA".
+    const fetchFn = mockFetch(async () =>
+      new Response(
+        JSON.stringify({
+          requestMetadata: { status: "ok" },
+          properties: [{ zpid: 1 }],
+          pagination: {
+            currentPage: 1,
+            nextPage: "https://www.zillow.com/clearlake-oaks-ca/2_p",
+            otherPages: { "2": "u2", "3": "u3", "4": "u4", "5": "u5" },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = new HasDataClient({ apiKey: "k", fetchFn });
+    const res = await client.searchZillow({ keyword: "Clearlake Oaks, CA" });
+    expect(res.totalPages).toBe(5);
+    expect(res.hasNextPage).toBe(true);
+    expect(res.page).toBe(1);
+  });
+
   it("does NOT retry on 4xx — surfaces HasDataError immediately", async () => {
     let calls = 0;
     const fetchFn = mockFetch(async () => {
@@ -186,6 +211,101 @@ describe("HasDataClient.searchZillow", () => {
       HasDataError,
     );
     expect(calls).toBe(1);
+  });
+});
+
+describe("HasDataClient.searchZillowAll", () => {
+  /** Build a mock that serves N pages of `perPage` listings each, using
+   *  the live pagination shape (nextPage URL + otherPages map). zpids are
+   *  globally unique per page unless `dupeAcrossPages` is set. */
+  function pagedFetch(
+    pages: number,
+    perPage: number,
+    opts: { dupeAcrossPages?: boolean } = {},
+  ) {
+    const calls: number[] = [];
+    const fetchFn = mockFetch(async (url) => {
+      const m = /[?&]page=(\d+)/.exec(url);
+      const page = m ? Number(m[1]) : 1;
+      calls.push(page);
+      const props = Array.from({ length: perPage }, (_, i) => ({
+        zpid: opts.dupeAcrossPages ? i + 1 : (page - 1) * perPage + i + 1,
+        price: 100000 + i,
+      }));
+      const otherPages: Record<string, string> = {};
+      for (let p = 1; p <= pages; p++) {
+        if (p !== page) otherPages[String(p)] = `u${p}`;
+      }
+      return new Response(
+        JSON.stringify({
+          requestMetadata: { status: "ok" },
+          properties: props,
+          pagination: {
+            currentPage: page,
+            ...(page < pages ? { nextPage: `u${page + 1}` } : {}),
+            otherPages,
+          },
+        }),
+        { status: 200 },
+      );
+    });
+    return { fetchFn, calls };
+  }
+
+  it("aggregates multiple pages, de-duped by zpid", async () => {
+    const { fetchFn, calls } = pagedFetch(3, 5);
+    const client = new HasDataClient({ apiKey: "k", fetchFn });
+    const res = await client.searchZillowAll(
+      { keyword: "95423" },
+      { maxPages: 3 },
+    );
+    expect(calls).toEqual([1, 2, 3]);
+    expect(res.resultCount).toBe(15);
+    expect(res.pagesFetched).toBe(3);
+    expect(new Set(res.data.map((d) => d.zpid)).size).toBe(15);
+  });
+
+  it("stops early once targetCount unique listings are collected", async () => {
+    const { fetchFn, calls } = pagedFetch(5, 41);
+    const client = new HasDataClient({ apiKey: "k", fetchFn });
+    const res = await client.searchZillowAll(
+      { keyword: "95423" },
+      { maxPages: 5, targetCount: 50 },
+    );
+    // 41 on page 1 < 50, so page 2 is needed; 82 ≥ 50 stops there.
+    expect(calls).toEqual([1, 2]);
+    expect(res.resultCount).toBe(82);
+    expect(res.pagesFetched).toBe(2);
+  });
+
+  it("stops when the upstream reports no next page", async () => {
+    const { fetchFn, calls } = pagedFetch(2, 4);
+    const client = new HasDataClient({ apiKey: "k", fetchFn });
+    const res = await client.searchZillowAll(
+      { keyword: "95423" },
+      { maxPages: 10 },
+    );
+    expect(calls).toEqual([1, 2]);
+    expect(res.resultCount).toBe(8);
+  });
+
+  it("drops duplicate zpids repeated across pages", async () => {
+    const { fetchFn } = pagedFetch(3, 5, { dupeAcrossPages: true });
+    const client = new HasDataClient({ apiKey: "k", fetchFn });
+    const res = await client.searchZillowAll(
+      { keyword: "95423" },
+      { maxPages: 3 },
+    );
+    // Every page returns the same 5 zpids → aggregate stays at 5.
+    expect(res.resultCount).toBe(5);
+    expect(res.pagesFetched).toBe(3);
+  });
+
+  it("respects maxPages as a hard cap on credit spend", async () => {
+    const { fetchFn, calls } = pagedFetch(10, 41);
+    const client = new HasDataClient({ apiKey: "k", fetchFn });
+    await client.searchZillowAll({ keyword: "95423" }, { maxPages: 2 });
+    expect(calls).toEqual([1, 2]);
   });
 });
 

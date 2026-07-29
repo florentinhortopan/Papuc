@@ -100,6 +100,10 @@ export interface ZillowSearchResult {
   data: ZillowListingSummary[];
   page?: number;
   totalPages?: number;
+  /** Whether the upstream reported another page after this one. */
+  hasNextPage?: boolean;
+  /** Set by searchZillowAll: how many pages were actually fetched. */
+  pagesFetched?: number;
   raw?: unknown;
 }
 
@@ -211,7 +215,13 @@ export class HasDataClient {
       requestMetadata?: { status?: string; id?: string; url?: string };
       searchInformation?: unknown;
       properties?: unknown[];
-      pagination?: { currentPage?: number; totalPages?: number; totalCount?: number };
+      pagination?: {
+        currentPage?: number;
+        totalPages?: number;
+        totalCount?: number;
+        nextPage?: string;
+        otherPages?: Record<string, string>;
+      };
     }>(url);
 
     const status = raw.requestMetadata?.status;
@@ -227,13 +237,86 @@ export class HasDataClient {
       .map((p) => normalizeZillowListing(p))
       .filter((l): l is ZillowListingSummary => Boolean(l.zpid));
 
+    // HasData's live responses don't include totalPages/totalCount — they
+    // expose `nextPage` (URL) and `otherPages` ({"2": url, "3": url, ...}).
+    // Derive a page count from those so callers can paginate reliably.
+    const pag = raw.pagination ?? {};
+    const otherPageNums = pag.otherPages
+      ? Object.keys(pag.otherPages)
+          .map(Number)
+          .filter((n) => Number.isFinite(n))
+      : [];
+    const currentPage = pag.currentPage ?? filters.page ?? 1;
+    const totalPages =
+      pag.totalPages ??
+      (otherPageNums.length
+        ? Math.max(...otherPageNums, currentPage)
+        : undefined);
+
     return {
-      total: raw.pagination?.totalCount ?? data.length,
+      total: pag.totalCount ?? data.length,
       resultCount: data.length,
-      page: raw.pagination?.currentPage,
-      totalPages: raw.pagination?.totalPages,
+      page: currentPage,
+      totalPages,
+      hasNextPage: Boolean(pag.nextPage),
       data,
       raw,
+    };
+  }
+
+  /**
+   * Fetch multiple pages of /scrape/zillow/listing and aggregate, de-duped
+   * by zpid. HasData sorts listings newest-first (~41 per page), so a
+   * single-page fetch systematically misses anything older than a few
+   * weeks in active markets — this was the root cause of "the app didn't
+   * find a listing that's clearly on Zillow" (it was sitting on page 2).
+   *
+   * Stops when any of these hits:
+   *   - `maxPages` fetched (default 3; each page costs 5 credits)
+   *   - `targetCount` unique listings collected
+   *   - the upstream reports no next page, or returns an empty page
+   */
+  async searchZillowAll(
+    filters: ZillowSearchFilters,
+    opts: { maxPages?: number; targetCount?: number } = {},
+  ): Promise<ZillowSearchResult> {
+    const maxPages = Math.max(1, opts.maxPages ?? 3);
+    const targetCount = opts.targetCount ?? Number.POSITIVE_INFINITY;
+
+    const seen = new Set<string>();
+    const data: ZillowListingSummary[] = [];
+    let page = filters.page ?? 1;
+    let last: ZillowSearchResult | null = null;
+    let pagesFetched = 0;
+
+    for (let i = 0; i < maxPages; i++) {
+      const res = await this.searchZillow({ ...filters, page });
+      pagesFetched += 1;
+      last = res;
+      for (const row of res.data) {
+        if (!seen.has(row.zpid)) {
+          seen.add(row.zpid);
+          data.push(row);
+        }
+      }
+      if (data.length >= targetCount) break;
+      if (res.resultCount === 0) break;
+      const more =
+        res.hasNextPage ??
+        (res.totalPages !== undefined && page < res.totalPages);
+      if (!more) break;
+      page += 1;
+    }
+
+    return {
+      total: last?.total ?? data.length,
+      resultCount: data.length,
+      data,
+      page: filters.page ?? 1,
+      totalPages: last?.totalPages,
+      hasNextPage: last?.hasNextPage,
+      pagesFetched,
+      raw: last?.raw,
     };
   }
 

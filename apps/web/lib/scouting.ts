@@ -149,7 +149,10 @@ export async function scoutProjectInternal(
     const market = constraints.markets[0];
     if (!market) throw new Error("project has no market");
 
-    const size = options.size ?? 25;
+    // 100 candidates ≈ 3 HasData pages. The old default of 25 fit inside
+    // a single page, which combined with newest-first sorting meant the
+    // scout only ever saw the last ~2 weeks of listings in busy markets.
+    const size = options.size ?? 100;
     const search: ProviderSearchResult = hasDataKey
       ? await searchHasData(hasDataKey, constraints, market, size)
       : await searchRealEstateAPI(reaKey!, constraints, market, size);
@@ -380,13 +383,22 @@ async function searchHasData(
 ): Promise<ProviderSearchResult> {
   const client = new HasDataClient({ apiKey });
   const filters = buildHasDataFilters(constraints, market);
-  console.log("[scout/hasdata] filters=%j", filters);
-  const result = await client.searchZillow(filters);
+  // HasData returns ~41 listings per page sorted newest-first. Fetch as
+  // many pages as `size` needs (capped at 5 = 25 credits) so older active
+  // listings aren't systematically invisible to the scout. A user-reported
+  // Clearlake Oaks listing at 57 days on market sat on page 2 and never
+  // surfaced while we fetched only page 1.
+  const maxPages = Math.min(5, Math.max(1, Math.ceil(size / 40)));
+  console.log("[scout/hasdata] filters=%j maxPages=%d", filters, maxPages);
+  const result = await client.searchZillowAll(filters, {
+    maxPages,
+    targetCount: size,
+  });
   console.log(
-    "[scout/hasdata] total=%d resultCount=%d page=%s/%s",
+    "[scout/hasdata] total=%d resultCount=%d pagesFetched=%s totalPages=%s",
     result.total,
     result.resultCount,
-    result.page ?? "?",
+    result.pagesFetched ?? "?",
     result.totalPages ?? "?",
   );
 
@@ -409,7 +421,11 @@ async function searchHasData(
 
   return {
     candidates,
-    query: filters as unknown as Record<string, unknown>,
+    query: {
+      ...(filters as unknown as Record<string, unknown>),
+      pagesFetched: result.pagesFetched,
+      totalPages: result.totalPages,
+    },
     firstSample,
   };
 }
