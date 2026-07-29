@@ -432,17 +432,10 @@ export function normalizeZillowListing(item: unknown): ZillowListingSummary {
   }
   const o = item as Record<string, any>;
   const addr = typeof o.address === "object" && o.address !== null ? o.address : {};
-  const addressString =
-    typeof o.address === "string"
-      ? o.address
-      : addr.streetAddress ??
-        addr.address ??
-        o.streetAddress ??
-        undefined;
 
   return {
     zpid: String(o.zpid ?? o.id ?? ""),
-    address: addressString,
+    address: extractZillowAddress(o),
     city: addr.city ?? o.city,
     state: addr.state ?? o.state,
     zip: addr.zipcode ?? addr.zip ?? o.zipcode ?? o.zip,
@@ -453,7 +446,12 @@ export function normalizeZillowListing(item: unknown): ZillowListingSummary {
     baths: toFiniteNumber(o.bathrooms ?? o.baths),
     sqft: toFiniteNumber(o.livingArea ?? o.area ?? o.sqft),
     homeType: typeof o.homeType === "string" ? o.homeType : undefined,
-    homeStatus: typeof o.homeStatus === "string" ? o.homeStatus : undefined,
+    homeStatus:
+      typeof o.homeStatus === "string"
+        ? o.homeStatus
+        : typeof o.status === "string"
+          ? o.status
+          : undefined,
     daysOnZillow: toFiniteNumber(o.daysOnZillow),
     imgSrc: typeof o.imgSrc === "string" ? o.imgSrc : o.image,
     detailUrl: typeof o.detailUrl === "string" ? o.detailUrl : o.url,
@@ -471,6 +469,26 @@ export function normalizeZillowListing(item: unknown): ZillowListingSummary {
     hasVirtualTour: extractHasVirtualTour(o),
     raw: o,
   };
+}
+
+/**
+ * Street address across HasData response variants. The `address` object's
+ * street key has already changed once in the wild (`streetAddress` →
+ * `street`, observed 2026-07-29, which nulled every scouted address), so
+ * try every known spelling and finish with `addressRaw` — the full
+ * "street, city, ST zip" string — which is a wordier but correct fallback.
+ */
+export function extractZillowAddress(o: Record<string, any>): string | undefined {
+  if (typeof o.address === "string" && o.address) return o.address;
+  const addr =
+    typeof o.address === "object" && o.address !== null
+      ? (o.address as Record<string, any>)
+      : {};
+  const candidate =
+    addr.streetAddress ?? addr.street ?? addr.address ?? o.streetAddress;
+  if (typeof candidate === "string" && candidate) return candidate;
+  if (typeof o.addressRaw === "string" && o.addressRaw) return o.addressRaw;
+  return undefined;
 }
 
 /**
@@ -591,15 +609,11 @@ export function normalizeZillowProperty(
 ): ZillowPropertyDetail {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
   const addr = typeof o.address === "object" && o.address !== null ? o.address : {};
-  const addressString =
-    typeof o.address === "string"
-      ? o.address
-      : addr.streetAddress ?? addr.address ?? o.streetAddress ?? undefined;
 
   return {
     zpid: String(o.zpid ?? o.id ?? ""),
     url: typeof o.url === "string" ? o.url : fallbackUrl,
-    address: addressString,
+    address: extractZillowAddress(o),
     city: addr.city ?? o.city,
     state: addr.state ?? o.state,
     zip: addr.zipcode ?? addr.zip ?? o.zipcode ?? o.zip,
@@ -611,7 +625,12 @@ export function normalizeZillowProperty(
     sqft: toFiniteNumber(o.livingArea ?? o.sqft),
     yearBuilt: toFiniteNumber(o.yearBuilt),
     homeType: typeof o.homeType === "string" ? o.homeType : undefined,
-    homeStatus: typeof o.homeStatus === "string" ? o.homeStatus : undefined,
+    homeStatus:
+      typeof o.homeStatus === "string"
+        ? o.homeStatus
+        : typeof o.status === "string"
+          ? o.status
+          : undefined,
     photos: extractZillowPhotos(o),
     description: typeof o.description === "string" ? o.description : undefined,
     lat: toFiniteNumber(o.latitude ?? o.lat),

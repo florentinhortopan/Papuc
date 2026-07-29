@@ -142,6 +142,64 @@ describe("normalizeZillowListing", () => {
     expect(out.hasVirtualTour).toBeUndefined();
   });
 
+  it("handles the 2026-07 HasData shape (address.street, no zpid, status)", () => {
+    // Verbatim (trimmed) live response item from 2026-07-29: HasData
+    // renamed address.streetAddress → address.street and dropped zpid in
+    // favor of id, which nulled every scouted address ("Address pending").
+    const out = normalizeZillowListing({
+      id: "19090483",
+      url: "https://www.zillow.com/homedetails/13293-Driftwood-Vlg-Clearlake-Oaks-CA-95423/19090483_zpid/",
+      homeType: "SINGLE_FAMILY",
+      status: "FOR_SALE",
+      price: 365000,
+      priceChange: -34900,
+      priceChangedAtIso: "2026-07-29T07:00:00.000Z",
+      zestimate: 349400,
+      rentZestimate: 1857,
+      daysOnZillow: 0,
+      area: 1688,
+      lotAreaValue: 8712,
+      lotAreaUnits: "sqft",
+      addressRaw: "13293 Driftwood Vlg, Clearlake Oaks, CA 95423",
+      address: {
+        street: "13293 Driftwood Vlg",
+        city: "Clearlake Oaks",
+        state: "CA",
+        zipcode: "95423",
+      },
+      latitude: 39.02256,
+      longitude: -122.66136,
+      beds: 4,
+      baths: 3,
+      image: "https://photos.zillowstatic.com/fp/cover.jpg",
+      photos: ["a.jpg", "b.jpg"],
+      mediaDetails: { has3DModel: false, hasVideo: false },
+    });
+    expect(out.zpid).toBe("19090483");
+    expect(out.address).toBe("13293 Driftwood Vlg");
+    expect(out.city).toBe("Clearlake Oaks");
+    expect(out.state).toBe("CA");
+    expect(out.zip).toBe("95423");
+    expect(out.sqft).toBe(1688);
+    expect(out.beds).toBe(4);
+    expect(out.baths).toBe(3);
+    expect(out.homeStatus).toBe("FOR_SALE");
+    expect(out.imgSrc).toBe("https://photos.zillowstatic.com/fp/cover.jpg");
+    expect(out.detailUrl).toContain("19090483_zpid");
+    expect(out.lotSizeSqft).toBe(8712);
+    expect(out.priceChange).toBe(-34900);
+  });
+
+  it("falls back to addressRaw when the address object has no known street key", () => {
+    const out = normalizeZillowListing({
+      id: 42,
+      address: { city: "Tampa", state: "FL", zipcode: "33606" },
+      addressRaw: "456 Oak Ave, Tampa, FL 33606",
+    });
+    expect(out.address).toBe("456 Oak Ave, Tampa, FL 33606");
+    expect(out.city).toBe("Tampa");
+  });
+
   it("extracts price-cut, lot, photo and media signals", () => {
     const out = normalizeZillowListing({
       zpid: 555,
