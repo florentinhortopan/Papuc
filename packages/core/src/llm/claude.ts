@@ -5,8 +5,15 @@ import {
   PARSE_PROJECT_TOOL,
   RANK_DEALS_SYSTEM,
   RANK_DEALS_TOOL,
+  RECORD_STR_MARKET_INTEL_TOOL,
+  RESEARCH_STR_MARKET_SYSTEM,
 } from "./prompts";
-import type { DealScoreInput, DealScoreOutput, LLMProvider } from "./types";
+import type {
+  DealScoreInput,
+  DealScoreOutput,
+  LLMProvider,
+  StrMarketIntel,
+} from "./types";
 
 export interface ClaudeProviderOptions {
   apiKey: string;
@@ -80,6 +87,131 @@ export class ClaudeProvider implements LLMProvider {
     }
     throw new Error("Claude did not return rankDeals tool call");
   }
+
+  /**
+   * Research a US market's STR reality (plausible ADR range + occupancy)
+   * and its short-term-rental regulations, using the Anthropic server-side
+   * web-search tool (max 5 searches ≈ $0.05 + tokens). Returns structured
+   * intel; callers cache it (market_str_intel table) so this runs about
+   * once per market per TTL, not per scout.
+   *
+   * tool_choice cannot be forced here — the model must be free to call
+   * web_search first — so we instruct it to finish with the
+   * recordStrMarketIntel tool and fail loudly if it doesn't.
+   */
+  async researchStrMarket(args: {
+    city: string;
+    state: string;
+  }): Promise<StrMarketIntel> {
+    const res = await this.client.messages.create({
+      model: this.model,
+      // Research responses carry search-result blocks + a final tool call;
+      // give it more room than the parse/rank calls need.
+      max_tokens: Math.max(this.maxTokens, 4096),
+      system: RESEARCH_STR_MARKET_SYSTEM,
+      tools: [
+        {
+          type: "web_search_20250305",
+          name: "web_search",
+          max_uses: 5,
+        } as any,
+        RECORD_STR_MARKET_INTEL_TOOL as any,
+      ],
+      messages: [
+        {
+          role: "user",
+          content: `Market to research: ${args.city}, ${args.state} (United States).`,
+        },
+      ],
+    });
+
+    for (const block of res.content) {
+      if (
+        block.type === "tool_use" &&
+        block.name === RECORD_STR_MARKET_INTEL_TOOL.name
+      ) {
+        return normalizeStrMarketIntel(block.input);
+      }
+    }
+    throw new Error("Claude did not return recordStrMarketIntel tool call");
+  }
+}
+
+/**
+ * Defensive normalization of the research tool output: percentage-form
+ * occupancy, non-finite/negative ADRs, an inverted low/high range,
+ * non-http links, and unknown regulation statuses are all repaired or
+ * dropped so downstream consumers (schedule blending, the regs card)
+ * never see junk.
+ */
+export function normalizeStrMarketIntel(raw: unknown): StrMarketIntel {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+
+  const adr = (v: unknown): number | undefined => {
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return undefined;
+    // US entire-home ADRs live in roughly $50-$2000/night; outside that
+    // the "data" is more misleading than useful.
+    if (v < 20 || v > 5000) return undefined;
+    return Math.round(v);
+  };
+
+  let adrLow = adr(r.adrLow);
+  let adrMedian = adr(r.adrMedian);
+  let adrHigh = adr(r.adrHigh);
+  if (adrLow !== undefined && adrHigh !== undefined && adrLow > adrHigh) {
+    [adrLow, adrHigh] = [adrHigh, adrLow];
+  }
+  if (adrMedian !== undefined) {
+    if (adrLow !== undefined && adrMedian < adrLow) adrMedian = adrLow;
+    if (adrHigh !== undefined && adrMedian > adrHigh) adrMedian = adrHigh;
+  }
+
+  let occupancyAvg: number | undefined;
+  if (typeof r.occupancyAvg === "number" && Number.isFinite(r.occupancyAvg)) {
+    let o = r.occupancyAvg;
+    if (o > 1) o = o / 100; // percentage form despite the schema
+    if (o > 0 && o <= 1) occupancyAvg = Math.min(0.95, Math.max(0.1, o));
+  }
+
+  const statuses = ["permitted", "restricted", "banned", "unclear"] as const;
+  const regulationStatus = statuses.includes(r.regulationStatus)
+    ? (r.regulationStatus as StrMarketIntel["regulationStatus"])
+    : "unclear";
+
+  const resourceLinks = Array.isArray(r.resourceLinks)
+    ? r.resourceLinks
+        .filter(
+          (l: any) =>
+            l &&
+            typeof l.url === "string" &&
+            /^https?:\/\//i.test(l.url) &&
+            typeof l.title === "string",
+        )
+        .map((l: any) => ({ title: String(l.title), url: String(l.url) }))
+        .slice(0, 8)
+    : [];
+
+  const sources = Array.isArray(r.sources)
+    ? r.sources
+        .filter((s: any) => typeof s === "string" && /^https?:\/\//i.test(s))
+        .slice(0, 8)
+    : [];
+
+  return {
+    adrLow,
+    adrMedian,
+    adrHigh,
+    occupancyAvg,
+    seasonalityNotes:
+      typeof r.seasonalityNotes === "string" ? r.seasonalityNotes : undefined,
+    regulationStatus,
+    regulationSummary:
+      typeof r.regulationSummary === "string" ? r.regulationSummary : undefined,
+    permitRequired:
+      typeof r.permitRequired === "boolean" ? r.permitRequired : undefined,
+    resourceLinks,
+    sources,
+  };
 }
 
 /**

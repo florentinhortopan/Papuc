@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { ClaudeProvider, type DealScoreInput } from "@papuc/core";
+import { estimateSTRAdrFromLTRRent } from "@papuc/core";
+import { ClaudeProvider, type DealScoreInput } from "@papuc/core/llm";
 
+import { getCachedMarketStrIntel } from "@/lib/str-intel";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -59,7 +61,7 @@ export async function POST(req: Request) {
   const { data: scores, error: sErr } = await sb
     .from("deal_scores")
     .select(
-      "deal_id, dscr, cash_on_cash, monthly_cashflow, irr_5yr, computed_proforma, deals!inner(address, price, beds, baths, sqft, est_rent, days_on_market, price_change, price_changed_at, hoa_monthly, lot_size)",
+      "deal_id, dscr, cash_on_cash, monthly_cashflow, irr_5yr, computed_proforma, deals!inner(address, city, state, price, beds, baths, sqft, est_rent, days_on_market, price_change, price_changed_at, hoa_monthly, lot_size, str_adr, str_occupancy, str_estimated_at)",
     )
     .eq("project_id", body.projectId)
     .is("rationale", null)
@@ -68,6 +70,24 @@ export async function POST(req: Request) {
   if (sErr) return NextResponse.json({ error: sErr.message }, { status: 500 });
   if (!scores || scores.length === 0) {
     return NextResponse.json({ ranked: 0 });
+  }
+
+  const constraints = project.constraints as Record<string, any> | null;
+  const isSTR = constraints?.strategy === "STR";
+
+  // STR: attach the researched market ADR context (cache read, no cost)
+  // so Claude can call out deals whose revenue assumption outruns the
+  // market's typical nightly rate.
+  let marketIntel: { adr_median: number | null; adr_low: number | null; adr_high: number | null } | null = null;
+  if (isSTR) {
+    const firstDeal = (scores[0] as Record<string, any>)?.deals as
+      | Record<string, any>
+      | undefined;
+    const city = firstDeal?.city as string | undefined;
+    const state = firstDeal?.state as string | undefined;
+    if (city && state) {
+      marketIntel = await getCachedMarketStrIntel(sb, city, state);
+    }
   }
 
   const deals: DealScoreInput[] = (scores as Array<Record<string, any>>).map(
@@ -102,6 +122,32 @@ export async function POST(req: Request) {
         priceChangedAt: deal.price_changed_at ?? undefined,
         hoaMonthly: deal.hoa_monthly ?? undefined,
         lotSizeSqft: deal.lot_size ?? undefined,
+        ...(isSTR
+          ? {
+              // Comps-based ADR when the user fetched one; otherwise the
+              // same rent-derived heuristic the scout underwrote with,
+              // rounded so Claude reads it as an assumption, not data.
+              adr:
+                deal.str_adr != null
+                  ? Number(deal.str_adr)
+                  : Math.round(
+                      estimateSTRAdrFromLTRRent(Number(deal.est_rent ?? 0)),
+                    ) || undefined,
+              occupancy:
+                deal.str_occupancy != null
+                  ? Number(deal.str_occupancy)
+                  : undefined,
+              adrSource: (deal.str_estimated_at
+                ? "airroi"
+                : marketIntel?.adr_median != null
+                  ? "market_checked"
+                  : "heuristic") as "airroi" | "market_checked" | "heuristic",
+              marketAdrMedian:
+                marketIntel?.adr_median != null
+                  ? Number(marketIntel.adr_median)
+                  : undefined,
+            }
+          : {}),
       };
     },
   );

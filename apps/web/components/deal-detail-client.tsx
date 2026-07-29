@@ -9,6 +9,7 @@ import {
   solveBreakevenDownPayment,
   solveBreakevenPrice,
   solveBreakevenRent,
+  strScheduleFromEstimate,
   type ProFormaInputs,
   type Strategy,
 } from "@papuc/core";
@@ -22,6 +23,8 @@ import { DscrBadge } from "@/components/dscr-badge";
 import { MarketSignalBadges } from "@/components/market-signal-badges";
 import { PhotoCarousel } from "@/components/photo-carousel";
 import { StrMatrix, defaultStrMatrix, type StrMatrixValue } from "@/components/str-matrix";
+import { StrMarketEstimate, type StrEstimatePayload } from "@/components/str-market-estimate";
+import { StrRegulationsCard } from "@/components/str-regulations-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
@@ -234,6 +237,46 @@ export function DealDetailClient({
       }
     }
   }
+
+  /**
+   * Push a comps-based estimate (AirROI) into the pro-forma: flat comps
+   * ADR across the matrix, occupancy curve derived from the comps'
+   * monthly revenue distribution, and the ADR field synced so all three
+   * (field, matrix, summary) agree at once.
+   */
+  function applyStrEstimate(est: StrEstimatePayload) {
+    const schedule = strScheduleFromEstimate({
+      adr: est.adr,
+      occupancy: est.occupancy,
+      monthlyRevenueDistribution: est.monthlyRevenueDistribution,
+    });
+    setStrMatrix({
+      monthlyNights: schedule.monthlyNights,
+      monthlyADR: schedule.monthlyADR,
+      monthlyOccupancy: schedule.monthlyOccupancy,
+      monthlyAvgStays: schedule.monthlyAvgStays,
+    });
+    patch("monthlyRentLTR", String(Math.round(est.adr)));
+  }
+
+  /** Estimate already persisted on the deal row, if the user fetched one before. */
+  const cachedStrEstimate: StrEstimatePayload | null =
+    deal.str_estimated_at && deal.str_adr != null && deal.str_occupancy != null
+      ? {
+          adr: Number(deal.str_adr),
+          occupancy: Number(deal.str_occupancy),
+          annualRevenue:
+            deal.str_annual_revenue != null
+              ? Number(deal.str_annual_revenue)
+              : null,
+          percentiles:
+            (deal.str_percentiles as StrEstimatePayload["percentiles"]) ?? null,
+          monthlyRevenueDistribution: Array.isArray(deal.str_monthly_distribution)
+            ? (deal.str_monthly_distribution as number[])
+            : null,
+          estimatedAt: deal.str_estimated_at,
+        }
+      : null;
 
   async function reload() {
     const supabase = createClient();
@@ -616,6 +659,10 @@ export function DealDetailClient({
           </div>
         ) : null}
 
+        {state.strategy === "STR" && deal.city && deal.state ? (
+          <StrRegulationsCard city={deal.city} state={deal.state} />
+        ) : null}
+
         <CashflowChart monthlyPreTaxProfit={result.monthlyPreTaxProfit} />
 
         <ComparablesPanel dealId={deal.id} />
@@ -812,6 +859,13 @@ export function DealDetailClient({
                 : undefined
             }
           />
+          {state.strategy === "STR" ? (
+            <StrMarketEstimate
+              dealId={deal.id}
+              cached={cachedStrEstimate}
+              onApply={applyStrEstimate}
+            />
+          ) : null}
           <Field
             label="Strategy"
             value={state.strategy}

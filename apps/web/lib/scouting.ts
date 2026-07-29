@@ -7,15 +7,19 @@ import {
   estimateInsuranceMonthly,
   HasDataClient,
   RealEstateAPIClient,
+  strScheduleFromEstimate,
   type Market,
   type MLSListingSummary,
   type ProjectConstraints,
   type PropertyDetail,
   type PropertySearchFilters,
+  type StrMarketAdrIntel,
   type ZillowListingSummary,
   type ZillowSearchFilters,
 } from "@papuc/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { getOrResearchMarketStrIntel } from "./str-intel";
 
 const MAX_HYDRATE_PARALLEL = 5;
 /**
@@ -168,6 +172,55 @@ export async function scoutProjectInternal(
     const downPayment = constraints.downPayment ?? 0;
     const targetCashflow = constraints.targetMonthlyCashflow ?? 0;
 
+    // STR projects: sanity-check the rent-based ADR heuristic against
+    // cached web-search market intel (plausible ADR range + occupancy),
+    // and reuse any comps-based AirROI estimates users already paid for
+    // on individual deals. Both are best-effort — a cold cache or a
+    // research failure degrades to the plain heuristic, never blocks.
+    let marketAdrIntel: StrMarketAdrIntel | undefined;
+    const strEstimates = new Map<
+      string,
+      { adr: number; occupancy: number; monthlyRevenueDistribution?: number[] }
+    >();
+    if (constraints.strategy === "STR") {
+      const intelMarket = resolveIntelMarket(market, candidates);
+      if (intelMarket) {
+        const intel = await getOrResearchMarketStrIntel(sb, intelMarket);
+        if (intel) {
+          marketAdrIntel = {
+            adrLow: intel.adr_low ?? undefined,
+            adrMedian: intel.adr_median ?? undefined,
+            adrHigh: intel.adr_high ?? undefined,
+            occupancyAvg: intel.occupancy_avg ?? undefined,
+          };
+          console.log(
+            "[scout/str-intel] market=%s adr=[%s..%s] occ=%s",
+            intel.market_key,
+            intel.adr_low ?? "?",
+            intel.adr_high ?? "?",
+            intel.occupancy_avg ?? "?",
+          );
+        }
+      }
+
+      const { data: estimated } = await sb
+        .from("deals")
+        .select("source_property_id, str_adr, str_occupancy, str_monthly_distribution")
+        .eq("project_id", project.id)
+        .not("str_estimated_at", "is", null);
+      for (const row of estimated ?? []) {
+        if (typeof row.str_adr === "number" && typeof row.str_occupancy === "number") {
+          strEstimates.set(row.source_property_id as string, {
+            adr: Number(row.str_adr),
+            occupancy: Number(row.str_occupancy),
+            monthlyRevenueDistribution: Array.isArray(row.str_monthly_distribution)
+              ? (row.str_monthly_distribution as number[])
+              : undefined,
+          });
+        }
+      }
+    }
+
     // Size percentiles over the whole candidate pool (pre-filter) so the
     // asset bucket compares each property against what the market actually
     // offered this run, not just the financially-surviving subset.
@@ -208,13 +261,19 @@ export async function scoutProjectInternal(
       // For STR we hydrate the full 12-month schedule from the shared
       // helper in @papuc/core so the cashflow we store in deal_scores
       // (and surface on the deal card) matches exactly what the detail
-      // page recomputes when the user opens the listing. They used to
-      // drift because scout used the proforma's implicit flat 0.70
-      // occupancy default while the detail editor seeded a seasonal
-      // curve, off by ~10-20% in revenue — and the ADR seed differed by
-      // a factor of ~2.5x (industry multiplier vs. naive rent / 30).
+      // page recomputes when the user opens the listing. Priority:
+      //   1. comps-based AirROI estimate the user already fetched for
+      //      this exact property (real ADR + seasonality),
+      //   2. rent heuristic clamped into the market's plausible ADR
+      //      range with market-average occupancy (web-search intel),
+      //   3. plain rent heuristic.
+      const storedEstimate = strEstimates.get(listing.id);
       const strSchedule =
-        constraints.strategy === "STR" ? defaultStrSchedule(monthlyRent) : null;
+        constraints.strategy === "STR"
+          ? storedEstimate
+            ? strScheduleFromEstimate(storedEstimate)
+            : defaultStrSchedule(monthlyRent, marketAdrIntel)
+          : null;
 
       // Be explicit about every cost so the cashflow we store in
       // `deal_scores` matches what the deal-detail page recomputes live.
@@ -757,6 +816,27 @@ async function hydrateInBatches(
     out.push(...results);
   }
   return out;
+}
+
+/**
+ * Resolve the city/state to research STR intel for. City markets carry
+ * it directly; zip/county/polygon markets borrow it from the first
+ * candidate listing that has both (all listings in a zip share a city
+ * for our purposes — regulations and ADR are city/county-level anyway).
+ */
+function resolveIntelMarket(
+  market: Market,
+  candidates: ScoutCandidate[],
+): { city: string; state: string } | null {
+  if (market.kind === "city" && market.city && market.state) {
+    return { city: market.city, state: market.state };
+  }
+  for (const { listing } of candidates) {
+    if (listing.city && listing.state) {
+      return { city: listing.city, state: listing.state };
+    }
+  }
+  return null;
 }
 
 function pickHudFmrRent(

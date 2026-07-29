@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  PARSE_PROJECT_TOOL,
   PROPERTY_TYPE_LABELS,
   ProjectConstraintsSchema,
   type PropertyType,
 } from "../index";
+// LLM exports live off the barrel (see index.ts note on client bundles).
+import { PARSE_PROJECT_TOOL } from "../llm/prompts";
 
 /**
  * Tests around the expanded PropertyType enum: we want one source of

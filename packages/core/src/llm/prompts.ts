@@ -56,6 +56,8 @@ DEFINITION OF A "BEST PROPERTY" — apply in this order:
 
 Numbers come first. Mention specific numbers in the rationale (e.g., "$760/mo cashflow at 1.32 DSCR"), and weave in the strongest opportunity/asset signal when one exists.
 
+STR DEALS — trust the revenue assumption in proportion to its provenance (adrSource): "airroi" means the ADR/occupancy come from real comparable Airbnb listings (most trustworthy); "market_checked" means a rent-based heuristic clamped to a researched market range; "heuristic" is a pure guess — hedge accordingly. When marketAdrMedian is present, flag deals whose assumed adr is far above it (revenue likely optimistic) and credit deals that cashflow at or below the market's typical rate (e.g., "pencils at $180/night vs $220 market median").
+
 Use the rankDeals tool to return structured output.`;
 
 export const PARSE_PROJECT_TOOL = {
@@ -233,6 +235,89 @@ export const RANK_DEALS_TOOL = {
             rationale: { type: "string" },
           },
         },
+      },
+    },
+  },
+};
+
+export const RESEARCH_STR_MARKET_SYSTEM = `You are a short-term rental (Airbnb/VRBO) market analyst. Research the given US market using web search and report two things:
+
+1. ADR / OCCUPANCY REALITY CHECK — what a typical entire-home short-term rental actually earns in this market:
+   - adrLow / adrMedian / adrHigh: plausible Average Daily Rate range in USD per night for a typical 2-4 bedroom entire home. Prefer recent (last 12 months) data from AirDNA market pages, Airbtics, Mashvisor, AllTheRooms, local property-manager reports, or news citing them. adrLow ≈ 25th percentile, adrHigh ≈ 75th-90th percentile.
+   - occupancyAvg: average annual occupancy as a DECIMAL FRACTION (55% -> 0.55).
+   - seasonalityNotes: one or two sentences on the market's seasonal demand shape (peak months, dead months, drivers like ski/beach/college).
+
+2. REGULATIONS — how this city/county treats short-term rentals:
+   - regulationStatus: "permitted" (STRs broadly legal, maybe simple registration), "restricted" (caps, primary-residence-only, zoning limits, night caps), "banned" (non-owner-occupied STRs effectively prohibited), or "unclear".
+   - regulationSummary: 2-4 plain-English sentences: what's required (permit/license/TOT), the key limits, and any pending changes.
+   - permitRequired: true/false when determinable.
+   - resourceLinks: links to OFFICIAL pages (city/county STR ordinance, permit application portal, tax registration). Prefer .gov domains. Include the page title.
+
+Rules:
+- Perform at most 5 searches. Start with "<city> <state> short term rental regulations" and "<city> <state> airbnb ADR occupancy data".
+- If data is city-adjacent (county-level or nearest big market), use it and say so in the notes.
+- Numbers must be plausible: US ADRs are typically $80-$1500/night; occupancy 0.35-0.85. If sources conflict, prefer the more recent one and widen the low/high range.
+- When you cannot find reliable ADR data, omit the ADR fields entirely rather than guessing.
+- ALWAYS finish by calling the recordStrMarketIntel tool with your findings. Do not answer in plain text.`;
+
+export const RECORD_STR_MARKET_INTEL_TOOL = {
+  name: "recordStrMarketIntel",
+  description:
+    "Record structured short-term rental market intelligence (ADR/occupancy reality check + regulation summary) for a US market.",
+  input_schema: {
+    type: "object" as const,
+    required: ["regulationStatus", "resourceLinks", "sources"],
+    properties: {
+      adrLow: {
+        type: "number",
+        minimum: 0,
+        description: "Low-end plausible ADR in USD/night (about the 25th percentile). Omit if unknown.",
+      },
+      adrMedian: {
+        type: "number",
+        minimum: 0,
+        description: "Typical/median ADR in USD/night. Omit if unknown.",
+      },
+      adrHigh: {
+        type: "number",
+        minimum: 0,
+        description: "High-end plausible ADR in USD/night (about the 75th-90th percentile). Omit if unknown.",
+      },
+      occupancyAvg: {
+        type: "number",
+        minimum: 0,
+        maximum: 1,
+        description: "Average annual occupancy as a DECIMAL FRACTION (55% is 0.55, NOT 55). Omit if unknown.",
+      },
+      seasonalityNotes: {
+        type: "string",
+        description: "1-2 sentences on seasonal demand shape.",
+      },
+      regulationStatus: {
+        type: "string",
+        enum: ["permitted", "restricted", "banned", "unclear"],
+      },
+      regulationSummary: {
+        type: "string",
+        description: "2-4 plain-English sentences on permits, licenses, taxes, caps.",
+      },
+      permitRequired: { type: "boolean" },
+      resourceLinks: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["title", "url"],
+          properties: {
+            title: { type: "string" },
+            url: { type: "string" },
+          },
+        },
+        description: "Official permit/ordinance/tax pages, .gov preferred.",
+      },
+      sources: {
+        type: "array",
+        items: { type: "string" },
+        description: "URLs of the data sources used for ADR/occupancy figures.",
       },
     },
   },

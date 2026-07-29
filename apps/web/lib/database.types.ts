@@ -61,6 +61,18 @@ export type DealsRow = {
   price_changed_at: string | null;
   /** Lot size in sqft (acres normalized at scout time). */
   lot_size: number | null;
+  /** Comps-based expected ADR in USD/night (AirROI on-demand estimate). */
+  str_adr: number | null;
+  /** Comps-based expected annual occupancy, 0..1. */
+  str_occupancy: number | null;
+  /** Comps-based projected annual gross STR revenue in USD. */
+  str_annual_revenue: number | null;
+  /** {revenue, average_daily_rate, occupancy} x {avg,p25,p50,p75,p90}. */
+  str_percentiles: unknown;
+  /** 12 fractions summing to ~1 (monthly revenue distribution). */
+  str_monthly_distribution: unknown;
+  str_estimate_source: string | null;
+  str_estimated_at: string | null;
   hud_fmr: unknown;
   last_refreshed_at: string;
   created_at: string;
@@ -118,4 +130,33 @@ export type ScoutRunsRow = {
   deals_added: number | null;
   deals_scored: number | null;
   error: string | null;
+};
+
+export type StrRegulationStatus =
+  | "permitted"
+  | "restricted"
+  | "banned"
+  | "unclear";
+
+export type MarketStrIntelRow = {
+  id: string;
+  /** Normalized "city, st" lower-case key. */
+  market_key: string;
+  city: string;
+  state: string;
+  adr_low: number | null;
+  adr_median: number | null;
+  adr_high: number | null;
+  /** Average annual occupancy, 0..1. */
+  occupancy_avg: number | null;
+  seasonality_notes: string | null;
+  regulation_status: StrRegulationStatus;
+  regulation_summary: string | null;
+  permit_required: boolean | null;
+  /** [{ title, url }] — official permit/ordinance/tax pages. */
+  resource_links: Array<{ title: string; url: string }>;
+  /** URLs backing the ADR/occupancy figures. */
+  sources: string[];
+  researched_at: string;
+  expires_at: string;
 };

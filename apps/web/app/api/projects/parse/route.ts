@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ClaudeProvider } from "@papuc/core";
+import { ClaudeProvider } from "@papuc/core/llm";
 
 import { createClient } from "@/lib/supabase/server";
 

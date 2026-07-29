@@ -218,12 +218,101 @@ export interface StrSchedule {
   monthlyAvgStays: number[];
 }
 
-export function defaultStrSchedule(monthlyLTRRent: number): StrSchedule {
-  const adr = estimateSTRAdrFromLTRRent(monthlyLTRRent);
+/**
+ * Optional market-level reality check for the ADR heuristic, sourced from
+ * the cached web-search research (`market_str_intel`). Structurally
+ * compatible with `StrMarketIntel` — kept minimal here so the pro-forma
+ * layer doesn't depend on the LLM layer.
+ */
+export interface StrMarketAdrIntel {
+  adrLow?: number;
+  adrMedian?: number;
+  adrHigh?: number;
+  /** Average annual occupancy, 0..1. */
+  occupancyAvg?: number;
+}
+
+export function defaultStrSchedule(
+  monthlyLTRRent: number,
+  market?: StrMarketAdrIntel,
+): StrSchedule {
+  let adr = estimateSTRAdrFromLTRRent(monthlyLTRRent);
+
+  if (market) {
+    // No usable rent to derive from? The market median is a better
+    // baseline than $0.
+    if (adr <= 0 && market.adrMedian !== undefined) adr = market.adrMedian;
+    // Clamp the rent-derived heuristic into the market's plausible range
+    // so a resort town's $450/night reality (or a rural market's $95
+    // ceiling) overrides the flat 1.7x multiplier.
+    if (market.adrLow !== undefined && adr > 0 && adr < market.adrLow) {
+      adr = market.adrLow;
+    }
+    if (market.adrHigh !== undefined && adr > market.adrHigh) {
+      adr = market.adrHigh;
+    }
+  }
+
+  let monthlyOccupancy = [...DEFAULT_STR_MONTHLY_OCCUPANCY];
+  const target = market?.occupancyAvg;
+  if (target !== undefined && target > 0 && target <= 1) {
+    // Rescale the seasonal curve so its mean matches the market's average
+    // occupancy while preserving the seasonal shape. Cap the target so a
+    // reported "95% occupancy" doesn't produce impossible >100% months.
+    const clampedTarget = Math.min(0.95, Math.max(0.2, target));
+    const currentMean =
+      monthlyOccupancy.reduce((a, b) => a + b, 0) / monthlyOccupancy.length;
+    const scale = clampedTarget / currentMean;
+    monthlyOccupancy = monthlyOccupancy.map((o) => Math.min(0.98, o * scale));
+  }
+
   return {
     monthlyNights: [...DEFAULT_STR_MONTHLY_NIGHTS],
     monthlyADR: new Array(12).fill(adr),
-    monthlyOccupancy: [...DEFAULT_STR_MONTHLY_OCCUPANCY],
+    monthlyOccupancy,
+    monthlyAvgStays: [...DEFAULT_STR_MONTHLY_AVG_STAYS],
+  };
+}
+
+/**
+ * Build the 12-month STR matrix from a property-level comps estimate
+ * (AirROI `/calculator/estimate`, cached in `deals.str_*`). ADR is flat
+ * at the comps-expected rate; the monthly occupancy curve is derived
+ * from the estimate's monthly revenue distribution so seasonality comes
+ * from actual comps instead of our canned curve.
+ *
+ * Derivation: with flat ADR, revenue_m = ADR * nights_m * occ_m and the
+ * distribution gives revenue_m = dist_m * annualRevenue. Solving so that
+ * total rented nights equal 365 * occupancy yields
+ *   occ_m = occupancy * dist_m * 365 / nights_m
+ * (exact when dist sums to 1; individual months are capped at 0.98).
+ */
+export function strScheduleFromEstimate(estimate: {
+  adr: number;
+  /** Annual average occupancy, 0..1. */
+  occupancy: number;
+  /** 12 fractions of annual revenue per month, summing to ~1. */
+  monthlyRevenueDistribution?: number[] | null;
+}): StrSchedule {
+  const occupancyAvg = Math.min(0.98, Math.max(0, estimate.occupancy));
+  const dist = estimate.monthlyRevenueDistribution;
+  const hasDist =
+    Array.isArray(dist) &&
+    dist.length === 12 &&
+    dist.every((v) => typeof v === "number" && isFinite(v) && v >= 0) &&
+    dist.some((v) => v > 0);
+
+  const monthlyOccupancy = hasDist
+    ? DEFAULT_STR_MONTHLY_NIGHTS.map((nights, m) => {
+        const share = dist![m]! / dist!.reduce((a, b) => a + b, 0);
+        return Math.min(0.98, (occupancyAvg * share * 365) / nights);
+      })
+    : new Array(12).fill(occupancyAvg);
+
+  return {
+    monthlyNights: [...DEFAULT_STR_MONTHLY_NIGHTS],
+    monthlyADR: new Array(12).fill(estimate.adr),
+    monthlyOccupancy,
     monthlyAvgStays: [...DEFAULT_STR_MONTHLY_AVG_STAYS],
   };
 }
