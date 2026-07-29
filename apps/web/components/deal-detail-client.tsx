@@ -19,6 +19,7 @@ import { CashflowBadge } from "@/components/cashflow-badge";
 import { CashflowChart } from "@/components/cashflow-chart";
 import { ComparablesPanel } from "@/components/comparables-panel";
 import { DscrBadge } from "@/components/dscr-badge";
+import { MarketSignalBadges } from "@/components/market-signal-badges";
 import { PhotoCarousel } from "@/components/photo-carousel";
 import { StrMatrix, defaultStrMatrix, type StrMatrixValue } from "@/components/str-matrix";
 import { Badge } from "@/components/ui/badge";
@@ -571,6 +572,12 @@ export function DealDetailClient({
             <DscrBadge dscr={result.dscr} />
             <CashflowBadge monthlyCashflow={result.annualPreTaxProfit / 12} />
             <Badge>CoC {formatPct(result.cashOnCashReturn)}</Badge>
+            <MarketSignalBadges
+              daysOnMarket={deal.days_on_market}
+              priceChange={deal.price_change}
+              price={deal.price ?? deal.est_value}
+              hoaMonthly={deal.hoa_monthly}
+            />
             {state.strategy === "STR" && breakevenADR !== null ? (
               <Badge
                 variant={

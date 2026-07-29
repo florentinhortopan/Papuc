@@ -52,8 +52,21 @@ export interface ZillowSearchFilters {
   bedsMax?: number;
   bathsMin?: number;
   bathsMax?: number;
+  /** Sent as `squareFeet[min]` — the documented param. `sqft[min]` is
+   *  silently ignored by the API (verified by live probe 2026-07-29). */
   sqftMin?: number;
   sqftMax?: number;
+  /** Minimum/maximum year built. Sent as `yearBuilt[min]` / `yearBuilt[max]`. */
+  yearBuiltMin?: number;
+  yearBuiltMax?: number;
+  /** Minimum lot size in sqft. Sent as `lotSize[min]`. */
+  lotSizeMin?: number;
+  /**
+   * Maximum monthly HOA fee in USD; 0 = no-HOA listings only. Sent as
+   * `hoa`. Live probe: Sacramento condos went from 5 pages to 15 total
+   * results with hoa=0, so the filter bites hard.
+   */
+  hoaMax?: number;
   /** "24h" | "7d" | "14d" | "30d" | "90d" | "6m" | "12m" */
   daysOnZillow?: string;
   /** SINGLE_FAMILY, CONDO, TOWNHOUSE, MULTI_FAMILY, APARTMENT, MANUFACTURED, LOT */
@@ -91,6 +104,17 @@ export interface ZillowListingSummary {
    *  the listing endpoint; populated via the Property endpoint on lazy
    *  hydrate. `undefined` means unknown, `0` means confirmed-no-HOA. */
   hoaMonthly?: number;
+  /** Most recent price change in USD (negative = price cut). Present on
+   *  ~40% of live listing records. */
+  priceChange?: number;
+  /** ISO timestamp of the most recent price change. */
+  priceChangedAt?: string;
+  /** Lot size normalized to square feet (acres converted at 43,560). */
+  lotSizeSqft?: number;
+  /** Number of gallery photos on the listing record. */
+  photoCount?: number;
+  /** Listing has a video or 3D model tour (mediaDetails flags). */
+  hasVirtualTour?: boolean;
   raw?: unknown;
 }
 
@@ -375,8 +399,18 @@ export function buildZillowParams(filters: ZillowSearchFilters): URLSearchParams
   if (filters.bedsMax !== undefined) p.set("beds[max]", String(filters.bedsMax));
   if (filters.bathsMin !== undefined) p.set("baths[min]", String(filters.bathsMin));
   if (filters.bathsMax !== undefined) p.set("baths[max]", String(filters.bathsMax));
-  if (filters.sqftMin !== undefined) p.set("sqft[min]", String(filters.sqftMin));
-  if (filters.sqftMax !== undefined) p.set("sqft[max]", String(filters.sqftMax));
+  // NOTE: the documented (and only working) sqft keys are squareFeet[...],
+  // not sqft[...]. Verified by live probe: sqft[min]=100000 returned the
+  // full unfiltered result set; squareFeet[min]=100000 returned zero.
+  if (filters.sqftMin !== undefined) p.set("squareFeet[min]", String(filters.sqftMin));
+  if (filters.sqftMax !== undefined) p.set("squareFeet[max]", String(filters.sqftMax));
+  if (filters.yearBuiltMin !== undefined)
+    p.set("yearBuilt[min]", String(filters.yearBuiltMin));
+  if (filters.yearBuiltMax !== undefined)
+    p.set("yearBuilt[max]", String(filters.yearBuiltMax));
+  if (filters.lotSizeMin !== undefined)
+    p.set("lotSize[min]", String(filters.lotSizeMin));
+  if (filters.hoaMax !== undefined) p.set("hoa", String(filters.hoaMax));
   if (filters.daysOnZillow) p.set("daysOnZillow", filters.daysOnZillow);
   if (filters.page !== undefined) p.set("page", String(filters.page));
 
@@ -426,8 +460,61 @@ export function normalizeZillowListing(item: unknown): ZillowListingSummary {
     lat: toFiniteNumber(o.latitude ?? o.lat),
     lng: toFiniteNumber(o.longitude ?? o.lng ?? o.lon),
     hoaMonthly: extractHoaMonthly(o),
+    priceChange: toFiniteNumber(o.priceChange),
+    priceChangedAt: extractPriceChangedAt(o),
+    lotSizeSqft: extractLotSizeSqft(o),
+    photoCount: Array.isArray(o.photos)
+      ? o.photos.length
+      : typeof o.imgSrc === "string" || typeof o.image === "string"
+        ? 1
+        : undefined,
+    hasVirtualTour: extractHasVirtualTour(o),
     raw: o,
   };
+}
+
+/**
+ * Prefer the ISO string HasData provides (`priceChangedAtIso`); fall back
+ * to converting the epoch-millis `priceChangedAt` field.
+ */
+function extractPriceChangedAt(o: Record<string, any>): string | undefined {
+  if (typeof o.priceChangedAtIso === "string" && o.priceChangedAtIso) {
+    return o.priceChangedAtIso;
+  }
+  const ms = toFiniteNumber(o.priceChangedAt);
+  if (ms !== undefined && ms > 0) {
+    try {
+      return new Date(ms).toISOString();
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+const SQFT_PER_ACRE = 43_560;
+
+/**
+ * Normalize `lotAreaValue` + `lotAreaUnits` to square feet. Live records
+ * use "acres" or "sqft" (sometimes "Square Feet"); anything else is
+ * treated as already-sqft since Zillow's US inventory only uses the two.
+ */
+export function extractLotSizeSqft(o: Record<string, any>): number | undefined {
+  const value = toFiniteNumber(o.lotAreaValue ?? o.lotSize);
+  if (value === undefined || value <= 0) return undefined;
+  const units = String(o.lotAreaUnits ?? "").toLowerCase();
+  if (units.startsWith("acre")) return Math.round(value * SQFT_PER_ACRE);
+  return Math.round(value);
+}
+
+function extractHasVirtualTour(o: Record<string, any>): boolean | undefined {
+  const md = o.mediaDetails;
+  if (!md || typeof md !== "object") return undefined;
+  const m = md as Record<string, any>;
+  if (typeof m.has3DModel !== "boolean" && typeof m.hasVideo !== "boolean") {
+    return undefined;
+  }
+  return Boolean(m.has3DModel) || Boolean(m.hasVideo);
 }
 
 /**

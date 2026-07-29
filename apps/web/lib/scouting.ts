@@ -1,5 +1,7 @@
 import {
   computeAutoPMIRateFromLoan,
+  computeBaseScore,
+  computeBatchContext,
   computeProForma,
   defaultStrSchedule,
   estimateInsuranceMonthly,
@@ -166,6 +168,16 @@ export async function scoutProjectInternal(
     const downPayment = constraints.downPayment ?? 0;
     const targetCashflow = constraints.targetMonthlyCashflow ?? 0;
 
+    // Size percentiles over the whole candidate pool (pre-filter) so the
+    // asset bucket compares each property against what the market actually
+    // offered this run, not just the financially-surviving subset.
+    const batchContext = computeBatchContext(
+      candidates.map(({ listing }) => ({
+        sqft: listing.sqft,
+        lotSizeSqft: listing.lotSizeSqft,
+      })),
+    );
+
     for (const { listing, detail, source, sourceUrl } of candidates) {
       if (!listing.id) {
         dropped.noId += 1;
@@ -243,12 +255,25 @@ export async function scoutProjectInternal(
         continue;
       }
 
-      const baseScore = computeBaseScore({
-        dscr: proforma.dscr,
-        monthlyCashflow,
-        targetCashflow,
-        cashOnCash: proforma.cashOnCashReturn,
-      });
+      const { score: baseScore, components: scoreComponents } =
+        computeBaseScore({
+          dscr: proforma.dscr,
+          monthlyCashflow,
+          targetCashflow,
+          cashOnCash: proforma.cashOnCashReturn,
+          signals: {
+            price: effectivePrice,
+            priceChange: listing.priceChange,
+            priceChangedAt: listing.priceChangedAt,
+            daysOnMarket: listing.daysOnMarket,
+            sqft: listing.sqft ?? detail?.sqft,
+            lotSizeSqft: listing.lotSizeSqft,
+            hoaMonthly,
+            photoCount: listing.photosCount,
+            hasVirtualTour: listing.hasVirtualTour,
+          },
+          batch: batchContext,
+        });
 
       const photos =
         listing.photosList?.map((p) => p.url) ?? (detail?.photos ?? []);
@@ -277,6 +302,10 @@ export async function scoutProjectInternal(
             est_value: avm ?? null,
             est_rent: monthlyRent,
             hoa_monthly: hoaMonthly ?? null,
+            days_on_market: listing.daysOnMarket ?? null,
+            price_change: listing.priceChange ?? null,
+            price_changed_at: listing.priceChangedAt ?? null,
+            lot_size: listing.lotSizeSqft ?? null,
             hud_fmr: detail?.hudFairMarketRent ?? null,
             last_refreshed_at: new Date().toISOString(),
           },
@@ -305,6 +334,7 @@ export async function scoutProjectInternal(
           irr_5yr: proforma.irr5Yr !== null ? round(proforma.irr5Yr, 4) : null,
           payout_years: round(proforma.payoutYears, 2),
           score: Math.round(baseScore),
+          score_components: scoreComponents,
           rationale: null,
           computed_proforma: proforma,
           computed_at: new Date().toISOString(),
@@ -446,6 +476,9 @@ function buildHasDataFilters(
   if (constraints.bathsMax !== undefined) filters.bathsMax = constraints.bathsMax;
   if (constraints.sqftMin !== undefined) filters.sqftMin = constraints.sqftMin;
   if (constraints.sqftMax !== undefined) filters.sqftMax = constraints.sqftMax;
+  if (constraints.yearBuiltMin !== undefined)
+    filters.yearBuiltMin = constraints.yearBuiltMin;
+  if (constraints.hoaMax !== undefined) filters.hoaMax = constraints.hoaMax;
   if (constraints.daysOnMarketMax !== undefined)
     filters.daysOnZillow = constraints.daysOnMarketMax;
 
@@ -533,10 +566,15 @@ function zillowToMLSListing(row: ZillowListingSummary): MLSListingSummary {
     baths: row.baths,
     sqft: row.sqft,
     primaryListingImageUrl: row.imgSrc,
-    photosCount: row.imgSrc ? 1 : 0,
+    photosCount: row.photoCount ?? (row.imgSrc ? 1 : 0),
     photosList: row.imgSrc ? [{ url: row.imgSrc }] : undefined,
     daysOnMarket: row.daysOnZillow,
     listingAgent: undefined,
+    hoaMonthly: row.hoaMonthly,
+    priceChange: row.priceChange,
+    priceChangedAt: row.priceChangedAt,
+    lotSizeSqft: row.lotSizeSqft,
+    hasVirtualTour: row.hasVirtualTour,
     raw: row.raw,
   };
 }
@@ -733,30 +771,6 @@ function pickHudFmrRent(
 
 function estimateRentFromPrice(price: number): number {
   return price * 0.007;
-}
-
-function computeBaseScore(args: {
-  dscr: number;
-  monthlyCashflow: number;
-  targetCashflow: number;
-  cashOnCash: number;
-}): number {
-  let s = 50;
-  if (args.dscr >= 1.25) s += 25;
-  else if (args.dscr >= 1.1) s += 15;
-  else if (args.dscr >= 1.0) s += 5;
-  else s -= 25;
-
-  if (args.targetCashflow > 0) {
-    if (args.monthlyCashflow >= args.targetCashflow) s += 20;
-    else if (args.monthlyCashflow >= args.targetCashflow * 0.75) s += 5;
-    else s -= 10;
-  }
-
-  if (args.cashOnCash >= 0.1) s += 5;
-  if (args.cashOnCash < 0) s -= 10;
-
-  return Math.max(0, Math.min(100, s));
 }
 
 /**

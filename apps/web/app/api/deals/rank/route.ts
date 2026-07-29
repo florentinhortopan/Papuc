@@ -59,7 +59,7 @@ export async function POST(req: Request) {
   const { data: scores, error: sErr } = await sb
     .from("deal_scores")
     .select(
-      "deal_id, dscr, cash_on_cash, monthly_cashflow, irr_5yr, computed_proforma, deals!inner(address, price, beds, baths, sqft, est_rent)",
+      "deal_id, dscr, cash_on_cash, monthly_cashflow, irr_5yr, computed_proforma, deals!inner(address, price, beds, baths, sqft, est_rent, days_on_market, price_change, price_changed_at, hoa_monthly, lot_size)",
     )
     .eq("project_id", body.projectId)
     .is("rationale", null)
@@ -75,10 +75,19 @@ export async function POST(req: Request) {
       const proforma = row.computed_proforma ?? {};
       const pitia = proforma?.pitiaMonthly?.total ?? 0;
       const deal = (row.deals ?? {}) as Record<string, any>;
+      const price = Number(deal.price ?? 0);
+      const priceChange = deal.price_change as number | null | undefined;
+      // Express cuts as a positive percentage of price (e.g. 4.2) so
+      // Claude can gauge magnitude without doing arithmetic. Increases
+      // are omitted — they aren't an opportunity signal.
+      const priceCutPct =
+        typeof priceChange === "number" && priceChange < 0 && price > 0
+          ? Math.round((Math.abs(priceChange) / price) * 1000) / 10
+          : undefined;
       return {
         dealId: row.deal_id as string,
         address: (deal.address as string) ?? "",
-        price: Number(deal.price ?? 0),
+        price,
         beds: deal.beds as number | undefined,
         baths: deal.baths as number | undefined,
         sqft: deal.sqft as number | undefined,
@@ -88,6 +97,11 @@ export async function POST(req: Request) {
         cashOnCash: Number(row.cash_on_cash ?? 0),
         monthlyCashflow: Number(row.monthly_cashflow ?? 0),
         irr5Yr: row.irr_5yr !== null ? Number(row.irr_5yr) : null,
+        daysOnMarket: deal.days_on_market ?? undefined,
+        priceCutPct,
+        priceChangedAt: deal.price_changed_at ?? undefined,
+        hoaMonthly: deal.hoa_monthly ?? undefined,
+        lotSizeSqft: deal.lot_size ?? undefined,
       };
     },
   );

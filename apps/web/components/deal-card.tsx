@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { CashflowBadge } from "@/components/cashflow-badge";
 import { DscrBadge } from "@/components/dscr-badge";
+import { MarketSignalBadges } from "@/components/market-signal-badges";
 import { Badge } from "@/components/ui/badge";
 import type { DealWithScore } from "@/lib/deals";
 import { formatMoney } from "@/lib/format";
@@ -73,6 +74,12 @@ export function DealCard({ deal }: { deal: DealWithScore }) {
           {deal.est_rent ? (
             <Badge>Rent {formatMoney(deal.est_rent)}</Badge>
           ) : null}
+          <MarketSignalBadges
+            daysOnMarket={deal.days_on_market}
+            priceChange={deal.price_change}
+            price={deal.price ?? deal.est_value}
+            hoaMonthly={deal.hoa_monthly}
+          />
         </div>
 
         {score?.rationale ? (

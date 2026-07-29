@@ -38,6 +38,7 @@ NEW STRUCTURAL FILTERS — extract these whenever the user gives a hint, they me
 - sqftMax: ceiling on square footage if mentioned.
 - yearBuiltMin: when user says "newer than 1990" or "no pre-war" set yearBuiltMin: 1990. For "no fixer-uppers" or "modern construction", set 2000.
 - daysOnMarketMax: when user says "fresh listings only" use "30d"; "really fresh" use "7d"; "give me everything" omit it. Allowed: "24h", "7d", "14d", "30d", "90d", "6m", "12m".
+- hoaMax: monthly HOA ceiling in USD. "no HOA" / "HOA-free" → hoaMax: 0. "HOA under $100" → hoaMax: 100. Omit when HOA isn't mentioned.
 
 COMMERCIAL / MIXED-USE NOTE — these are best supported on RealEstateAPI (off-market). The Zillow path (HasData) doesn't list them; that's fine, the scout will route appropriately.
 
@@ -48,7 +49,12 @@ export const RANK_DEALS_SYSTEM = `You are a real estate investment analyst helpi
 1. Re-rank deals 0..100 considering both numbers and the user's qualitative goals from the original prompt.
 2. Write a 1-2 sentence "Why this is a fit (or isn't)" rationale per deal in plain English.
 
-Numbers come first. A deal with DSCR < 1.0 should not score above 70. A deal that crushes the user's monthly cashflow goal AND is DSCR > 1.25 should score 85+. Mention specific numbers in the rationale (e.g., "$760/mo cashflow at 1.32 DSCR").
+DEFINITION OF A "BEST PROPERTY" — apply in this order:
+1. Financially sound first (gatekeeper): DSCR and cashflow decide the tier. A deal with DSCR < 1.0 should not score above 70. A deal that crushes the user's monthly cashflow goal AND is DSCR > 1.25 should score 85+.
+2. Opportunity signals break ties upward: a recent price cut (priceCutPct, priceChangedAt) or a fresh listing (low daysOnMarket) signals motivated sellers / early access — nudge the score up and mention it concretely (e.g., "$25k cut 5 days ago", "listed 3 days ago").
+3. Asset quality breaks remaining ties: larger sqft or lot for the money, and no HOA (hoaMonthly = 0) are pluses; a heavy HOA (> $150/mo) drags an otherwise-equal deal down. Old listings are NOT penalized for staleness — treat high daysOnMarket as neutral, or even as price-negotiation room when paired with a cut.
+
+Numbers come first. Mention specific numbers in the rationale (e.g., "$760/mo cashflow at 1.32 DSCR"), and weave in the strongest opportunity/asset signal when one exists.
 
 Use the rankDeals tool to return structured output.`;
 
@@ -127,6 +133,12 @@ export const PARSE_PROJECT_TOOL = {
             enum: ["24h", "7d", "14d", "30d", "90d", "6m", "12m"],
             description:
               "Recency cap on active listings. Maps to Zillow's daysOnZillow.",
+          },
+          hoaMax: {
+            type: "number",
+            minimum: 0,
+            description:
+              "Maximum monthly HOA fee in WHOLE DOLLARS. 0 means no-HOA listings only ('no HOA', 'HOA-free'). Omit when the user does not mention HOA.",
           },
           propertyTypes: {
             type: "array",

@@ -55,6 +55,12 @@ export type DealsRow = {
   est_value: number | null;
   est_rent: number | null;
   hoa_monthly: number | null;
+  days_on_market: number | null;
+  /** Most recent list-price change in USD; negative = cut. */
+  price_change: number | null;
+  price_changed_at: string | null;
+  /** Lot size in sqft (acres normalized at scout time). */
+  lot_size: number | null;
   hud_fmr: unknown;
   last_refreshed_at: string;
   created_at: string;
@@ -70,6 +76,8 @@ export type DealScoresRow = {
   irr_5yr: number | null;
   payout_years: number | null;
   score: number;
+  /** Base-score breakdown: { finance, opportunity, asset }. */
+  score_components: { finance: number; opportunity: number; asset: number } | null;
   rationale: string | null;
   computed_proforma: unknown;
   computed_at: string;

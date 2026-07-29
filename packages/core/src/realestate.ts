@@ -81,6 +81,14 @@ export interface MLSListingSummary {
   /** Monthly HOA fee in USD when the MLS / property record exposes it.
    *  `undefined` means unknown, `0` means confirmed-no-HOA. */
   hoaMonthly?: number;
+  /** Most recent list-price change in USD (negative = price cut). */
+  priceChange?: number;
+  /** ISO timestamp of the most recent price change. */
+  priceChangedAt?: string;
+  /** Lot size normalized to square feet. */
+  lotSizeSqft?: number;
+  /** Listing has a video or 3D tour. */
+  hasVirtualTour?: boolean;
   raw?: unknown;
 }
 

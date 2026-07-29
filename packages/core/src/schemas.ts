@@ -98,6 +98,11 @@ export const ProjectConstraintsSchema = z.object({
     .optional(),
   /** Restrict to listings posted within the last N days/months. */
   daysOnMarketMax: ListingRecencySchema.optional(),
+  /**
+   * Maximum monthly HOA fee in USD. 0 = no-HOA listings only (maps to
+   * Zillow's hoa filter via HasData). Omit for "don't care".
+   */
+  hoaMax: z.number().nonnegative().optional(),
   propertyTypes: z.array(PropertyTypeSchema).default(["single_family"]),
   downPayment: z.number().nonnegative().optional(),
   totalCash: z.number().nonnegative().optional(),

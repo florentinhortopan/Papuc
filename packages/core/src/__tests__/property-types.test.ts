@@ -70,7 +70,7 @@ describe("PropertyType expansion", () => {
 });
 
 describe("ProjectConstraints new optional filter fields", () => {
-  it("accepts bedsMax/bathsMax/sqftMax/yearBuiltMin/daysOnMarketMax", () => {
+  it("accepts bedsMax/bathsMax/sqftMax/yearBuiltMin/daysOnMarketMax/hoaMax", () => {
     const ok = ProjectConstraintsSchema.safeParse({
       markets: [{ kind: "city", city: "Austin", state: "TX" }],
       mortgage: { rateAPR: 0.075, termYears: 30, ltv: 0.75 },
@@ -80,8 +80,34 @@ describe("ProjectConstraints new optional filter fields", () => {
       sqftMax: 5000,
       yearBuiltMin: 1990,
       daysOnMarketMax: "30d",
+      hoaMax: 100,
     });
     expect(ok.success).toBe(true);
+  });
+
+  it("accepts hoaMax: 0 (no-HOA-only) and rejects negatives", () => {
+    const zero = ProjectConstraintsSchema.safeParse({
+      markets: [{ kind: "zip", zip: "10001" }],
+      mortgage: { rateAPR: 0.075, termYears: 30, ltv: 0.75 },
+      hoaMax: 0,
+    });
+    expect(zero.success).toBe(true);
+
+    const negative = ProjectConstraintsSchema.safeParse({
+      markets: [{ kind: "zip", zip: "10001" }],
+      mortgage: { rateAPR: 0.075, termYears: 30, ltv: 0.75 },
+      hoaMax: -50,
+    });
+    expect(negative.success).toBe(false);
+  });
+
+  it("exposes hoaMax in the Claude tool schema", () => {
+    const constraints = PARSE_PROJECT_TOOL.input_schema.properties
+      .constraints as { properties: Record<string, { type?: string; minimum?: number }> };
+    const hoaMax = constraints.properties.hoaMax;
+    expect(hoaMax).toBeTruthy();
+    expect(hoaMax.type).toBe("number");
+    expect(hoaMax.minimum).toBe(0);
   });
 
   it("rejects nonsensical year built and unknown days-on-market tokens", () => {

@@ -13,6 +13,16 @@ export interface DealScoreInput {
   cashOnCash: number;
   monthlyCashflow: number;
   irr5Yr: number | null;
+  /** Days on market at scout time. */
+  daysOnMarket?: number;
+  /** Most recent price cut as a positive percentage of price (e.g. 4.2). */
+  priceCutPct?: number;
+  /** ISO timestamp of the most recent price change. */
+  priceChangedAt?: string;
+  /** Monthly HOA in USD; 0 = confirmed no HOA, undefined = unknown. */
+  hoaMonthly?: number;
+  /** Lot size in sqft. */
+  lotSizeSqft?: number;
 }
 
 export interface DealScoreOutput {

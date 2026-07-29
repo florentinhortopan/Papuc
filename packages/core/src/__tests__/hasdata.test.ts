@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildZillowParams,
   extractHoaMonthly,
+  extractLotSizeSqft,
   extractZillowPhotos,
   HasDataClient,
   HasDataError,
@@ -32,7 +33,10 @@ describe("buildZillowParams", () => {
     expect(s).toContain("price%5Bmin%5D=800000");
     expect(s).toContain("price%5Bmax%5D=2000000");
     expect(s).toContain("beds%5Bmin%5D=2");
-    expect(s).toContain("sqft%5Bmin%5D=900");
+    // The working param is squareFeet[min] — sqft[min] is silently
+    // ignored by the API (verified by live probe).
+    expect(s).toContain("squareFeet%5Bmin%5D=900");
+    expect(s).not.toContain("sqft%5Bmin%5D");
   });
 
   it("repeats homeTypes[] as an array", () => {
@@ -42,6 +46,54 @@ describe("buildZillowParams", () => {
     });
     const all = p.getAll("homeTypes[]");
     expect(all).toEqual(["SINGLE_FAMILY", "CONDO"]);
+  });
+
+  it("passes hoa, yearBuilt and lotSize filters", () => {
+    const p = buildZillowParams({
+      keyword: "Sacramento, CA",
+      hoaMax: 0,
+      yearBuiltMin: 1990,
+      yearBuiltMax: 2020,
+      lotSizeMin: 5000,
+    });
+    expect(p.get("hoa")).toBe("0");
+    expect(p.get("yearBuilt[min]")).toBe("1990");
+    expect(p.get("yearBuilt[max]")).toBe("2020");
+    expect(p.get("lotSize[min]")).toBe("5000");
+  });
+
+  it("omits hoa/yearBuilt/lotSize when not requested", () => {
+    const p = buildZillowParams({ keyword: "94703" });
+    expect(p.has("hoa")).toBe(false);
+    expect(p.has("yearBuilt[min]")).toBe(false);
+    expect(p.has("lotSize[min]")).toBe(false);
+  });
+});
+
+describe("extractLotSizeSqft", () => {
+  it("converts acres to sqft at 43,560", () => {
+    expect(extractLotSizeSqft({ lotAreaValue: 0.5, lotAreaUnits: "acres" })).toBe(
+      21780,
+    );
+    expect(extractLotSizeSqft({ lotAreaValue: 2, lotAreaUnits: "Acres" })).toBe(
+      87120,
+    );
+  });
+
+  it("passes sqft through unchanged (rounded)", () => {
+    expect(
+      extractLotSizeSqft({ lotAreaValue: 6534.5, lotAreaUnits: "sqft" }),
+    ).toBe(6535);
+    expect(
+      extractLotSizeSqft({ lotAreaValue: 7000, lotAreaUnits: "Square Feet" }),
+    ).toBe(7000);
+  });
+
+  it("returns undefined for missing or non-positive values", () => {
+    expect(extractLotSizeSqft({})).toBeUndefined();
+    expect(extractLotSizeSqft({ lotAreaValue: 0 })).toBeUndefined();
+    expect(extractLotSizeSqft({ lotAreaValue: -1 })).toBeUndefined();
+    expect(extractLotSizeSqft({ lotAreaValue: "n/a" })).toBeUndefined();
   });
 });
 
@@ -84,6 +136,37 @@ describe("normalizeZillowListing", () => {
     expect(out.address).toBe("456 Oak Ave, Tampa, FL 33606");
     expect(out.beds).toBeUndefined();
     expect(out.rentZestimate).toBeUndefined();
+    expect(out.priceChange).toBeUndefined();
+    expect(out.priceChangedAt).toBeUndefined();
+    expect(out.lotSizeSqft).toBeUndefined();
+    expect(out.hasVirtualTour).toBeUndefined();
+  });
+
+  it("extracts price-cut, lot, photo and media signals", () => {
+    const out = normalizeZillowListing({
+      zpid: 555,
+      price: 500000,
+      priceChange: -25000,
+      priceChangedAtIso: "2026-07-20T00:00:00.000Z",
+      lotAreaValue: 0.25,
+      lotAreaUnits: "acres",
+      photos: ["a.jpg", "b.jpg", "c.jpg"],
+      mediaDetails: { has3DModel: true, hasVideo: false },
+    });
+    expect(out.priceChange).toBe(-25000);
+    expect(out.priceChangedAt).toBe("2026-07-20T00:00:00.000Z");
+    expect(out.lotSizeSqft).toBe(10890);
+    expect(out.photoCount).toBe(3);
+    expect(out.hasVirtualTour).toBe(true);
+  });
+
+  it("converts epoch-millis priceChangedAt to ISO when no ISO field exists", () => {
+    const out = normalizeZillowListing({
+      zpid: 556,
+      priceChange: -10000,
+      priceChangedAt: Date.UTC(2026, 6, 15),
+    });
+    expect(out.priceChangedAt).toBe("2026-07-15T00:00:00.000Z");
   });
 
   it("strips $ and commas from string-form numbers", () => {
