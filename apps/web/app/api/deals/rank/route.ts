@@ -61,7 +61,7 @@ export async function POST(req: Request) {
   const { data: scores, error: sErr } = await sb
     .from("deal_scores")
     .select(
-      "deal_id, dscr, cash_on_cash, monthly_cashflow, irr_5yr, computed_proforma, deals!inner(address, city, state, price, beds, baths, sqft, est_rent, days_on_market, price_change, price_changed_at, hoa_monthly, lot_size, str_adr, str_occupancy, str_estimated_at)",
+      "deal_id, dscr, cash_on_cash, monthly_cashflow, irr_5yr, computed_proforma, score_components, deals!inner(address, city, state, price, beds, baths, sqft, est_rent, days_on_market, price_change, price_changed_at, hoa_monthly, lot_size, str_adr, str_occupancy, str_estimated_at)",
     )
     .eq("project_id", body.projectId)
     .is("rationale", null)
@@ -124,24 +124,27 @@ export async function POST(req: Request) {
         lotSizeSqft: deal.lot_size ?? undefined,
         ...(isSTR
           ? {
-              // Comps-based ADR when the user fetched one; otherwise the
-              // same rent-derived heuristic the scout underwrote with,
-              // rounded so Claude reads it as an assumption, not data.
+              // The exact nightly rate this score's cashflow was
+              // underwritten at, persisted by the scout (AirROI comps,
+              // market-clamped, or plain heuristic). Fall back to the
+              // heuristic only for scores that predate persistence.
               adr:
-                deal.str_adr != null
+                row.score_components?.adr ??
+                (deal.str_adr != null
                   ? Number(deal.str_adr)
                   : Math.round(
                       estimateSTRAdrFromLTRRent(Number(deal.est_rent ?? 0)),
-                    ) || undefined,
+                    ) || undefined),
               occupancy:
                 deal.str_occupancy != null
                   ? Number(deal.str_occupancy)
                   : undefined,
-              adrSource: (deal.str_estimated_at
-                ? "airroi"
-                : marketIntel?.adr_median != null
-                  ? "market_checked"
-                  : "heuristic") as "airroi" | "market_checked" | "heuristic",
+              adrSource: (row.score_components?.adrSource ??
+                (deal.str_estimated_at
+                  ? "airroi"
+                  : marketIntel?.adr_median != null
+                    ? "market_checked"
+                    : "heuristic")) as "airroi" | "market_checked" | "heuristic",
               marketAdrMedian:
                 marketIntel?.adr_median != null
                   ? Number(marketIntel.adr_median)

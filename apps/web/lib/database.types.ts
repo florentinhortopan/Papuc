@@ -88,8 +88,18 @@ export type DealScoresRow = {
   irr_5yr: number | null;
   payout_years: number | null;
   score: number;
-  /** Base-score breakdown: { finance, opportunity, asset }. */
-  score_components: { finance: number; opportunity: number; asset: number } | null;
+  /** Base-score breakdown, plus (STR only) the nightly-rate assumption
+   *  the cashflow was underwritten at and where it came from. */
+  score_components: {
+    finance: number;
+    opportunity: number;
+    asset: number;
+    /** STR: assumed ADR in USD/night at scout time. */
+    adr?: number;
+    /** STR: "airroi" (comps), "market_checked" (web-search-clamped
+     *  heuristic), or "heuristic" (pure rent multiplier). */
+    adrSource?: "airroi" | "market_checked" | "heuristic";
+  } | null;
   rationale: string | null;
   computed_proforma: unknown;
   computed_at: string;

@@ -5,13 +5,14 @@ import {
   computeBreakevenADR,
   computeProForma,
   DEFAULT_INSURANCE_RATE_PCT,
-  estimateSTRAdrFromLTRRent,
+  defaultStrSchedule,
   solveBreakevenDownPayment,
   solveBreakevenPrice,
   solveBreakevenRent,
   strScheduleFromEstimate,
   type ProFormaInputs,
   type Strategy,
+  type StrMarketAdrIntel,
 } from "@papuc/core";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -77,29 +78,70 @@ function toNum(s: string, fallback = 0): number {
 export function DealDetailClient({
   deal: initialDeal,
   project,
+  marketAdrIntel,
 }: {
   deal: DealWithScore;
   project: ProjectRow;
+  /** Cached web-search market ADR intel for this deal's city (or null). */
+  marketAdrIntel?: StrMarketAdrIntel | null;
 }) {
   const router = useRouter();
   const [deal, setDeal] = useState(initialDeal);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  /** AirROI estimate already persisted on the deal row, if the user fetched one before. */
+  const cachedStrEstimate: StrEstimatePayload | null =
+    deal.str_estimated_at && deal.str_adr != null && deal.str_occupancy != null
+      ? {
+          adr: Number(deal.str_adr),
+          occupancy: Number(deal.str_occupancy),
+          annualRevenue:
+            deal.str_annual_revenue != null
+              ? Number(deal.str_annual_revenue)
+              : null,
+          percentiles:
+            (deal.str_percentiles as StrEstimatePayload["percentiles"]) ?? null,
+          monthlyRevenueDistribution: Array.isArray(deal.str_monthly_distribution)
+            ? (deal.str_monthly_distribution as number[])
+            : null,
+          estimatedAt: deal.str_estimated_at,
+        }
+      : null;
+
   /**
-   * Seed the STR matrix using the SAME helper the scout uses. Previously
-   * the editor seeded `est_rent / 30` (~$65/night for a $2k LTR rent)
-   * while the scout used `estimateSTRAdrFromLTRRent` (industry multiplier
-   * → ~$167/night). That mismatch is what made the card and the detail
-   * page disagree on cashflow by 2-3x for the same listing.
+   * Seed the STR matrix with the SAME priority chain the scout uses:
+   * cached AirROI comps estimate → rent heuristic clamped to the
+   * researched market ADR range → plain rent heuristic. Any drift here
+   * makes the deal card (scout numbers) and this page disagree on
+   * cashflow for the same listing — that class of bug has bitten twice
+   * (est_rent/30 seeding, then market-clamping only at scout time), so
+   * the seed and the scout must always route through the same helpers.
    */
   const seedMonthlyRent = Number(deal.est_rent ?? 2500);
+  const [strMatrix, setStrMatrix] = useState<StrMatrixValue>(() => {
+    if (project.constraints.strategy !== "STR") {
+      return defaultStrMatrix(seedMonthlyRent / 30 || 200);
+    }
+    const schedule = cachedStrEstimate
+      ? strScheduleFromEstimate({
+          adr: cachedStrEstimate.adr,
+          occupancy: cachedStrEstimate.occupancy,
+          monthlyRevenueDistribution:
+            cachedStrEstimate.monthlyRevenueDistribution,
+        })
+      : defaultStrSchedule(seedMonthlyRent, marketAdrIntel ?? undefined);
+    return {
+      monthlyNights: schedule.monthlyNights,
+      monthlyADR: schedule.monthlyADR.map((a) => a || 200),
+      monthlyOccupancy: schedule.monthlyOccupancy,
+      monthlyAvgStays: schedule.monthlyAvgStays,
+    };
+  });
   const seedAdr =
     project.constraints.strategy === "STR"
-      ? estimateSTRAdrFromLTRRent(seedMonthlyRent) || 200
+      ? strMatrix.monthlyADR[0] || 200
       : seedMonthlyRent / 30 || 200;
-  const [strMatrix, setStrMatrix] = useState<StrMatrixValue>(() =>
-    defaultStrMatrix(seedAdr),
-  );
   const [state, setState] = useState<ProFormaState>(() => {
     const c = project.constraints;
     const seedPrice = Number(deal.price ?? c.priceMax ?? 400000);
@@ -216,6 +258,15 @@ export function DealDetailClient({
     () => (inputs.strategy === "STR" ? computeBreakevenADR(inputs) : null),
     [inputs],
   );
+  /** Mean assumed nightly rate across the matrix — equals the ADR input
+   *  field whenever the rate is flat (the default), so the header badge
+   *  and the input mask always show the same number. */
+  const currentAdr = useMemo(() => {
+    if (inputs.strategy !== "STR" || !inputs.monthlyADR?.length) return 0;
+    return (
+      inputs.monthlyADR.reduce((a, b) => a + b, 0) / inputs.monthlyADR.length
+    );
+  }, [inputs]);
 
   function patch<K extends keyof ProFormaState>(k: K, v: ProFormaState[K]) {
     setState((s) => ({ ...s, [k]: v }));
@@ -258,25 +309,6 @@ export function DealDetailClient({
     });
     patch("monthlyRentLTR", String(Math.round(est.adr)));
   }
-
-  /** Estimate already persisted on the deal row, if the user fetched one before. */
-  const cachedStrEstimate: StrEstimatePayload | null =
-    deal.str_estimated_at && deal.str_adr != null && deal.str_occupancy != null
-      ? {
-          adr: Number(deal.str_adr),
-          occupancy: Number(deal.str_occupancy),
-          annualRevenue:
-            deal.str_annual_revenue != null
-              ? Number(deal.str_annual_revenue)
-              : null,
-          percentiles:
-            (deal.str_percentiles as StrEstimatePayload["percentiles"]) ?? null,
-          monthlyRevenueDistribution: Array.isArray(deal.str_monthly_distribution)
-            ? (deal.str_monthly_distribution as number[])
-            : null,
-          estimatedAt: deal.str_estimated_at,
-        }
-      : null;
 
   async function reload() {
     const supabase = createClient();
@@ -623,14 +655,14 @@ export function DealDetailClient({
             />
             {state.strategy === "STR" && breakevenADR !== null ? (
               <Badge
-                variant={
-                  inputs.monthlyADR && inputs.monthlyADR.some((a) => a >= breakevenADR)
-                    ? "success"
-                    : "danger"
-                }
-                title="The flat ADR at which annual pre-tax profit would equal zero, holding occupancy/nights constant."
+                variant={currentAdr >= breakevenADR ? "success" : "danger"}
+                title={`Assumed nightly rate (matches the ADR input and 12-month matrix) vs the break-even rate at which profit is $0 given all costs. ${
+                  currentAdr >= breakevenADR
+                    ? "Above break-even: the deal cash-flows at the assumed rate."
+                    : "Below break-even: the assumed rate does not cover costs."
+                }`}
               >
-                BE ADR {formatMoney(breakevenADR)}/n
+                ADR {formatMoney(currentAdr)} vs BE {formatMoney(breakevenADR)}/n
               </Badge>
             ) : null}
           </div>
@@ -864,6 +896,14 @@ export function DealDetailClient({
               dealId={deal.id}
               cached={cachedStrEstimate}
               onApply={applyStrEstimate}
+              baselineSource={
+                marketAdrIntel &&
+                (marketAdrIntel.adrLow !== undefined ||
+                  marketAdrIntel.adrMedian !== undefined ||
+                  marketAdrIntel.adrHigh !== undefined)
+                  ? "market_checked"
+                  : "heuristic"
+              }
             />
           ) : null}
           <Field

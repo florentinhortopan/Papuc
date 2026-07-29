@@ -1,3 +1,4 @@
+import { estimateSTRAdrFromLTRRent, type Strategy } from "@papuc/core";
 import Link from "next/link";
 
 import { CashflowBadge } from "@/components/cashflow-badge";
@@ -8,8 +9,29 @@ import type { DealWithScore } from "@/lib/deals";
 import { formatMoney } from "@/lib/format";
 import { getDealSourceLink } from "@/lib/source-url";
 
-export function DealCard({ deal }: { deal: DealWithScore }) {
+const ADR_SOURCE_LABEL: Record<string, string> = {
+  airroi: "from Airbnb comps for this address",
+  market_checked: "rent-derived, sanity-checked against researched market rates",
+  heuristic: "derived from the long-term rent estimate",
+};
+
+export function DealCard({
+  deal,
+  strategy,
+}: {
+  deal: DealWithScore;
+  strategy?: Strategy;
+}) {
   const score = deal.score;
+  // STR: show the nightly rate the cashflow was actually underwritten at
+  // (persisted by the scout). Older scores predate the persisted ADR, so
+  // fall back to the same rent heuristic the scout used then.
+  const assumedAdr =
+    score?.score_components?.adr ??
+    (deal.est_rent
+      ? Math.round(estimateSTRAdrFromLTRRent(Number(deal.est_rent)))
+      : null);
+  const adrSource = score?.score_components?.adrSource ?? "heuristic";
   const photo =
     deal.primary_image_url ??
     (Array.isArray(deal.photos) ? (deal.photos as string[])[0] : undefined);
@@ -71,8 +93,17 @@ export function DealCard({ deal }: { deal: DealWithScore }) {
         <div className="flex flex-wrap gap-2 mb-3">
           <DscrBadge dscr={score?.dscr ?? null} />
           <CashflowBadge monthlyCashflow={score?.monthly_cashflow ?? null} />
-          {deal.est_rent ? (
-            <Badge>Rent {formatMoney(deal.est_rent)}</Badge>
+          {strategy === "STR" && assumedAdr ? (
+            <Badge
+              title={`Assumed average daily rate (${ADR_SOURCE_LABEL[adrSource]}). The DSCR and cashflow on this card are computed at this rate.`}
+            >
+              ADR {formatMoney(assumedAdr)}/n
+              {adrSource === "airroi" ? " ✓" : ""}
+            </Badge>
+          ) : deal.est_rent ? (
+            <Badge title="Estimated monthly rent: Zillow rent Zestimate for this property, HUD Fair Market Rent fallback.">
+              Rent {formatMoney(deal.est_rent)}/mo
+            </Badge>
           ) : null}
           <MarketSignalBadges
             daysOnMarket={deal.days_on_market}

@@ -42,11 +42,14 @@ export function StrMarketEstimate({
   dealId,
   cached,
   onApply,
+  baselineSource = "heuristic",
 }: {
   dealId: string;
   /** Estimate already stored on the deal row, if any. */
   cached: StrEstimatePayload | null;
   onApply: (est: StrEstimatePayload) => void;
+  /** What the current ADR baseline is when no comps estimate exists. */
+  baselineSource?: "market_checked" | "heuristic";
 }) {
   const [estimate, setEstimate] = useState<StrEstimatePayload | null>(cached);
   const [loading, setLoading] = useState(false);
@@ -91,8 +94,10 @@ export function StrMarketEstimate({
         </p>
         {estimate ? (
           <Badge variant="success">Airbnb comps</Badge>
+        ) : baselineSource === "market_checked" ? (
+          <Badge>market-checked estimate in use</Badge>
         ) : (
-          <Badge>heuristic ADR in use</Badge>
+          <Badge>rent-based estimate in use</Badge>
         )}
       </div>
 
@@ -169,9 +174,9 @@ export function StrMarketEstimate({
       ) : (
         <>
           <p className="text-textMuted text-xs leading-5">
-            The ADR above is a rent-based guess. Pull real Airbnb comps for
-            this address (expected nightly rate, occupancy, and seasonality)
-            and apply them to the pro-forma.
+            {baselineSource === "market_checked"
+              ? "The ADR above is derived from the rent estimate and clamped to researched market rates for this city. Pull real Airbnb comps for this exact address (nightly rate, occupancy, seasonality) for the most accurate number."
+              : "The ADR above is a rent-based guess. Pull real Airbnb comps for this address (expected nightly rate, occupancy, and seasonality) and apply them to the pro-forma."}
           </p>
           <Button
             size="sm"

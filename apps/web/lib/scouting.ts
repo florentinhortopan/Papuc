@@ -274,6 +274,20 @@ export async function scoutProjectInternal(
             ? strScheduleFromEstimate(storedEstimate)
             : defaultStrSchedule(monthlyRent, marketAdrIntel)
           : null;
+      // Provenance + value of the ADR assumption, persisted with the
+      // score so the deal card and detail page can display the exact
+      // nightly rate this cashflow was underwritten at.
+      const assumedAdr = strSchedule ? round(strSchedule.monthlyADR[0]!, 0) : null;
+      const adrSource = !strSchedule
+        ? null
+        : storedEstimate
+          ? ("airroi" as const)
+          : marketAdrIntel &&
+              (marketAdrIntel.adrLow !== undefined ||
+                marketAdrIntel.adrHigh !== undefined ||
+                marketAdrIntel.adrMedian !== undefined)
+            ? ("market_checked" as const)
+            : ("heuristic" as const);
 
       // Be explicit about every cost so the cashflow we store in
       // `deal_scores` matches what the deal-detail page recomputes live.
@@ -393,7 +407,10 @@ export async function scoutProjectInternal(
           irr_5yr: proforma.irr5Yr !== null ? round(proforma.irr5Yr, 4) : null,
           payout_years: round(proforma.payoutYears, 2),
           score: Math.round(baseScore),
-          score_components: scoreComponents,
+          score_components:
+            assumedAdr !== null
+              ? { ...scoreComponents, adr: assumedAdr, adrSource }
+              : scoreComponents,
           rationale: null,
           computed_proforma: proforma,
           computed_at: new Date().toISOString(),
