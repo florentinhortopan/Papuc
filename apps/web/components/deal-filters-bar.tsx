@@ -1,8 +1,11 @@
 "use client";
 
+import { useMemo } from "react";
+
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Slider } from "@/components/ui/slider";
 import type { DealWithScore } from "@/lib/deals";
+import { formatMoney } from "@/lib/format";
 
 /**
  * Client-side filtering + sorting for the scouted-deals grid, designed to
@@ -10,6 +13,10 @@ import type { DealWithScore } from "@/lib/deals";
  * in `ProjectConstraints`, so "Save filters to project" can translate the
  * current view into scout-time rules (see saveFiltersToProject in
  * project-detail-client.tsx).
+ *
+ * Controls are optimized for touch: sort is a horizontally-scrollable
+ * pill row, numeric floors/ceilings are sliders with ranges derived from
+ * the loaded deals, and everything else is a tap chip.
  */
 
 export type DealSortKey =
@@ -45,13 +52,13 @@ export const DEFAULT_DEAL_FILTERS: DealFilters = {
 };
 
 const SORT_OPTIONS: Array<{ value: DealSortKey; label: string }> = [
-  { value: "score", label: "Best match (score)" },
-  { value: "cashflow", label: "Monthly cashflow" },
+  { value: "score", label: "Score" },
+  { value: "cashflow", label: "Cashflow" },
   { value: "dscr", label: "DSCR" },
-  { value: "coc", label: "Cash-on-cash" },
-  { value: "priceAsc", label: "Price: low → high" },
-  { value: "priceDesc", label: "Price: high → low" },
-  { value: "newest", label: "Newest on market" },
+  { value: "coc", label: "CoC" },
+  { value: "priceAsc", label: "Price ↑" },
+  { value: "priceDesc", label: "Price ↓" },
+  { value: "newest", label: "Newest" },
 ];
 
 /** Zillow homeType → human label for the exclude chips. */
@@ -150,6 +157,11 @@ function sortDeals(deals: DealWithScore[], sort: DealSortKey): DealWithScore[] {
   return [...deals].sort(cmp);
 }
 
+/** Round a raw slider bound up to a friendly increment. */
+function roundUpTo(n: number, inc: number): number {
+  return Math.ceil(n / inc) * inc;
+}
+
 export function DealFiltersBar({
   deals,
   filters,
@@ -170,72 +182,114 @@ export function DealFiltersBar({
 }) {
   const patch = (p: Partial<DealFilters>) => onChange({ ...filters, ...p });
 
+  /**
+   * Slider bounds derived from the loaded deals so the useful range is
+   * always reachable: the cashflow slider tops out just above the best
+   * deal, the price slider spans the actual price spread, etc.
+   */
+  const bounds = useMemo(() => {
+    const cashflows = deals
+      .map((d) => d.score?.monthly_cashflow)
+      .filter((v): v is number => typeof v === "number");
+    const dscrs = deals
+      .map((d) => d.score?.dscr)
+      .filter((v): v is number => typeof v === "number");
+    const prices = deals
+      .map((d) => d.price ?? d.est_value)
+      .filter((v): v is number => typeof v === "number" && v > 0);
+    const beds = deals
+      .map((d) => d.beds)
+      .filter((v): v is number => typeof v === "number");
+
+    const cashflowMax = roundUpTo(Math.max(1000, ...cashflows, 0), 100);
+    const dscrMax = Math.min(3, roundUpTo(Math.max(2, ...dscrs, 0), 0.25));
+    const priceMax = roundUpTo(prices.length ? Math.max(...prices) : 500_000, 10_000);
+    const priceStep = Math.max(1000, roundUpTo(priceMax / 50, 1000));
+    const bedsMax = Math.min(8, Math.max(5, ...beds, 0));
+    return { cashflowMax, dscrMax, priceMax, priceStep, bedsMax };
+  }, [deals]);
+
   // Only offer exclusion chips for types actually present in the results.
   const presentTypes = Array.from(
     new Set(deals.map(getDealHomeType).filter((t): t is string => t !== null)),
   ).sort();
 
   const active = isAnyFilterActive(filters);
+  const maxPriceVal = Number(filters.maxPrice) || bounds.priceMax;
 
   return (
-    <div className="bg-surface border border-border rounded-2xl p-4 mb-4 space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-xs text-textMuted">
-          Sort by
-          <select
-            value={filters.sort}
-            onChange={(e) => patch({ sort: e.target.value as DealSortKey })}
-            className="bg-surfaceAlt border border-border rounded-lg px-2 py-1.5 text-xs text-text focus:outline-none focus:ring-2 focus:ring-primary/40"
-          >
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="text-textMuted text-xs ml-auto">
-          Showing {shownCount} of {deals.length}
+    <div className="bg-surface border border-border rounded-2xl p-3 sm:p-4 mb-4 space-y-3">
+      {/* Sort: horizontally scrollable pill row (never wraps on mobile). */}
+      <div className="flex items-center gap-2">
+        <div className="flex gap-1.5 overflow-x-auto no-scrollbar -my-1 py-1 flex-1 min-w-0">
+          {SORT_OPTIONS.map((o) => (
+            <FilterChip
+              key={o.value}
+              label={o.label}
+              active={filters.sort === o.value}
+              onToggle={() => patch({ sort: o.value })}
+            />
+          ))}
+        </div>
+        <p className="text-textMuted text-[11px] whitespace-nowrap shrink-0">
+          {shownCount}/{deals.length}
         </p>
-        {active ? (
-          <button
-            type="button"
-            className="text-xs text-accent hover:underline"
-            onClick={() => onChange({ ...DEFAULT_DEAL_FILTERS, sort: filters.sort })}
-          >
-            Clear filters
-          </button>
-        ) : null}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <FilterInput
-          label="Min cashflow ($/mo)"
-          placeholder="e.g. 1000"
-          value={filters.minCashflow}
-          onChange={(v) => patch({ minCashflow: v })}
+      {/* Numeric floors/ceilings as sliders. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-3">
+        <FilterSlider
+          label="Min cashflow"
+          display={
+            Number(filters.minCashflow) > 0
+              ? `${formatMoney(Number(filters.minCashflow))}+/mo`
+              : "Any"
+          }
+          min={0}
+          max={bounds.cashflowMax}
+          step={50}
+          value={Number(filters.minCashflow) || 0}
+          onChange={(v) => patch({ minCashflow: v > 0 ? String(v) : "" })}
         />
-        <FilterInput
+        <FilterSlider
           label="Min DSCR"
-          placeholder="e.g. 1.25"
-          value={filters.minDscr}
-          onChange={(v) => patch({ minDscr: v })}
+          display={
+            Number(filters.minDscr) > 0 ? `${Number(filters.minDscr).toFixed(2)}+` : "Any"
+          }
+          min={0}
+          max={bounds.dscrMax}
+          step={0.05}
+          value={Number(filters.minDscr) || 0}
+          onChange={(v) =>
+            patch({ minDscr: v > 0 ? String(Math.round(v * 100) / 100) : "" })
+          }
         />
-        <FilterInput
-          label="Max price ($)"
-          placeholder="e.g. 400000"
-          value={filters.maxPrice}
-          onChange={(v) => patch({ maxPrice: v })}
+        <FilterSlider
+          label="Max price"
+          display={
+            Number(filters.maxPrice) > 0
+              ? `≤ ${formatMoney(Number(filters.maxPrice))}`
+              : "Any"
+          }
+          min={0}
+          max={bounds.priceMax}
+          step={bounds.priceStep}
+          value={maxPriceVal}
+          onChange={(v) => patch({ maxPrice: v >= bounds.priceMax ? "" : String(v) })}
         />
-        <FilterInput
+        <FilterSlider
           label="Min beds"
-          placeholder="e.g. 3"
-          value={filters.minBeds}
-          onChange={(v) => patch({ minBeds: v })}
+          display={Number(filters.minBeds) > 0 ? `${filters.minBeds}+` : "Any"}
+          min={0}
+          max={bounds.bedsMax}
+          step={1}
+          value={Number(filters.minBeds) || 0}
+          onChange={(v) => patch({ minBeds: v > 0 ? String(v) : "" })}
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Toggle chips: HOA + property-type exclusions. */}
+      <div className="flex flex-wrap items-center gap-1.5">
         <FilterChip
           label="No HOA"
           active={filters.noHoa}
@@ -246,7 +300,7 @@ export function DealFiltersBar({
           return (
             <FilterChip
               key={t}
-              label={excluded ? `✕ ${homeTypeLabel(t)}` : `Exclude ${homeTypeLabel(t)}`}
+              label={excluded ? `✕ ${homeTypeLabel(t)}` : `No ${homeTypeLabel(t).toLowerCase()}`}
               active={excluded}
               onToggle={() =>
                 patch({
@@ -258,47 +312,75 @@ export function DealFiltersBar({
             />
           );
         })}
+        {active ? (
+          <button
+            type="button"
+            className="text-[11px] text-accent hover:underline ml-auto shrink-0"
+            onClick={() => onChange({ ...DEFAULT_DEAL_FILTERS, sort: filters.sort })}
+          >
+            Clear
+          </button>
+        ) : null}
       </div>
 
       {active ? (
-        <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-border">
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border">
           <Button size="sm" variant="secondary" onClick={onSaveToProject} loading={saving}>
             Save filters to project
           </Button>
-          <p className="text-textMuted text-xs">
+          <p className="text-textMuted text-[11px] flex-1 min-w-[12rem]">
             {savedNote ??
               "Writes these rules into the project, so the next scout only keeps matching deals."}
           </p>
         </div>
       ) : savedNote ? (
-        <p className="text-textMuted text-xs pt-1 border-t border-border">{savedNote}</p>
+        <p className="text-textMuted text-[11px] pt-2 border-t border-border">{savedNote}</p>
       ) : null}
     </div>
   );
 }
 
-function FilterInput({
+function FilterSlider({
   label,
-  placeholder,
+  display,
+  min,
+  max,
+  step,
   value,
   onChange,
 }: {
   label: string;
-  placeholder: string;
-  value: string;
-  onChange: (v: string) => void;
+  display: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (v: number) => void;
 }) {
+  const engaged = display !== "Any";
   return (
-    <label className="block">
-      <span className="text-textMuted text-[11px] block mb-1">{label}</span>
-      <Input
-        inputMode="decimal"
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-9 text-xs"
+    <div>
+      <div className="flex items-baseline justify-between gap-2 mb-1.5">
+        <span className="text-textMuted text-[11px]">{label}</span>
+        <span
+          className={
+            engaged
+              ? "text-primary text-[11px] font-semibold whitespace-nowrap"
+              : "text-textMuted text-[11px] whitespace-nowrap"
+          }
+        >
+          {display}
+        </span>
+      </div>
+      <Slider
+        min={min}
+        max={max}
+        step={step}
+        value={[Math.min(max, Math.max(min, value))]}
+        onValueChange={([v]) => onChange(v ?? min)}
+        aria-label={label}
       />
-    </label>
+    </div>
   );
 }
 
@@ -317,8 +399,8 @@ function FilterChip({
       onClick={onToggle}
       className={
         active
-          ? "text-xs px-3 py-1.5 rounded-full border border-primary/50 bg-primary/15 text-primary font-medium"
-          : "text-xs px-3 py-1.5 rounded-full border border-border bg-surfaceAlt text-textMuted hover:text-text"
+          ? "text-[11px] px-2.5 py-1.5 rounded-full border border-primary/50 bg-primary/15 text-primary font-medium whitespace-nowrap shrink-0"
+          : "text-[11px] px-2.5 py-1.5 rounded-full border border-border bg-surfaceAlt text-textMuted hover:text-text whitespace-nowrap shrink-0"
       }
     >
       {label}

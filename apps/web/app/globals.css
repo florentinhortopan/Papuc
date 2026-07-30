@@ -39,3 +39,12 @@ textarea::placeholder {
 ::-webkit-scrollbar-thumb:hover {
   background: #3a3a48;
 }
+
+/* Horizontal pill rows scroll without showing a scrollbar. */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
