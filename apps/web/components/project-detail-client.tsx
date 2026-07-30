@@ -1,14 +1,27 @@
 "use client";
 
-import { PROPERTY_TYPE_LABELS } from "@papuc/core";
+import {
+  PROPERTY_TYPE_LABELS,
+  ProjectConstraintsSchema,
+  type ProjectConstraints,
+  type PropertyType,
+} from "@papuc/core";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DealCard } from "@/components/deal-card";
+import {
+  applyDealFilters,
+  DealFiltersBar,
+  DEFAULT_DEAL_FILTERS,
+  homeTypeLabel,
+  isAnyFilterActive,
+  type DealFilters,
+} from "@/components/deal-filters-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { listDeals, type DealWithScore } from "@/lib/deals";
-import { deleteProject, type ProjectRow } from "@/lib/projects";
+import { deleteProject, updateProject, type ProjectRow } from "@/lib/projects";
 import { formatDate, formatMarket, formatMoney } from "@/lib/format";
 import { createClient } from "@/lib/supabase/client";
 
@@ -17,6 +30,28 @@ function rankByScore(deals: DealWithScore[]): DealWithScore[] {
     (a, b) => (b.score?.score ?? 0) - (a.score?.score ?? 0),
   );
 }
+
+/** Zillow homeType codes (as stored on deals) → our constraint enum. */
+const HOME_TYPE_TO_PROPERTY_TYPE: Record<string, PropertyType> = {
+  SINGLE_FAMILY: "single_family",
+  CONDO: "condo",
+  TOWNHOUSE: "townhouse",
+  MULTI_FAMILY: "multi_family_2_4",
+  APARTMENT: "multi_family_5_plus",
+  MANUFACTURED: "manufactured",
+  LOT: "land",
+};
+
+/** Everything the HasData/Zillow scout can actually search for. */
+const ZILLOW_SEARCHABLE_TYPES: PropertyType[] = [
+  "single_family",
+  "condo",
+  "townhouse",
+  "multi_family_2_4",
+  "multi_family_5_plus",
+  "manufactured",
+  "land",
+];
 
 export function ProjectDetailClient({
   project,
@@ -34,7 +69,15 @@ export function ProjectDetailClient({
   const [scoutStatus, setScoutStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(initialLoadFailed);
+  const [filters, setFilters] = useState<DealFilters>(DEFAULT_DEAL_FILTERS);
+  const [savingFilters, setSavingFilters] = useState(false);
+  const [filterSavedNote, setFilterSavedNote] = useState<string | null>(null);
   const projectIdRef = useRef(project.id);
+
+  const visibleDeals = useMemo(
+    () => applyDealFilters(deals, filters),
+    [deals, filters],
+  );
   // Mirror of `deals.length` readable inside stable callbacks without
   // recreating them (recreating refreshDeals used to churn the realtime
   // subscription on every deals change).
@@ -170,6 +213,87 @@ export function ProjectDetailClient({
     }
   }
 
+  /**
+   * Translate the active grid filters into project constraints so future
+   * scouts enforce them at the source: API-level filters (price, beds,
+   * HOA, property types) narrow the search itself; financial floors
+   * (cashflow, DSCR) drop non-qualifying candidates before they're saved.
+   */
+  async function saveFiltersToProject() {
+    setSavingFilters(true);
+    setFilterSavedNote(null);
+    setError(null);
+    try {
+      const c = project.constraints;
+      const next: ProjectConstraints = {
+        ...c,
+        propertyTypes: [...c.propertyTypes],
+      };
+      const applied: string[] = [];
+
+      const minCashflow = Number(filters.minCashflow);
+      if (minCashflow > 0) {
+        next.targetMonthlyCashflow = minCashflow;
+        applied.push(`cashflow ≥ ${formatMoney(minCashflow)}/mo`);
+      }
+      const minDscr = Number(filters.minDscr);
+      if (minDscr > 0) {
+        next.minDSCR = Math.min(3, minDscr);
+        applied.push(`DSCR ≥ ${next.minDSCR.toFixed(2)}`);
+      }
+      const maxPrice = Number(filters.maxPrice);
+      if (maxPrice > 0) {
+        next.priceMax = maxPrice;
+        applied.push(`price ≤ ${formatMoney(maxPrice)}`);
+      }
+      const minBeds = Number(filters.minBeds);
+      if (minBeds > 0) {
+        next.bedsMin = Math.round(minBeds);
+        applied.push(`≥ ${next.bedsMin} bd`);
+      }
+      if (filters.noHoa) {
+        next.hoaMax = 0;
+        applied.push("no HOA");
+      }
+      if (filters.excludedTypes.length > 0) {
+        const excluded = new Set(
+          filters.excludedTypes
+            .map((t) => HOME_TYPE_TO_PROPERTY_TYPE[t])
+            .filter((t): t is PropertyType => t !== undefined),
+        );
+        // "any" is an implicit include-all; make it explicit so we can
+        // subtract from it.
+        const base: PropertyType[] =
+          c.propertyTypes.length === 0 || c.propertyTypes.includes("any")
+            ? ZILLOW_SEARCHABLE_TYPES
+            : c.propertyTypes;
+        const kept = base.filter((t) => !excluded.has(t));
+        if (kept.length === 0) {
+          throw new Error(
+            "These filters would exclude every property type — keep at least one.",
+          );
+        }
+        next.propertyTypes = kept;
+        applied.push(
+          `excluding ${filters.excludedTypes.map(homeTypeLabel).join(", ")}`,
+        );
+      }
+
+      if (applied.length === 0) return;
+      const validated = ProjectConstraintsSchema.parse(next);
+      const supabase = createClient();
+      await updateProject(supabase, project.id, { constraints: validated });
+      setFilterSavedNote(
+        `Saved to project: ${applied.join(" · ")}. Hit "Scout deals" to re-run with these rules.`,
+      );
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingFilters(false);
+    }
+  }
+
   async function onDelete() {
     if (
       !window.confirm(
@@ -243,8 +367,27 @@ export function ProjectDetailClient({
       ) : null}
 
       <h2 className="text-lg font-semibold mt-8 mb-3">
-        Deals {deals.length ? `(${deals.length})` : ""}
+        Deals{" "}
+        {deals.length
+          ? visibleDeals.length !== deals.length
+            ? `(${visibleDeals.length} of ${deals.length})`
+            : `(${deals.length})`
+          : ""}
       </h2>
+      {deals.length > 0 ? (
+        <DealFiltersBar
+          deals={deals}
+          filters={filters}
+          onChange={(next) => {
+            setFilters(next);
+            setFilterSavedNote(null);
+          }}
+          shownCount={visibleDeals.length}
+          onSaveToProject={() => void saveFiltersToProject()}
+          saving={savingFilters}
+          savedNote={filterSavedNote}
+        />
+      ) : null}
       {deals.length > 0 && deals.every((d) => !d.price) ? (
         <div className="bg-surface border border-border rounded-xl p-3 mb-3">
           <p className="text-textMuted text-xs leading-5">
@@ -281,9 +424,25 @@ export function ProjectDetailClient({
             </p>
           )}
         </div>
+      ) : visibleDeals.length === 0 && isAnyFilterActive(filters) ? (
+        <div className="bg-surface border border-border rounded-2xl p-6 text-center">
+          <p className="text-textMuted text-sm">
+            No deals match the current filters ({deals.length} hidden).
+          </p>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="mt-3"
+            onClick={() =>
+              setFilters({ ...DEFAULT_DEAL_FILTERS, sort: filters.sort })
+            }
+          >
+            Clear filters
+          </Button>
+        </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {deals.map((deal) => (
+          {visibleDeals.map((deal) => (
             <DealCard key={deal.id} deal={deal} strategy={project.constraints.strategy} />
           ))}
         </div>
