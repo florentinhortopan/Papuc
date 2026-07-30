@@ -22,14 +22,29 @@ export default async function ProjectDetailPage({
   } catch {
     notFound();
   }
-  const initialDeals = await listDeals(supabase, id).catch(() => []);
+  // Deals are permanent rows — an empty result here should only ever mean
+  // "no deals scouted yet". If the read *fails* (deploy in progress,
+  // transient network error), say so instead of silently rendering an
+  // empty grid that looks like the deals vanished; the client retries on
+  // mount either way.
+  let initialDeals: Awaited<ReturnType<typeof listDeals>> = [];
+  let initialLoadFailed = false;
+  try {
+    initialDeals = await listDeals(supabase, id);
+  } catch {
+    initialLoadFailed = true;
+  }
 
   return (
     <div>
       <Link href="/projects" className="text-textMuted text-sm hover:text-text">
         ← Projects
       </Link>
-      <ProjectDetailClient project={project} initialDeals={initialDeals} />
+      <ProjectDetailClient
+        project={project}
+        initialDeals={initialDeals}
+        initialLoadFailed={initialLoadFailed}
+      />
     </div>
   );
 }

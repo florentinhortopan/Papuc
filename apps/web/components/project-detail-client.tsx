@@ -21,25 +21,82 @@ function rankByScore(deals: DealWithScore[]): DealWithScore[] {
 export function ProjectDetailClient({
   project,
   initialDeals,
+  initialLoadFailed = false,
 }: {
   project: ProjectRow;
   initialDeals: DealWithScore[];
+  /** True when the server-side deals read errored (deploy/transient). */
+  initialLoadFailed?: boolean;
 }) {
   const router = useRouter();
   const [deals, setDeals] = useState<DealWithScore[]>(rankByScore(initialDeals));
   const [scouting, setScouting] = useState(false);
   const [scoutStatus, setScoutStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(initialLoadFailed);
   const projectIdRef = useRef(project.id);
+  // Mirror of `deals.length` readable inside stable callbacks without
+  // recreating them (recreating refreshDeals used to churn the realtime
+  // subscription on every deals change).
+  const dealsCountRef = useRef(deals.length);
+  dealsCountRef.current = deals.length;
 
   const refreshDeals = useCallback(async () => {
     const supabase = createClient();
     try {
+      // Deal rows are permanent — nothing in the app deletes them short
+      // of deleting the whole project. So a *successful but empty* read
+      // can only mean the request ran without an authenticated session
+      // (RLS silently filters every row instead of erroring, e.g. while
+      // the auth token is mid-refresh right after a navigation). Never
+      // let that wipe a populated grid; treat it like a failed load.
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("session not ready");
       const d = await listDeals(supabase, project.id);
+      if (d.length === 0 && dealsCountRef.current > 0) {
+        throw new Error("empty read while grid populated (RLS/session race)");
+      }
       setDeals(rankByScore(d));
-    } catch {
-      // ignore
+      setLoadFailed(false);
+      return d.length;
+    } catch (err) {
+      // Keep whatever is currently rendered; flag the failure only when
+      // there's nothing on screen, so the empty state offers a retry
+      // instead of a misleading "no deals yet".
+      console.warn("[project] deals refresh skipped:", err);
+      setLoadFailed(dealsCountRef.current === 0);
+      return null;
     }
+  }, [project.id]);
+
+  // Always re-read on mount. Deals live in the DB, so navigating back to
+  // this page must never depend on a single server-render fetch having
+  // succeeded (a mid-deploy hiccup used to leave an empty grid that made
+  // users re-scout data they already had). If the grid is still empty on
+  // a project that HAS scouted before, retry with backoff — the empty
+  // result is far more likely a session/connection race than real.
+  useEffect(() => {
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    void refreshDeals().then((count) => {
+      if (cancelled || count === null || count > 0 || !project.last_scout_at) {
+        return;
+      }
+      for (const delayMs of [1500, 5000]) {
+        timers.push(
+          setTimeout(() => {
+            if (!cancelled && dealsCountRef.current === 0) void refreshDeals();
+          }, delayMs),
+        );
+      }
+    });
+    return () => {
+      cancelled = true;
+      for (const t of timers) clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
   useEffect(() => {
@@ -201,10 +258,28 @@ export function ProjectDetailClient({
       ) : null}
       {deals.length === 0 ? (
         <div className="bg-surface border border-border rounded-2xl p-6 text-center">
-          <p className="text-textMuted text-sm">
-            No deals yet. Click "Scout deals" to find listings that match your
-            goals.
-          </p>
+          {loadFailed || project.last_scout_at ? (
+            <>
+              <p className="text-textMuted text-sm">
+                {loadFailed
+                  ? "Couldn't load your scouted deals — they're still saved, this is just a connection hiccup. No need to re-scout."
+                  : "This project has scouted before and deals never expire, so if you expected results here, refresh instead of re-scouting. (An empty grid is also normal when the last scout matched nothing.)"}
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-3"
+                onClick={() => void refreshDeals()}
+              >
+                Refresh deals
+              </Button>
+            </>
+          ) : (
+            <p className="text-textMuted text-sm">
+              No deals yet. Click "Scout deals" to find listings that match
+              your goals.
+            </p>
+          )}
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
