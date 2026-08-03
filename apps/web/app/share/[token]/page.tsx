@@ -1,3 +1,4 @@
+import type { ProjectConstraints, StrMarketAdrIntel } from "@papuc/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -5,8 +6,10 @@ import { cache } from "react";
 
 import type { DealScoresRow, DealsRow } from "@/lib/database.types";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
+import { getCachedMarketStrIntel } from "@/lib/str-intel";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { underwriteDeal } from "@/lib/underwrite";
 
 export const dynamic = "force-dynamic";
 
@@ -30,9 +33,20 @@ export const dynamic = "force-dynamic";
 
 type SharedDeal = DealsRow & {
   deal_scores: DealScoresRow[] | DealScoresRow | null;
-  projects: { owner_id: string; constraints: { strategy?: string } | null } | null;
+  projects: {
+    owner_id: string;
+    constraints: ProjectConstraints | null;
+  } | null;
 };
 
+/**
+ * Fetch the shared deal AND underwrite it live. The stored deal_scores
+ * row reflects the cost model at scout time and goes stale whenever the
+ * model improves — quoting it here once showed recipients a higher
+ * cashflow than the owner's own detail page. Everything numeric on this
+ * page comes from `underwriteDeal` (the same helper that seeds the
+ * detail editor); the stored score is only used for the rationale text.
+ */
 const getSharedDeal = cache(async (token: string) => {
   // Tokens are 72-bit random slugs minted on first share; possession is
   // authorization, so this read uses the service role (anon RLS would
@@ -45,7 +59,29 @@ const getSharedDeal = cache(async (token: string) => {
     .eq("share_token", token)
     .maybeSingle();
   if (error || !data) return null;
-  return data as unknown as SharedDeal;
+  const deal = data as unknown as SharedDeal;
+
+  const constraints = deal.projects?.constraints;
+  if (!constraints) return null;
+
+  // Same cached market ADR intel the scout and detail page underwrite
+  // STR deals with (cache read only — a public page must never trigger
+  // paid research).
+  let marketAdrIntel: StrMarketAdrIntel | null = null;
+  if (constraints.strategy === "STR" && deal.city && deal.state) {
+    const intel = await getCachedMarketStrIntel(admin, deal.city, deal.state);
+    if (intel) {
+      marketAdrIntel = {
+        adrLow: intel.adr_low ?? undefined,
+        adrMedian: intel.adr_median ?? undefined,
+        adrHigh: intel.adr_high ?? undefined,
+        occupancyAvg: intel.occupancy_avg ?? undefined,
+      };
+    }
+  }
+
+  const { seeds, result } = underwriteDeal(deal, constraints, marketAdrIntel);
+  return { deal, seeds, result };
 });
 
 function pickScore(deal: SharedDeal): DealScoresRow | null {
@@ -75,21 +111,18 @@ export async function generateMetadata({
   params: Promise<{ token: string }>;
 }): Promise<Metadata> {
   const { token } = await params;
-  const deal = await getSharedDeal(token);
-  if (!deal) return { title: "Shared deal — Papuc" };
+  const shared = await getSharedDeal(token);
+  if (!shared) return { title: "Shared deal — Papuc" };
+  const { deal, result } = shared;
 
-  const score = pickScore(deal);
-  const cashflow = score?.monthly_cashflow;
-  const headline =
-    cashflow != null
-      ? `${cashflow >= 0 ? "+" : ""}${formatMoney(cashflow)}/mo cashflow`
-      : "Rental deal analysis";
+  const cashflow = result.annualPreTaxProfit / 12;
+  const headline = `${cashflow >= 0 ? "+" : ""}${formatMoney(cashflow)}/mo cashflow`;
   const title = `${headline} · ${addressLine(deal)}`;
   const description = [
     deal.price ? `List ${formatMoney(deal.price)}` : null,
     deal.beds != null ? `${deal.beds} bd` : null,
     deal.baths != null ? `${deal.baths} ba` : null,
-    score?.dscr != null ? `DSCR ${formatDscr(score.dscr)}` : null,
+    `DSCR ${formatDscr(result.dscr)}`,
     "Full pro-forma underwriting by Papuc, the AI deal scout.",
   ]
     .filter(Boolean)
@@ -120,13 +153,14 @@ export default async function SharePage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  const deal = await getSharedDeal(token);
-  if (!deal) notFound();
+  const shared = await getSharedDeal(token);
+  if (!shared) notFound();
+  const { deal, seeds, result } = shared;
 
   const score = pickScore(deal);
   const photos = photosOf(deal).slice(0, 5);
-  const strategy = deal.projects?.constraints?.strategy ?? "LTR";
-  const assumedAdr = score?.score_components?.adr;
+  const strategy = seeds.strategy;
+  const assumedAdr = seeds.strSchedule?.monthlyADR[0];
 
   // Signed-in visitors get the underwriting unlocked in place; the deal's
   // owner additionally gets a deep link into the app.
@@ -138,7 +172,7 @@ export default async function SharePage({
   const isOwner = signedIn && user.id === deal.projects?.owner_id;
   const signUpHref = `/sign-in?next=${encodeURIComponent(`/share/${token}`)}`;
 
-  const cashflow = score?.monthly_cashflow;
+  const cashflow = result.annualPreTaxProfit / 12;
   const facts = [
     deal.beds != null ? `${deal.beds} bd` : null,
     deal.baths != null ? `${deal.baths} ba` : null,
@@ -225,29 +259,22 @@ export default async function SharePage({
           </p>
         </div>
 
-        {/* The free hook: verdict numbers the sender wants to discuss. */}
+        {/* The free hook: verdict numbers, underwritten live with the
+            current cost model — identical to the owner's detail page. */}
         <div className="grid grid-cols-3 gap-2">
           <VerdictTile
             label="Monthly cashflow"
-            value={
-              cashflow != null
-                ? `${cashflow >= 0 ? "+" : ""}${formatMoney(cashflow)}`
-                : "—"
-            }
-            tone={
-              cashflow == null ? "muted" : cashflow >= 100 ? "good" : cashflow >= -100 ? "warn" : "bad"
-            }
+            value={`${cashflow >= 0 ? "+" : ""}${formatMoney(cashflow)}`}
+            tone={cashflow >= 100 ? "good" : cashflow >= -100 ? "warn" : "bad"}
           />
           <VerdictTile
             label="DSCR"
-            value={score?.dscr != null ? formatDscr(score.dscr) : "—"}
-            tone={
-              score?.dscr == null ? "muted" : score.dscr >= 1.1 ? "good" : "warn"
-            }
+            value={formatDscr(result.dscr)}
+            tone={result.dscr >= 1.1 ? "good" : "warn"}
           />
           <VerdictTile
             label="Cash-on-cash"
-            value={score?.cash_on_cash != null ? formatPct(score.cash_on_cash) : "—"}
+            value={formatPct(result.cashOnCashReturn)}
             tone="muted"
           />
         </div>
@@ -272,19 +299,19 @@ export default async function SharePage({
           >
             <LockedRow
               label="5-yr IRR"
-              value={score?.irr_5yr != null ? formatPct(score.irr_5yr) : "—"}
+              value={result.irr5Yr !== null ? formatPct(result.irr5Yr) : "—"}
             />
             <LockedRow
               label="Payout (years)"
-              value={score?.payout_years != null ? String(score.payout_years) : "—"}
+              value={
+                Number.isFinite(result.payoutYears)
+                  ? result.payoutYears.toFixed(1)
+                  : "—"
+              }
             />
             <LockedRow
               label="DSCR at lender 75% rent haircut"
-              value={
-                score?.dscr_lender_haircut != null
-                  ? formatDscr(score.dscr_lender_haircut)
-                  : "—"
-              }
+              value={formatDscr(result.dscrLenderHaircut)}
             />
             <LockedRow label="Monthly PITIA breakdown" value="P&I · taxes · insurance · HOA · PMI" />
             <LockedRow
