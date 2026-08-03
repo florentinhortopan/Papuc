@@ -33,7 +33,7 @@ export async function GET(
   const { data: deal, error } = await supabase
     .from("deals")
     .select(
-      "id, source, source_url, photos, primary_image_url, hoa_monthly, address, city, state, zip",
+      "id, source, source_url, photos, primary_image_url, hoa_monthly, property_tax_rate, address, city, state, zip",
     )
     .eq("id", dealId)
     .single();
@@ -73,11 +73,15 @@ export async function GET(
     const detail = await client.getZillowProperty(deal.source_url);
     const photos = detail.photos.length ? detail.photos : cached;
 
-    // Opportunistically backfill HOA when the property detail exposes one
-    // and we didn't already capture it during scouting (listings often
-    // omit it). This keeps a single paid call doing double duty.
+    // Opportunistically backfill HOA and the property's *actual* tax rate
+    // when the property detail exposes them (listings often omit both;
+    // the scout underwrites at a state-average tax rate until we get the
+    // real one here). This keeps a single paid call doing triple duty.
     const shouldBackfillHoa =
       detail.hoaMonthly !== undefined && deal.hoa_monthly == null;
+    const shouldBackfillTaxRate =
+      detail.propertyTaxRatePct !== undefined &&
+      detail.propertyTaxRatePct !== deal.property_tax_rate;
 
     const update: Record<string, unknown> = {};
     if (photos.length > cached.length) {
@@ -86,6 +90,9 @@ export async function GET(
     }
     if (shouldBackfillHoa) {
       update.hoa_monthly = detail.hoaMonthly;
+    }
+    if (shouldBackfillTaxRate) {
+      update.property_tax_rate = detail.propertyTaxRatePct;
     }
     if (Object.keys(update).length > 0) {
       update.last_refreshed_at = new Date().toISOString();

@@ -61,6 +61,10 @@ export type DealsRow = {
   price_changed_at: string | null;
   /** Lot size in sqft (acres normalized at scout time). */
   lot_size: number | null;
+  /** Effective property tax rate the deal was underwritten at (annual
+   *  fraction of value, e.g. 0.0168 for TX). Actual Zillow rate when we
+   *  have it, otherwise the state-level table in @papuc/core. */
+  property_tax_rate: number | null;
   /** Comps-based expected ADR in USD/night (AirROI on-demand estimate). */
   str_adr: number | null;
   /** Comps-based expected annual occupancy, 0..1. */

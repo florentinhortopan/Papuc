@@ -30,6 +30,12 @@ export interface ScenarioInputs {
   monthlyRentLTR: string;
   strategy: "LTR" | "STR";
 
+  // Added later — optional so scenarios saved before these fields existed
+  // still load (the deal-detail loader falls back to current state).
+  closingCosts?: string;
+  managementFeePct?: string;
+  vacancyRateLTR?: string;
+
   // STR-only matrix; safe to include for LTR (it's ignored).
   strMatrix?: {
     monthlyNights: number[];

@@ -163,6 +163,10 @@ export interface ZillowPropertyDetail {
    *  confirmed-no-HOA. Zillow Property pages almost always include this
    *  when an HOA exists. */
   hoaMonthly?: number;
+  /** Actual property tax rate as an annual fraction of value (e.g. 0.0198
+   *  for 1.98%), from Zillow's `propertyTaxRate` or derived from the
+   *  annual tax amount. `undefined` when the payload has neither. */
+  propertyTaxRatePct?: number;
   raw?: unknown;
 }
 
@@ -636,8 +640,40 @@ export function normalizeZillowProperty(
     lat: toFiniteNumber(o.latitude ?? o.lat),
     lng: toFiniteNumber(o.longitude ?? o.lng ?? o.lon),
     hoaMonthly: extractHoaMonthly(o),
+    propertyTaxRatePct: extractPropertyTaxRate(o),
     raw: o,
   };
+}
+
+/**
+ * Pull the property's actual tax rate from a Zillow property payload.
+ * Zillow exposes `propertyTaxRate` as a percentage (e.g. `1.98` = 1.98%/yr)
+ * on most property pages; when absent we derive it from the annual tax
+ * amount ÷ price. Returns an annual decimal fraction (0.0198), or
+ * `undefined` when neither source is usable. Sanity bounds guard against
+ * unit confusion (no US property taxes at 10%+ of value or below 0.05%).
+ */
+export function extractPropertyTaxRate(
+  o: Record<string, any>,
+): number | undefined {
+  const reso =
+    o.resoFacts && typeof o.resoFacts === "object"
+      ? (o.resoFacts as Record<string, any>)
+      : {};
+
+  const ratePercent = toFiniteNumber(o.propertyTaxRate ?? reso.propertyTaxRate);
+  if (ratePercent !== undefined && ratePercent > 0.05 && ratePercent < 10) {
+    return ratePercent / 100;
+  }
+
+  const taxAnnual = toFiniteNumber(o.taxAnnualAmount ?? reso.taxAnnualAmount);
+  const price = toFiniteNumber(o.price ?? o.zestimate ?? o.unformattedPrice);
+  if (taxAnnual !== undefined && taxAnnual > 0 && price && price > 0) {
+    const rate = taxAnnual / price;
+    if (rate >= 0.0005 && rate < 0.1) return rate;
+  }
+
+  return undefined;
 }
 
 /**

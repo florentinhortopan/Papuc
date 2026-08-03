@@ -1,11 +1,15 @@
 import {
+  assumeHoaMonthly,
   computeAutoPMIRateFromLoan,
   computeBaseScore,
   computeBatchContext,
   computeProForma,
+  DEFAULT_CLOSING_COSTS_PCT,
   defaultStrSchedule,
   estimateInsuranceMonthly,
   HasDataClient,
+  insuranceRateForState,
+  propertyTaxRateForState,
   RealEstateAPIClient,
   strScheduleFromEstimate,
   type Market,
@@ -255,8 +259,25 @@ export async function scoutProjectInternal(
 
       // HOA: prefer listing-level value (free, came back on the search call)
       // and fall back to detail (paid call, only when we already had to make
-      // one). `undefined` from both means the API simply did not return one.
+      // one). `undefined` from both means the API simply did not return one —
+      // for condos/townhouses that almost always means an unreported fee,
+      // not a free ride, so underwrite with a typical fee instead of $0.
       const hoaMonthly = listing.hoaMonthly ?? detail?.hoaMonthly;
+      const homeType =
+        typeof (listing.raw as Record<string, unknown> | undefined)?.homeType ===
+        "string"
+          ? ((listing.raw as Record<string, unknown>).homeType as string)
+          : null;
+      const underwritingHoa = hoaMonthly ?? assumeHoaMonthly(homeType);
+
+      // Location-aware carrying costs: effective property tax rate and
+      // insurance rate for the listing's state instead of flat national
+      // averages (1.1% tax everywhere made NJ/TX deals look cheap and HI
+      // deals look expensive). The rate is persisted on the deal so the
+      // detail page underwrites at exactly the same number.
+      const stateCode = listing.state ?? ("state" in market ? market.state : undefined);
+      const propertyTaxRatePct = propertyTaxRateForState(stateCode);
+      const insuranceRatePct = insuranceRateForState(stateCode);
 
       // For STR we hydrate the full 12-month schedule from the shared
       // helper in @papuc/core so the cashflow we store in deal_scores
@@ -306,9 +327,14 @@ export async function scoutProjectInternal(
         monthlyADR: strSchedule?.monthlyADR,
         monthlyOccupancy: strSchedule?.monthlyOccupancy,
         monthlyAvgStays: strSchedule?.monthlyAvgStays,
-        hoaMonthly: hoaMonthly,
-        insuranceMonthly: estimateInsuranceMonthly(effectivePrice),
+        hoaMonthly: underwritingHoa,
+        propertyTaxRatePct,
+        insuranceMonthly: estimateInsuranceMonthly(effectivePrice, insuranceRatePct),
         pmiRatePct: computeAutoPMIRateFromLoan(effectivePrice, effectiveDown),
+        closingCosts: effectivePrice * DEFAULT_CLOSING_COSTS_PCT,
+        // Maintenance (1%/yr of value), LTR vacancy (5%), and management
+        // fees (15% STR / 8% LTR) come from the shared core defaults so
+        // the detail page recomputes the identical cashflow.
       });
 
       const monthlyCashflow = proforma.annualPreTaxProfit / 12;
@@ -375,6 +401,7 @@ export async function scoutProjectInternal(
             est_value: avm ?? null,
             est_rent: monthlyRent,
             hoa_monthly: hoaMonthly ?? null,
+            property_tax_rate: propertyTaxRatePct,
             days_on_market: listing.daysOnMarket ?? null,
             price_change: listing.priceChange ?? null,
             price_changed_at: listing.priceChangedAt ?? null,

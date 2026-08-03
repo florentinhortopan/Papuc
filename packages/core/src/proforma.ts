@@ -4,6 +4,7 @@ import {
   computeMonthlyPI,
   computePITIA,
   estimateInsuranceMonthly,
+  estimateMaintenanceMonthly,
 } from "./dscr";
 import type { PITIA, ProFormaResult, Strategy } from "./schemas";
 
@@ -32,11 +33,34 @@ export const DEFAULT_STR_MONTHLY_AVG_STAYS: readonly number[] = new Array(
 
 export const DEFAULT_STR_MONTHLY_NIGHTS: readonly number[] = MONTH_DAYS;
 
+/**
+ * Default management fees when the user hasn't specified one. Both assume
+ * professional management (STR co-hosts run 15-25% of revenue, LTR
+ * property managers 8-10% of rent) so scout-time cashflow is underwritten
+ * conservatively; self-managers can zero the field on the deal page.
+ */
+export const DEFAULT_STR_MANAGEMENT_FEE_RATE = 0.15;
+export const DEFAULT_LTR_MANAGEMENT_FEE_RATE = 0.08;
+
+/** Standard underwriting vacancy allowance for long-term rentals. */
+export const DEFAULT_LTR_VACANCY_RATE = 0.05;
+
+/**
+ * Buyer closing costs as a fraction of purchase price (lender fees, title,
+ * escrow, appraisal — typically 2-5%). Included in the initial sunk
+ * investment for cash-on-cash / payout / IRR. Not defaulted inside the
+ * pro-forma core (the Berkeley sheet doesn't model them) — callers pass
+ * `closingCosts: price * DEFAULT_CLOSING_COSTS_PCT` explicitly.
+ */
+export const DEFAULT_CLOSING_COSTS_PCT = 0.03;
+
 export interface ProFormaInputs {
   // Acquisition
   price: number;
   downPayment: number;
   improvements?: number;
+  /** One-time buyer closing costs in $. Default 0 (Berkeley parity). */
+  closingCosts?: number;
   taxRate?: number;
   equityGained5Yr?: number;
 
@@ -64,6 +88,13 @@ export interface ProFormaInputs {
   // Strategy & rental assumptions
   strategy?: Strategy;
   managementFeeRate?: number;
+  /**
+   * LTR vacancy allowance (0..1) applied to rental revenue in the
+   * cashflow. Default 5%. DSCR is *not* affected — lenders qualify on
+   * gross market rent. Ignored for STR (occupancy models it directly)
+   * and whenever an explicit monthlyOccupancy grid is provided.
+   */
+  vacancyRateLTR?: number;
   cleaningCostPerStay?: number;
   cleaningRevenuePerStay?: number;
   bookingFeeRate?: number;
@@ -83,6 +114,7 @@ export interface ProFormaInputsResolved {
   price: number;
   downPayment: number;
   improvements: number;
+  closingCosts: number;
   taxRate: number;
   equityGained5Yr: number;
 
@@ -104,6 +136,7 @@ export interface ProFormaInputsResolved {
 
   strategy: Strategy;
   managementFeeRate: number;
+  vacancyRateLTR: number;
   cleaningCostPerStay: number;
   cleaningRevenuePerStay: number;
   bookingFeeRate: number;
@@ -119,10 +152,17 @@ export interface ProFormaInputsResolved {
 export function resolveProFormaInputs(inputs: ProFormaInputs): ProFormaInputsResolved {
   const strategy = inputs.strategy ?? "LTR";
 
+  const vacancyRateLTR = Math.min(
+    1,
+    Math.max(0, inputs.vacancyRateLTR ?? DEFAULT_LTR_VACANCY_RATE),
+  );
+
   const monthlyNights = inputs.monthlyNights ?? MONTH_DAYS.map((d) => d);
+  // LTR default occupancy embeds the vacancy allowance; the cashflow
+  // assumes ~5% of the year unrented while DSCR still uses gross rent.
   const monthlyOccupancy =
     inputs.monthlyOccupancy ??
-    new Array(12).fill(strategy === "STR" ? 0.7 : 1.0);
+    new Array(12).fill(strategy === "STR" ? 0.7 : 1 - vacancyRateLTR);
   const monthlyADR =
     inputs.monthlyADR ??
     new Array(12).fill(
@@ -135,6 +175,7 @@ export function resolveProFormaInputs(inputs: ProFormaInputs): ProFormaInputsRes
     price: inputs.price,
     downPayment: inputs.downPayment,
     improvements: inputs.improvements ?? 0,
+    closingCosts: inputs.closingCosts ?? 0,
     taxRate: inputs.taxRate ?? 0.3,
     equityGained5Yr: inputs.equityGained5Yr ?? 0,
     rateAPR: inputs.rateAPR ?? 0.075,
@@ -155,11 +196,22 @@ export function resolveProFormaInputs(inputs: ProFormaInputs): ProFormaInputsRes
       computeAutoPMIRateFromLoan(inputs.price, inputs.downPayment),
     pmiMonthlyOverride: inputs.pmiMonthlyOverride,
     utilitiesMonthly: inputs.utilitiesMonthly ?? (strategy === "STR" ? 400 : 0),
-    maintenanceMonthly: inputs.maintenanceMonthly ?? 100,
+    // Maintenance + CapEx reserve scales with the deal (1%/yr of value,
+    // $100/mo floor) — a flat $100 default understated repairs on
+    // everything above ~$120k.
+    maintenanceMonthly:
+      inputs.maintenanceMonthly ?? estimateMaintenanceMonthly(inputs.price),
     miscMonthly: inputs.miscMonthly ?? 100,
     yearlyTaxesAndOther: inputs.yearlyTaxesAndOther ?? 0,
     strategy,
-    managementFeeRate: inputs.managementFeeRate ?? 0,
+    // Assume professional management by default (conservative
+    // underwriting); self-managers zero this on the deal page.
+    managementFeeRate:
+      inputs.managementFeeRate ??
+      (strategy === "STR"
+        ? DEFAULT_STR_MANAGEMENT_FEE_RATE
+        : DEFAULT_LTR_MANAGEMENT_FEE_RATE),
+    vacancyRateLTR,
     cleaningCostPerStay:
       inputs.cleaningCostPerStay ?? (strategy === "STR" ? 75 : 0),
     cleaningRevenuePerStay:
@@ -477,7 +529,7 @@ export function computeProForma(inputs: ProFormaInputs): ProFormaResult {
   const annualPostTaxProfit =
     annualPreTaxProfit * (1 - r.taxRate) - r.yearlyTaxesAndOther;
 
-  const initialSunkInvestment = r.downPayment + r.improvements;
+  const initialSunkInvestment = r.downPayment + r.improvements + r.closingCosts;
   const cashOnCashReturn =
     initialSunkInvestment > 0
       ? annualPreTaxProfit / initialSunkInvestment

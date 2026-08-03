@@ -1,11 +1,18 @@
 "use client";
 
 import {
+  assumeHoaMonthly,
   computeAutoPMIRateFromLoan,
   computeBreakevenADR,
   computeProForma,
-  DEFAULT_INSURANCE_RATE_PCT,
+  DEFAULT_CLOSING_COSTS_PCT,
+  DEFAULT_LTR_MANAGEMENT_FEE_RATE,
+  DEFAULT_LTR_VACANCY_RATE,
+  DEFAULT_STR_MANAGEMENT_FEE_RATE,
   defaultStrSchedule,
+  estimateMaintenanceMonthly,
+  insuranceRateForState,
+  propertyTaxRateForState,
   solveBreakevenDownPayment,
   solveBreakevenPrice,
   solveBreakevenRent,
@@ -51,6 +58,9 @@ interface ProFormaState {
   price: string;
   downPayment: string;
   improvements: string;
+  /** One-time buyer closing costs in $. Counted in the initial sunk
+   *  investment (CoC / payout / IRR), not in monthly cashflow. */
+  closingCosts: string;
   taxRate: string;
   rateAPR: string;
   termYears: string;
@@ -66,6 +76,10 @@ interface ProFormaState {
   utilitiesMonthly: string;
   maintenanceMonthly: string;
   miscMonthly: string;
+  /** Management fee as a fraction of rental revenue (0.15 = 15%). */
+  managementFeePct: string;
+  /** LTR-only vacancy allowance as a fraction of the year (0.05 = 5%). */
+  vacancyRateLTR: string;
   monthlyRentLTR: string;
   strategy: Strategy;
 }
@@ -146,27 +160,47 @@ export function DealDetailClient({
     const c = project.constraints;
     const seedPrice = Number(deal.price ?? c.priceMax ?? 400000);
     const fallbackDown = seedPrice * (1 - c.mortgage.ltv);
-    // Seed insurance from price at 0.35%/yr (US average) so expensive deals
-    // don't start with a misleading $100/mo placeholder. Users still see
-    // and can adjust the dollar figure directly.
+    // Every seed below must mirror what the scout underwrote this deal at
+    // (see lib/scouting.ts) or the card and this page will disagree:
+    // state-aware insurance + property tax rates, price-scaled
+    // maintenance, assumed HOA for condos with unreported fees, and 3%
+    // closing costs.
     const seedInsuranceAnnual = Math.max(
       400,
-      Math.round(seedPrice * DEFAULT_INSURANCE_RATE_PCT),
+      Math.round(seedPrice * insuranceRateForState(deal.state)),
     );
+    const seedTaxRate =
+      deal.property_tax_rate != null
+        ? Number(deal.property_tax_rate)
+        : propertyTaxRateForState(deal.state);
+    const homeType =
+      deal.mls_data &&
+      typeof (deal.mls_data as Record<string, unknown>).homeType === "string"
+        ? ((deal.mls_data as Record<string, unknown>).homeType as string)
+        : null;
     return {
       price: String(seedPrice),
       downPayment: String(c.downPayment ?? fallbackDown ?? 0),
       improvements: "0",
+      closingCosts: String(Math.round(seedPrice * DEFAULT_CLOSING_COSTS_PCT)),
       taxRate: "0.30",
       rateAPR: c.mortgage.rateAPR.toFixed(4),
       termYears: String(c.mortgage.termYears),
-      propertyTaxRatePct: "0.011",
+      propertyTaxRatePct: String(seedTaxRate),
       insuranceAnnual: String(seedInsuranceAnnual),
-      hoaMonthly: String(deal.hoa_monthly ?? 0),
+      hoaMonthly: String(deal.hoa_monthly ?? assumeHoaMonthly(homeType)),
       pmiOverride: null,
       utilitiesMonthly: c.strategy === "STR" ? "400" : "0",
-      maintenanceMonthly: "100",
+      maintenanceMonthly: String(
+        Math.round(estimateMaintenanceMonthly(seedPrice)),
+      ),
       miscMonthly: "100",
+      managementFeePct: String(
+        c.strategy === "STR"
+          ? DEFAULT_STR_MANAGEMENT_FEE_RATE
+          : DEFAULT_LTR_MANAGEMENT_FEE_RATE,
+      ),
+      vacancyRateLTR: String(DEFAULT_LTR_VACANCY_RATE),
       // In STR mode this field is the "ADR baseline" used by the
       // patchRentOrAdr handler to broadcast a single daily rate into all
       // 12 matrix cells — seed it from the same per-night value that
@@ -231,6 +265,7 @@ export function DealDetailClient({
       price: derived.price,
       downPayment: derived.downPayment,
       improvements: toNum(state.improvements),
+      closingCosts: toNum(state.closingCosts, 0),
       taxRate: toNum(state.taxRate, 0.3),
       rateAPR: toNum(state.rateAPR, 0.075),
       termYears: toNum(state.termYears, 30),
@@ -241,6 +276,8 @@ export function DealDetailClient({
       utilitiesMonthly: toNum(state.utilitiesMonthly, 0),
       maintenanceMonthly: toNum(state.maintenanceMonthly, 100),
       miscMonthly: toNum(state.miscMonthly, 100),
+      managementFeeRate: toNum(state.managementFeePct, 0),
+      vacancyRateLTR: toNum(state.vacancyRateLTR, DEFAULT_LTR_VACANCY_RATE),
       strategy: state.strategy,
       monthlyRentLTR:
         state.strategy === "LTR" ? toNum(state.monthlyRentLTR, 0) : 0,
@@ -520,6 +557,7 @@ export function DealDetailClient({
       price: inputs.price ?? s.price,
       downPayment: inputs.downPayment ?? s.downPayment,
       improvements: inputs.improvements ?? s.improvements,
+      closingCosts: inputs.closingCosts ?? s.closingCosts,
       taxRate: inputs.taxRate ?? s.taxRate,
       rateAPR: inputs.rateAPR ?? s.rateAPR,
       termYears: inputs.termYears ?? s.termYears,
@@ -531,6 +569,8 @@ export function DealDetailClient({
       utilitiesMonthly: inputs.utilitiesMonthly ?? s.utilitiesMonthly,
       maintenanceMonthly: inputs.maintenanceMonthly ?? s.maintenanceMonthly,
       miscMonthly: inputs.miscMonthly ?? s.miscMonthly,
+      managementFeePct: inputs.managementFeePct ?? s.managementFeePct,
+      vacancyRateLTR: inputs.vacancyRateLTR ?? s.vacancyRateLTR,
       monthlyRentLTR: inputs.monthlyRentLTR ?? s.monthlyRentLTR,
       strategy: inputs.strategy ?? s.strategy,
     }));
@@ -564,6 +604,7 @@ export function DealDetailClient({
         price: state.price,
         downPayment: state.downPayment,
         improvements: state.improvements,
+        closingCosts: state.closingCosts,
         taxRate: state.taxRate,
         rateAPR: state.rateAPR,
         termYears: state.termYears,
@@ -574,6 +615,8 @@ export function DealDetailClient({
         utilitiesMonthly: state.utilitiesMonthly,
         maintenanceMonthly: state.maintenanceMonthly,
         miscMonthly: state.miscMonthly,
+        managementFeePct: state.managementFeePct,
+        vacancyRateLTR: state.vacancyRateLTR,
         monthlyRentLTR: state.monthlyRentLTR,
         strategy: state.strategy,
         strMatrix: {
@@ -794,10 +837,22 @@ export function DealDetailClient({
           <div className="grid grid-cols-2 gap-3">
             <Field label="Price ($)" type="number" value={state.price} onChange={(e) => patch("price", e.target.value)} />
             <Field label="Down ($)" type="number" value={state.downPayment} onChange={(e) => patch("downPayment", e.target.value)} />
+            <Field label="Closing costs ($)" type="number" value={state.closingCosts} onChange={(e) => patch("closingCosts", e.target.value)} hint="One-time; counts toward cash invested" />
             <Field label="Rate APR" type="number" inputMode="decimal" value={state.rateAPR} onChange={(e) => patch("rateAPR", e.target.value)} hint="e.g. 0.075 = 7.5%" />
             <Field label="Term (yrs)" type="number" value={state.termYears} onChange={(e) => patch("termYears", e.target.value)} />
             <Field label="Tax rate" type="number" inputMode="decimal" value={state.taxRate} onChange={(e) => patch("taxRate", e.target.value)} hint="On rental profits" />
-            <Field label="Prop tax %/yr" type="number" inputMode="decimal" value={state.propertyTaxRatePct} onChange={(e) => patch("propertyTaxRatePct", e.target.value)} hint="Berkeley default 0.011" />
+            <Field
+              label="Prop tax %/yr"
+              type="number"
+              inputMode="decimal"
+              value={state.propertyTaxRatePct}
+              onChange={(e) => patch("propertyTaxRatePct", e.target.value)}
+              hint={
+                deal.property_tax_rate != null
+                  ? "Actual rate from listing data"
+                  : `${deal.state ?? "State"} average effective rate`
+              }
+            />
             <Field
               label="Insurance ($/yr)"
               type="number"
@@ -830,7 +885,9 @@ export function DealDetailClient({
               hint={
                 deal.hoa_monthly != null
                   ? `Provider reported $${deal.hoa_monthly}/mo`
-                  : "Not reported by provider — enter manually if known"
+                  : toNum(state.hoaMonthly) > 0
+                    ? "Unreported — assumed typical fee for this property type"
+                    : "Not reported by provider — enter manually if known"
               }
             />
             <div className="mb-3">
@@ -873,8 +930,28 @@ export function DealDetailClient({
               </div>
             </div>
             <Field label="Utilities ($/mo)" type="number" value={state.utilitiesMonthly} onChange={(e) => patch("utilitiesMonthly", e.target.value)} />
-            <Field label="Maintenance ($/mo)" type="number" value={state.maintenanceMonthly} onChange={(e) => patch("maintenanceMonthly", e.target.value)} />
+            <Field label="Maintenance ($/mo)" type="number" value={state.maintenanceMonthly} onChange={(e) => patch("maintenanceMonthly", e.target.value)} hint="Seeded at 1%/yr of price" />
             <Field label="Misc ($/mo)" type="number" value={state.miscMonthly} onChange={(e) => patch("miscMonthly", e.target.value)} />
+            <Field
+              label="Mgmt fee (of revenue)"
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              value={state.managementFeePct}
+              onChange={(e) => patch("managementFeePct", e.target.value)}
+              hint="0.15 = 15%; set 0 if self-managing"
+            />
+            {state.strategy === "LTR" ? (
+              <Field
+                label="Vacancy (of year)"
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                value={state.vacancyRateLTR}
+                onChange={(e) => patch("vacancyRateLTR", e.target.value)}
+                hint="0.05 = ~18 unrented days/yr"
+              />
+            ) : null}
           </div>
           <Field
             label={
