@@ -1,6 +1,6 @@
-import { HasDataClient } from "@papuc/core";
 import { NextResponse } from "next/server";
 
+import { ensureDealPhotos } from "@/lib/deal-photos";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -41,76 +41,19 @@ export async function GET(
     return NextResponse.json({ error: "deal not found" }, { status: 404 });
   }
 
-  const cached = Array.isArray(deal.photos) ? (deal.photos as string[]) : [];
-  if (cached.length > 1) {
-    return NextResponse.json({ photos: cached, cached: true });
-  }
+  const result = await ensureDealPhotos(supabase, deal);
 
-  if (deal.source !== "hasdata") {
-    return NextResponse.json({
-      photos: cached,
-      note: `Photo expansion only supported for HasData/Zillow deals (this one is ${deal.source}).`,
-    });
-  }
-
-  if (!deal.source_url) {
-    return NextResponse.json({
-      photos: cached,
-      error: "deal has no source_url; re-scout to populate it",
-    });
-  }
-
-  const apiKey = process.env.HASDATA_API_KEY;
-  if (!apiKey) {
+  if (result.error && result.photos.length === 0) {
     return NextResponse.json(
-      { error: "HASDATA_API_KEY not set" },
-      { status: 500 },
+      { photos: result.photos, error: result.error },
+      { status: result.error.includes("HASDATA_API_KEY") ? 500 : 502 },
     );
   }
 
-  try {
-    const client = new HasDataClient({ apiKey });
-    const detail = await client.getZillowProperty(deal.source_url);
-    const photos = detail.photos.length ? detail.photos : cached;
-
-    // Opportunistically backfill HOA and the property's *actual* tax rate
-    // when the property detail exposes them (listings often omit both;
-    // the scout underwrites at a state-average tax rate until we get the
-    // real one here). This keeps a single paid call doing triple duty.
-    const shouldBackfillHoa =
-      detail.hoaMonthly !== undefined && deal.hoa_monthly == null;
-    const shouldBackfillTaxRate =
-      detail.propertyTaxRatePct !== undefined &&
-      detail.propertyTaxRatePct !== deal.property_tax_rate;
-
-    const update: Record<string, unknown> = {};
-    if (photos.length > cached.length) {
-      update.photos = photos;
-      update.primary_image_url = photos[0] ?? deal.primary_image_url;
-    }
-    if (shouldBackfillHoa) {
-      update.hoa_monthly = detail.hoaMonthly;
-    }
-    if (shouldBackfillTaxRate) {
-      update.property_tax_rate = detail.propertyTaxRatePct;
-    }
-    if (Object.keys(update).length > 0) {
-      update.last_refreshed_at = new Date().toISOString();
-      await supabase.from("deals").update(update).eq("id", dealId);
-    }
-
-    return NextResponse.json({
-      photos,
-      cached: false,
-      hoaMonthly: detail.hoaMonthly ?? deal.hoa_monthly ?? null,
-    });
-  } catch (err) {
-    return NextResponse.json(
-      {
-        photos: cached,
-        error: err instanceof Error ? err.message : String(err),
-      },
-      { status: 502 },
-    );
-  }
+  return NextResponse.json({
+    photos: result.photos,
+    cached: result.cached,
+    hoaMonthly: result.hoaMonthly,
+    ...(result.error ? { error: result.error, note: result.error } : {}),
+  });
 }

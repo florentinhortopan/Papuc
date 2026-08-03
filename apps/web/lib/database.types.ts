@@ -77,6 +77,22 @@ export type DealsRow = {
   str_monthly_distribution: unknown;
   str_estimate_source: string | null;
   str_estimated_at: string | null;
+  /** Structured photo-condition findings (Claude vision, on-demand). */
+  condition_findings: unknown;
+  condition_summary: string | null;
+  condition_rehab_low: number | null;
+  condition_rehab_high: number | null;
+  condition_rehab_suggested: number | null;
+  condition_maintenance_monthly_suggested: number | null;
+  /** turnkey | light_cosmetic | moderate_rehab | heavy_rehab | unknown */
+  condition_overall: string | null;
+  condition_photo_count: number | null;
+  condition_model: string | null;
+  condition_disclaimer: string | null;
+  condition_estimated_at: string | null;
+  /** Unguessable slug for the public /share/[token] page. Null until the
+   *  owner shares the deal for the first time. */
+  share_token: string | null;
   hud_fmr: unknown;
   last_refreshed_at: string;
   created_at: string;

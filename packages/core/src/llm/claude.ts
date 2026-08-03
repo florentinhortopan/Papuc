@@ -1,13 +1,21 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ProjectConstraintsSchema, type ProjectConstraints } from "../schemas";
 import {
+  ANALYZE_PROPERTY_CONDITION_SYSTEM,
   PARSE_PROJECT_SYSTEM,
   PARSE_PROJECT_TOOL,
   RANK_DEALS_SYSTEM,
   RANK_DEALS_TOOL,
+  RECORD_PROPERTY_CONDITION_TOOL,
   RECORD_STR_MARKET_INTEL_TOOL,
   RESEARCH_STR_MARKET_SYSTEM,
 } from "./prompts";
+import {
+  normalizePropertyConditionAssessment,
+  selectConditionPhotoUrls,
+  type AnalyzePropertyConditionArgs,
+  type PropertyConditionAssessment,
+} from "./property-condition";
 import type {
   DealScoreInput,
   DealScoreOutput,
@@ -134,6 +142,152 @@ export class ClaudeProvider implements LLMProvider {
       }
     }
     throw new Error("Claude did not return recordStrMarketIntel tool call");
+  }
+
+  /**
+   * Analyze listing photo URLs for visible condition issues and rough
+   * rehab / maintenance dollar suggestions. Opt-in caller only — vision
+   * tokens scale with photo count. Prefer public URL image blocks; on
+   * Anthropic fetch failure, retry once with server-side base64.
+   */
+  async analyzePropertyCondition(
+    args: AnalyzePropertyConditionArgs,
+  ): Promise<PropertyConditionAssessment> {
+    const photoUrls = selectConditionPhotoUrls(args.photoUrls);
+    if (photoUrls.length === 0) {
+      throw new Error("no usable photo URLs to analyze");
+    }
+
+    try {
+      return await this.runPropertyCondition(photoUrls, args, "url");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Anthropic returns 400s when it cannot fetch remote images (CDN
+      // blocks, expired signed URLs, etc.). Fall back to base64 once.
+      if (!/image|url|fetch|download|media/i.test(msg)) throw err;
+      return await this.runPropertyCondition(photoUrls, args, "base64");
+    }
+  }
+
+  private async runPropertyCondition(
+    photoUrls: string[],
+    args: AnalyzePropertyConditionArgs,
+    mode: "url" | "base64",
+  ): Promise<PropertyConditionAssessment> {
+    const imageBlocks: Anthropic.ImageBlockParam[] = [];
+    if (mode === "url") {
+      for (const url of photoUrls) {
+        imageBlocks.push({
+          type: "image",
+          source: { type: "url", url },
+        });
+      }
+    } else {
+      for (const url of photoUrls) {
+        const fetched = await fetchImageAsBase64(url);
+        if (!fetched) continue;
+        imageBlocks.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: fetched.mediaType,
+            data: fetched.data,
+          },
+        });
+      }
+      if (imageBlocks.length === 0) {
+        throw new Error("could not download any listing photos for analysis");
+      }
+    }
+
+    const contextLines = [
+      "Analyze the listing photos above for property condition, red flags, and rehab/maintenance cost implications.",
+      `Photo count: ${imageBlocks.length} (indexes 0..${imageBlocks.length - 1}).`,
+      args.address ? `Address: ${args.address}` : null,
+      args.beds != null ? `Beds: ${args.beds}` : null,
+      args.baths != null ? `Baths: ${args.baths}` : null,
+      args.sqft != null ? `Sqft: ${args.sqft}` : null,
+      args.yearBuilt != null ? `Year built: ${args.yearBuilt}` : null,
+      args.price != null ? `List/est. price: $${Math.round(args.price)}` : null,
+      "Call recordPropertyCondition with your assessment.",
+    ].filter(Boolean);
+
+    const content: Anthropic.ContentBlockParam[] = [
+      ...imageBlocks,
+      { type: "text", text: contextLines.join("\n") },
+    ];
+
+    const res = await this.client.messages.create({
+      model: this.model,
+      max_tokens: Math.max(this.maxTokens, 4096),
+      system: ANALYZE_PROPERTY_CONDITION_SYSTEM,
+      tools: [RECORD_PROPERTY_CONDITION_TOOL as any],
+      tool_choice: {
+        type: "tool",
+        name: RECORD_PROPERTY_CONDITION_TOOL.name,
+      } as any,
+      messages: [{ role: "user", content }],
+    });
+
+    for (const block of res.content) {
+      if (
+        block.type === "tool_use" &&
+        block.name === RECORD_PROPERTY_CONDITION_TOOL.name
+      ) {
+        return normalizePropertyConditionAssessment(block.input);
+      }
+    }
+    throw new Error("Claude did not return recordPropertyCondition tool call");
+  }
+
+  /** Model id used for calls (exposed so callers can cache provenance). */
+  get modelId(): string {
+    return this.model;
+  }
+}
+
+const IMAGE_MEDIA_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
+
+async function fetchImageAsBase64(
+  url: string,
+): Promise<{ mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp"; data: string } | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "image/*,*/*" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const contentType = (res.headers.get("content-type") ?? "")
+      .split(";")[0]!
+      .trim()
+      .toLowerCase();
+    let mediaType = contentType;
+    if (!IMAGE_MEDIA_TYPES.has(mediaType)) {
+      // Zillow CDNs often omit or mis-label; sniff from URL extension.
+      if (/\.png(\?|$)/i.test(url)) mediaType = "image/png";
+      else if (/\.webp(\?|$)/i.test(url)) mediaType = "image/webp";
+      else if (/\.gif(\?|$)/i.test(url)) mediaType = "image/gif";
+      else mediaType = "image/jpeg";
+    }
+    if (!IMAGE_MEDIA_TYPES.has(mediaType)) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    // Skip tiny/error payloads and very large frames.
+    if (buf.length < 500 || buf.length > 5_000_000) return null;
+    return {
+      mediaType: mediaType as
+        | "image/jpeg"
+        | "image/png"
+        | "image/gif"
+        | "image/webp",
+      data: buf.toString("base64"),
+    };
+  } catch {
+    return null;
   }
 }
 

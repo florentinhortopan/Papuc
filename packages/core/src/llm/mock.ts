@@ -1,4 +1,9 @@
 import { ProjectConstraintsSchema, type ProjectConstraints } from "../schemas";
+import {
+  CONDITION_DISCLAIMER,
+  type AnalyzePropertyConditionArgs,
+  type PropertyConditionAssessment,
+} from "./property-condition";
 import type { DealScoreInput, DealScoreOutput, LLMProvider } from "./types";
 
 /**
@@ -73,6 +78,52 @@ export class MockLLMProvider implements LLMProvider {
           : `${cashStr} cash flow at ${dscrStr} DSCR — below 1.0 means negative coverage; only proceed with reserves.`;
       return { dealId: d.dealId, score, rationale };
     });
+  }
+
+  /**
+   * Deterministic offline stand-in for vision analysis — no network,
+   * returns a light-cosmetic assessment scaled loosely to price.
+   */
+  async analyzePropertyCondition(
+    args: AnalyzePropertyConditionArgs,
+  ): Promise<PropertyConditionAssessment> {
+    const n = args.photoUrls.filter(
+      (u) => typeof u === "string" && /^https?:\/\//i.test(u),
+    ).length;
+    if (n === 0) throw new Error("no usable photo URLs to analyze");
+
+    const price = args.price && args.price > 0 ? args.price : 300_000;
+    const rehabSuggested = Math.round(Math.min(25_000, Math.max(2_500, price * 0.02)));
+    const maintenanceMonthlySuggested = Math.max(
+      100,
+      Math.round((price * 0.01) / 12),
+    );
+
+    return {
+      overall: "light_cosmetic",
+      summary:
+        "Mock condition review (no vision API). Assumes light cosmetic work typical for a listing-photo underwrite; replace with a live Claude analysis in production.",
+      findings: [
+        {
+          id: "mock-cosmetic-1",
+          severity: "cosmetic",
+          category: "interior",
+          title: "Cosmetic refresh likely",
+          detail:
+            "Offline mock: paint, flooring touch-ups, and minor fixture updates commonly needed after listing photos.",
+          photoIndexes: n > 0 ? [0] : [],
+          estimatedCostLow: Math.round(rehabSuggested * 0.5),
+          estimatedCostHigh: Math.round(rehabSuggested * 1.5),
+          costBucket: "rehab",
+          confidence: "low",
+        },
+      ],
+      rehabLow: Math.round(rehabSuggested * 0.5),
+      rehabHigh: Math.round(rehabSuggested * 1.5),
+      rehabSuggested,
+      maintenanceMonthlySuggested,
+      disclaimer: CONDITION_DISCLAIMER,
+    };
   }
 }
 

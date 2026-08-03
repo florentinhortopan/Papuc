@@ -31,6 +31,10 @@ import { DscrBadge } from "@/components/dscr-badge";
 import { MarketSignalBadges } from "@/components/market-signal-badges";
 import { PhotoCarousel } from "@/components/photo-carousel";
 import { StrMatrix, defaultStrMatrix, type StrMatrixValue } from "@/components/str-matrix";
+import {
+  PhotoConditionEstimate,
+  type ConditionEstimatePayload,
+} from "@/components/photo-condition-estimate";
 import { StrMarketEstimate, type StrEstimatePayload } from "@/components/str-market-estimate";
 import { StrRegulationsCard } from "@/components/str-regulations-card";
 import { Badge } from "@/components/ui/badge";
@@ -120,6 +124,38 @@ export function DealDetailClient({
             ? (deal.str_monthly_distribution as number[])
             : null,
           estimatedAt: deal.str_estimated_at,
+        }
+      : null;
+
+  /** Photo-condition estimate cached on the deal from a prior Analyze click. */
+  const cachedConditionEstimate: ConditionEstimatePayload | null =
+    deal.condition_estimated_at &&
+    deal.condition_rehab_suggested != null &&
+    deal.condition_maintenance_monthly_suggested != null
+      ? {
+          overall: deal.condition_overall,
+          summary: deal.condition_summary,
+          findings: Array.isArray(deal.condition_findings)
+            ? (deal.condition_findings as ConditionEstimatePayload["findings"])
+            : [],
+          rehabLow:
+            deal.condition_rehab_low != null
+              ? Number(deal.condition_rehab_low)
+              : null,
+          rehabHigh:
+            deal.condition_rehab_high != null
+              ? Number(deal.condition_rehab_high)
+              : null,
+          rehabSuggested: Number(deal.condition_rehab_suggested),
+          maintenanceMonthlySuggested: Number(
+            deal.condition_maintenance_monthly_suggested,
+          ),
+          photoCount: deal.condition_photo_count,
+          model: deal.condition_model,
+          disclaimer:
+            deal.condition_disclaimer ??
+            "Based on listing photos only — not a home inspection.",
+          estimatedAt: deal.condition_estimated_at,
         }
       : null;
 
@@ -345,6 +381,18 @@ export function DealDetailClient({
       monthlyAvgStays: schedule.monthlyAvgStays,
     });
     patch("monthlyRentLTR", String(Math.round(est.adr)));
+  }
+
+  /** Seed Improvements + Maintenance from a photo-condition analysis. */
+  function applyConditionEstimate(vals: {
+    improvements: number;
+    maintenanceMonthly: number;
+  }) {
+    setState((s) => ({
+      ...s,
+      improvements: String(Math.round(vals.improvements)),
+      maintenanceMonthly: String(Math.round(vals.maintenanceMonthly)),
+    }));
   }
 
   async function reload() {
@@ -838,6 +886,13 @@ export function DealDetailClient({
             <Field label="Price ($)" type="number" value={state.price} onChange={(e) => patch("price", e.target.value)} />
             <Field label="Down ($)" type="number" value={state.downPayment} onChange={(e) => patch("downPayment", e.target.value)} />
             <Field label="Closing costs ($)" type="number" value={state.closingCosts} onChange={(e) => patch("closingCosts", e.target.value)} hint="One-time; counts toward cash invested" />
+            <Field
+              label="Improvements / rehab ($)"
+              type="number"
+              value={state.improvements}
+              onChange={(e) => patch("improvements", e.target.value)}
+              hint="One-time CapEx; counts toward cash invested"
+            />
             <Field label="Rate APR" type="number" inputMode="decimal" value={state.rateAPR} onChange={(e) => patch("rateAPR", e.target.value)} hint="e.g. 0.075 = 7.5%" />
             <Field label="Term (yrs)" type="number" value={state.termYears} onChange={(e) => patch("termYears", e.target.value)} />
             <Field label="Tax rate" type="number" inputMode="decimal" value={state.taxRate} onChange={(e) => patch("taxRate", e.target.value)} hint="On rental profits" />
@@ -931,6 +986,13 @@ export function DealDetailClient({
             </div>
             <Field label="Utilities ($/mo)" type="number" value={state.utilitiesMonthly} onChange={(e) => patch("utilitiesMonthly", e.target.value)} />
             <Field label="Maintenance ($/mo)" type="number" value={state.maintenanceMonthly} onChange={(e) => patch("maintenanceMonthly", e.target.value)} hint="Seeded at 1%/yr of price" />
+            <div className="col-span-full">
+              <PhotoConditionEstimate
+                dealId={deal.id}
+                cached={cachedConditionEstimate}
+                onApply={applyConditionEstimate}
+              />
+            </div>
             <Field label="Misc ($/mo)" type="number" value={state.miscMonthly} onChange={(e) => patch("miscMonthly", e.target.value)} />
             <Field
               label="Mgmt fee (of revenue)"

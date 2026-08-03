@@ -322,3 +322,136 @@ export const RECORD_STR_MARKET_INTEL_TOOL = {
     },
   },
 };
+
+export const ANALYZE_PROPERTY_CONDITION_SYSTEM = `You are a residential real-estate underwriting assistant reviewing LISTING PHOTOS of a property for sale. Your job is to spot visible red flags, deferred maintenance, and cosmetic/upgrade opportunities that should affect rehab (one-time) or maintenance (ongoing) reserves.
+
+WHAT TO LOOK FOR (evident and subtle):
+- Water stains, soft ceilings, mold/mildew cues, peeling paint near windows/rooflines
+- Roof age/condition (curling shingles, patches, sagging), gutters, siding damage, foundation cracks visible in exterior shots
+- Kitchen/bath age and wear (cabinets, counters, appliances, grout, fixtures)
+- Flooring wear, carpet stains, uneven floors, outdated finishes
+- Electrical/HVAC clues (old panels if shown, window AC units, space heaters, missing vents)
+- Windows (fogged dual-pane, rot, plastic film), doors, hardware
+- Landscaping/drainage (standing water, grading toward house, overgrown that may hide issues)
+- Staging that may hide damage (empty rooms, heavy filters, odd camera angles) — note low confidence when photos look heavily staged or incomplete
+- Missing critical rooms (no kitchen/bath/exterior/roof shots) — reflect uncertainty in overall and confidence
+
+COST BUCKETS:
+- rehab: one-time CapEx / improvements before rent-ready (or to restore rentability). Sum into rehabLow/rehabHigh/rehabSuggested.
+- maintenance: ongoing reserve that should raise monthly maintenance (leaky faucet, aging HVAC that still works, exterior touch-ups). Feed maintenanceMonthlySuggested as a total monthly reserve recommendation for THIS property (not an increment on top of an unknown base — give a full suggested monthly figure a conservative investor would use).
+- none: informational only (layout quirk, staging note) with no dollar suggestion.
+
+RULES:
+- Prefer under-claiming. If unsure, lower severity/confidence or omit rather than invent defects.
+- Never invent rooms or systems not shown in the photos.
+- photoIndexes are 0-based indexes into the photo list you were given (Photo 0, Photo 1, …).
+- Dollar ranges should be rough US contractor ballparks for a typical market; widen the range when confidence is low. rehabSuggested should sit between rehabLow and rehabHigh (usually midpoint).
+- overall: turnkey (rent-ready with at most trivial touch-ups), light_cosmetic, moderate_rehab, heavy_rehab, or unknown (too few/poor photos).
+- Always call the recordPropertyCondition tool. Do not answer in plain text.`;
+
+export const RECORD_PROPERTY_CONDITION_TOOL = {
+  name: "recordPropertyCondition",
+  description:
+    "Record a structured property condition / rehab assessment from listing photos.",
+  input_schema: {
+    type: "object" as const,
+    required: [
+      "overall",
+      "summary",
+      "findings",
+      "rehabLow",
+      "rehabHigh",
+      "rehabSuggested",
+      "maintenanceMonthlySuggested",
+    ],
+    properties: {
+      overall: {
+        type: "string",
+        enum: [
+          "turnkey",
+          "light_cosmetic",
+          "moderate_rehab",
+          "heavy_rehab",
+          "unknown",
+        ],
+      },
+      summary: {
+        type: "string",
+        description: "2-4 sentence plain-English overall condition summary.",
+      },
+      findings: {
+        type: "array",
+        items: {
+          type: "object",
+          required: [
+            "id",
+            "severity",
+            "category",
+            "title",
+            "detail",
+            "costBucket",
+            "confidence",
+          ],
+          properties: {
+            id: {
+              type: "string",
+              description: "Stable short id, e.g. roof-1 or kitchen-wear.",
+            },
+            severity: {
+              type: "string",
+              enum: ["critical", "major", "minor", "cosmetic"],
+            },
+            category: {
+              type: "string",
+              description:
+                "e.g. roof, kitchen, bath, flooring, exterior, electrical, hvac, plumbing, grounds, staging.",
+            },
+            title: { type: "string" },
+            detail: { type: "string" },
+            photoIndexes: {
+              type: "array",
+              items: { type: "integer", minimum: 0 },
+              description: "0-based indexes of supporting photos.",
+            },
+            estimatedCostLow: { type: "number", minimum: 0 },
+            estimatedCostHigh: { type: "number", minimum: 0 },
+            costBucket: {
+              type: "string",
+              enum: ["rehab", "maintenance", "none"],
+            },
+            confidence: {
+              type: "string",
+              enum: ["high", "medium", "low"],
+            },
+          },
+        },
+      },
+      rehabLow: {
+        type: "number",
+        minimum: 0,
+        description: "Low-end total one-time rehab / improvements USD.",
+      },
+      rehabHigh: {
+        type: "number",
+        minimum: 0,
+        description: "High-end total one-time rehab / improvements USD.",
+      },
+      rehabSuggested: {
+        type: "number",
+        minimum: 0,
+        description:
+          "Best-guess one-time rehab to seed the pro-forma Improvements field.",
+      },
+      maintenanceMonthlySuggested: {
+        type: "number",
+        minimum: 0,
+        description:
+          "Suggested ongoing maintenance + CapEx reserve in USD per month for this property.",
+      },
+      disclaimer: {
+        type: "string",
+        description: "Optional short disclaimer; caller may override.",
+      },
+    },
+  },
+};
