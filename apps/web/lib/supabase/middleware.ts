@@ -1,7 +1,10 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/sign-in", "/auth/callback", "/api/cron"];
+// "/share" is the public deal-share landing page — the top of the signup
+// funnel. It must render for anonymous recipients or shared links die at
+// a login wall.
+const PUBLIC_PATHS = ["/sign-in", "/auth/callback", "/api/cron", "/share"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -48,9 +51,13 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user && (path === "/sign-in" || path === "/")) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/projects";
-    return NextResponse.redirect(url);
+    // Honor ?next= (e.g. a shared deal page) so already-signed-in users
+    // clicking "unlock" land where they intended, not on /projects.
+    // Same-origin relative paths only — never redirect off-site.
+    const next = request.nextUrl.searchParams.get("next");
+    const target =
+      next && next.startsWith("/") && !next.startsWith("//") ? next : "/projects";
+    return NextResponse.redirect(new URL(target, request.url));
   }
 
   return response;

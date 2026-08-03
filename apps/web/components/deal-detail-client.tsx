@@ -477,10 +477,28 @@ export function DealDetailClient({
   }
 
   async function shareDeal() {
+    setBusy("share");
+    // Mint (or fetch) the public share link first — the URL is the whole
+    // point of the share: recipients without an account land on
+    // /share/[token], see the verdict, and get funneled into sign-up.
+    let shareUrl: string | null = null;
+    try {
+      const res = await fetch(`/api/deals/${deal.id}/share`, { method: "POST" });
+      if (res.ok) {
+        const body = (await res.json()) as { url?: string };
+        shareUrl = body.url ?? null;
+      }
+    } catch {
+      // Link minting is best-effort; fall back to text-only share.
+    } finally {
+      setBusy(null);
+    }
+
     const priceLabel = deal.price ? "list" : "est. value";
     const priceValue = formatMoney(deal.price ?? deal.est_value);
+    const title = `${deal.address ?? "Property"} · ${priceLabel} ${priceValue}`;
     const lines = [
-      `${deal.address ?? "Property"} · ${priceLabel} ${priceValue}`,
+      title,
       `${deal.beds ?? "?"} bd · ${deal.baths ?? "?"} ba · ${
         deal.sqft ? `${Math.round(Number(deal.sqft))} sqft` : "size unknown"
       }`,
@@ -488,15 +506,23 @@ export function DealDetailClient({
       `Pre-tax cashflow ${formatMoney(result.annualPreTaxProfit / 12)}/mo`,
       `Cash-on-cash ${formatPct(result.cashOnCashReturn)}`,
       `5-yr IRR ${result.irr5Yr !== null ? formatPct(result.irr5Yr) : "—"}`,
-      `Calculated in Papuc.`,
+      shareUrl ? `Full analysis: ${shareUrl}` : `Calculated in Papuc.`,
     ].join("\n");
 
     const nav = (typeof navigator !== "undefined" ? navigator : null) as
-      | (Navigator & { share?: (data: { text: string }) => Promise<void> })
+      | (Navigator & {
+          share?: (data: {
+            title?: string;
+            text?: string;
+            url?: string;
+          }) => Promise<void>;
+        })
       | null;
     if (nav?.share) {
       try {
-        await nav.share({ text: lines });
+        await nav.share(
+          shareUrl ? { title, text: lines, url: shareUrl } : { text: lines },
+        );
         return;
       } catch {
         // fall through to clipboard
@@ -504,7 +530,11 @@ export function DealDetailClient({
     }
     try {
       await navigator.clipboard.writeText(lines);
-      alert("Deal details copied to clipboard.");
+      alert(
+        shareUrl
+          ? "Deal summary + share link copied to clipboard."
+          : "Deal details copied to clipboard.",
+      );
     } catch {
       alert(lines);
     }
@@ -1112,7 +1142,11 @@ export function DealDetailClient({
               Save
             </Button>
           )}
-          <Button variant="secondary" onClick={shareDeal}>
+          <Button
+            variant="secondary"
+            onClick={shareDeal}
+            loading={busy === "share"}
+          >
             Share
           </Button>
           <Button variant="secondary" onClick={exportCsv} loading={busy === "export"}>
