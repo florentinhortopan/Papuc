@@ -100,26 +100,53 @@ export function PhotoConditionEstimate({
       const res = await fetch(
         `/api/deals/${dealId}/condition-estimate${refresh ? "?refresh=1" : ""}`,
       );
-      const body = await res.json();
+      // Platform timeouts (Vercel 504) often return plain text like
+      // "An error occurred with your deployment" — never call .json() blind.
+      const text = await res.text();
+      let body: Record<string, unknown> = {};
+      if (text) {
+        try {
+          body = JSON.parse(text) as Record<string, unknown>;
+        } catch {
+          const looksTimedOut =
+            res.status === 504 ||
+            res.status === 524 ||
+            /error occurred|timed out|timeout/i.test(text);
+          throw new Error(
+            looksTimedOut
+              ? "Photo analysis timed out on the server. Wait a moment and try again."
+              : text.slice(0, 240) ||
+                  `condition estimate failed (${res.status})`,
+          );
+        }
+      }
       if (!res.ok) {
-        throw new Error(body?.error ?? `condition estimate failed (${res.status})`);
+        throw new Error(
+          (typeof body.error === "string" && body.error) ||
+            `condition estimate failed (${res.status})`,
+        );
       }
       const est: ConditionEstimatePayload = {
-        overall: body.overall ?? null,
-        summary: body.summary ?? null,
-        findings: Array.isArray(body.findings) ? body.findings : [],
-        rehabLow: body.rehabLow ?? null,
-        rehabHigh: body.rehabHigh ?? null,
+        overall: (body.overall as string | null) ?? null,
+        summary: (body.summary as string | null) ?? null,
+        findings: Array.isArray(body.findings)
+          ? (body.findings as ConditionEstimatePayload["findings"])
+          : [],
+        rehabLow:
+          body.rehabLow == null ? null : Number(body.rehabLow as number),
+        rehabHigh:
+          body.rehabHigh == null ? null : Number(body.rehabHigh as number),
         rehabSuggested: Number(body.rehabSuggested ?? 0),
         maintenanceMonthlySuggested: Number(
           body.maintenanceMonthlySuggested ?? 0,
         ),
-        photoCount: body.photoCount ?? null,
-        model: body.model ?? null,
+        photoCount:
+          body.photoCount == null ? null : Number(body.photoCount as number),
+        model: (body.model as string | null) ?? null,
         disclaimer:
-          body.disclaimer ??
+          (typeof body.disclaimer === "string" && body.disclaimer) ||
           "Based on listing photos only — not a home inspection.",
-        estimatedAt: body.estimatedAt ?? null,
+        estimatedAt: (body.estimatedAt as string | null) ?? null,
       };
       setEstimate(est);
       onApply({

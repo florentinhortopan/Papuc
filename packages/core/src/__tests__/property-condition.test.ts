@@ -5,6 +5,7 @@ import { RECORD_PROPERTY_CONDITION_TOOL } from "../llm/prompts";
 import {
   CONDITION_DISCLAIMER,
   MAX_CONDITION_PHOTOS,
+  downscaleListingPhotoUrl,
   normalizePropertyConditionAssessment,
   selectConditionPhotoUrls,
 } from "../llm/property-condition";
@@ -64,6 +65,18 @@ describe("selectConditionPhotoUrls", () => {
     expect(selected).toHaveLength(MAX_CONDITION_PHOTOS);
     expect(new Set(selected).size).toBe(selected.length);
     expect(selected.every((u) => u.startsWith("https://"))).toBe(true);
+  });
+
+  it("downscales Zillow cc_ft size tokens", () => {
+    expect(
+      downscaleListingPhotoUrl(
+        "https://photos.zillowstatic.com/fp/abc-cc_ft_1536.webp",
+      ),
+    ).toBe("https://photos.zillowstatic.com/fp/abc-cc_ft_768.webp");
+    const selected = selectConditionPhotoUrls([
+      "https://photos.zillowstatic.com/fp/abc-cc_ft_1536.webp",
+    ]);
+    expect(selected[0]).toContain("cc_ft_768");
   });
 });
 

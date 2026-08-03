@@ -33,6 +33,23 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Always return JSON — Vercel platform failures otherwise surface as
+  // plain text ("An error occurred…") and break the client parser.
+  try {
+    return await handleConditionEstimate(req, params);
+  } catch (err) {
+    console.error("[condition-estimate] unhandled:", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    );
+  }
+}
+
+async function handleConditionEstimate(
+  req: Request,
+  params: Promise<{ id: string }>,
+) {
   const { id: dealId } = await params;
   const refresh = new URL(req.url).searchParams.get("refresh") === "1";
   const supabase = await createClient();
@@ -52,7 +69,17 @@ export async function GET(
     .eq("id", dealId)
     .single();
   if (error || !deal) {
-    return NextResponse.json({ error: "deal not found" }, { status: 404 });
+    // Surface schema errors (migration not applied) instead of a vague 404.
+    const msg = error?.message ?? "deal not found";
+    const missingCol = /condition_|column .* does not exist/i.test(msg);
+    return NextResponse.json(
+      {
+        error: missingCol
+          ? `Database is missing condition columns — run migrations (${msg})`
+          : msg,
+      },
+      { status: missingCol ? 500 : 404 },
+    );
   }
 
   if (deal.condition_estimated_at && !refresh) {
@@ -93,6 +120,13 @@ export async function GET(
       : typeof deal.est_value === "number" && deal.est_value > 0
         ? deal.est_value
         : undefined;
+
+  console.info(
+    "[condition-estimate] analyzing deal=%s photos=%d refresh=%s",
+    dealId,
+    photos.length,
+    refresh,
+  );
 
   try {
     const provider = new ClaudeProvider({ apiKey });
@@ -151,6 +185,7 @@ export async function GET(
       },
     });
   } catch (err) {
+    console.error("[condition-estimate] vision failed:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
       { status: 502 },

@@ -1,7 +1,11 @@
 import { z } from "zod";
 
-/** Max listing photos sent to the vision model (cost / latency cap). */
-export const MAX_CONDITION_PHOTOS = 24;
+/**
+ * Max listing photos sent to the vision model. Kept low so the Vercel
+ * serverless window (often 60s, Hobby 10s unless configured) can finish —
+ * 20+ full-res Zillow frames routinely 504 with a non-JSON platform body.
+ */
+export const MAX_CONDITION_PHOTOS = 10;
 
 export const CONDITION_DISCLAIMER =
   "Based on listing photos only — marketing shots can hide defects. Not a home inspection; verify on site before underwriting.";
@@ -72,8 +76,20 @@ export interface AnalyzePropertyConditionArgs {
 }
 
 /**
+ * Prefer smaller CDN variants so Anthropic spends less time fetching.
+ * Zillow commonly uses `-cc_ft_1536` / `-cc_ft_960` size tokens.
+ */
+export function downscaleListingPhotoUrl(url: string): string {
+  return url
+    .replace(/-cc_ft_\d+/i, "-cc_ft_768")
+    .replace(/-p_f\./i, "-p_c.")
+    .replace(/-uncapped\./i, "-cc_ft_768.");
+}
+
+/**
  * Deduplicate and cap photo URLs for vision analysis. Always keeps the
  * first URL (cover) when present, then fills up to `max` unique https URLs.
+ * Applies {@link downscaleListingPhotoUrl} so remote fetches stay light.
  */
 export function selectConditionPhotoUrls(
   photoUrls: string[],
@@ -83,7 +99,7 @@ export function selectConditionPhotoUrls(
   const seen = new Set<string>();
   for (const raw of photoUrls) {
     if (typeof raw !== "string") continue;
-    const url = raw.trim();
+    const url = downscaleListingPhotoUrl(raw.trim());
     if (!/^https?:\/\//i.test(url)) continue;
     if (seen.has(url)) continue;
     seen.add(url);
