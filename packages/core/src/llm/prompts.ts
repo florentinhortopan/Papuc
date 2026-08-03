@@ -344,9 +344,10 @@ COST BUCKETS:
 RULES:
 - Prefer under-claiming. If unsure, lower severity/confidence or omit rather than invent defects.
 - Never invent rooms or systems not shown in the photos.
-- photoIndexes are 0-based indexes into the photo list you were given (Photo 0, Photo 1, …).
-- Dollar ranges should be rough US contractor ballparks for a typical market; widen the range when confidence is low. rehabSuggested should sit between rehabLow and rehabHigh (usually midpoint).
-- overall: turnkey (rent-ready with at most trivial touch-ups), light_cosmetic, moderate_rehab, heavy_rehab, or unknown (too few/poor photos).
+- photoIndexes are 0-based indexes into the photo list you were given in THIS request (Photo 0, Photo 1, …) — not the full listing gallery.
+- You may receive only one batch of a larger gallery; do not assume unseen rooms are fine or damaged.
+- Dollar ranges should be rough US contractor ballparks for a typical market; widen the range when confidence is low. rehabSuggested should sit between rehabLow and rehabHigh (usually midpoint). For a batch, rehab* should cover only issues in THESE photos.
+- overall: turnkey (rent-ready with at most trivial touch-ups), light_cosmetic, moderate_rehab, heavy_rehab, or unknown (too few/poor photos). For a partial batch, overall reflects only what you see here.
 - Always call the recordPropertyCondition tool. Do not answer in plain text.`;
 
 export const RECORD_PROPERTY_CONDITION_TOOL = {

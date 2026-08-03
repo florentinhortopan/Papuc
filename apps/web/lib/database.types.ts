@@ -90,6 +90,11 @@ export type DealsRow = {
   condition_model: string | null;
   condition_disclaimer: string | null;
   condition_estimated_at: string | null;
+  /** running | complete | null — multi-batch vision progress. */
+  condition_status: string | null;
+  condition_photos_total: number | null;
+  /** Next 0-based gallery index for the next vision batch. */
+  condition_cursor: number | null;
   /** Unguessable slug for the public /share/[token] page. Null until the
    *  owner shares the deal for the first time. */
   share_token: string | null;

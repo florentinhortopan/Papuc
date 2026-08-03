@@ -36,9 +36,17 @@ export interface ConditionEstimatePayload {
   rehabSuggested: number;
   maintenanceMonthlySuggested: number;
   photoCount: number | null;
+  photosTotal?: number | null;
   model: string | null;
   disclaimer: string;
   estimatedAt: string | null;
+  done?: boolean;
+  progress?: {
+    analyzed: number;
+    total: number;
+    batchIndex?: number | null;
+    batchCount?: number | null;
+  } | null;
 }
 
 export interface ConditionApplyPayload {
@@ -69,11 +77,77 @@ function severityVariant(
   }
 }
 
+function parseConditionBody(body: Record<string, unknown>): ConditionEstimatePayload {
+  return {
+    overall: (body.overall as string | null) ?? null,
+    summary: (body.summary as string | null) ?? null,
+    findings: Array.isArray(body.findings)
+      ? (body.findings as ConditionEstimatePayload["findings"])
+      : [],
+    rehabLow: body.rehabLow == null ? null : Number(body.rehabLow as number),
+    rehabHigh:
+      body.rehabHigh == null ? null : Number(body.rehabHigh as number),
+    rehabSuggested: Number(body.rehabSuggested ?? 0),
+    maintenanceMonthlySuggested: Number(
+      body.maintenanceMonthlySuggested ?? 0,
+    ),
+    photoCount:
+      body.photoCount == null ? null : Number(body.photoCount as number),
+    photosTotal:
+      body.photosTotal == null ? null : Number(body.photosTotal as number),
+    model: (body.model as string | null) ?? null,
+    disclaimer:
+      (typeof body.disclaimer === "string" && body.disclaimer) ||
+      "Based on listing photos only — not a home inspection.",
+    estimatedAt: (body.estimatedAt as string | null) ?? null,
+    done: body.done !== false,
+    progress:
+      body.progress && typeof body.progress === "object"
+        ? (body.progress as ConditionEstimatePayload["progress"])
+        : null,
+  };
+}
+
+async function fetchConditionJson(
+  dealId: string,
+  refresh: boolean,
+): Promise<ConditionEstimatePayload> {
+  const res = await fetch(
+    `/api/deals/${dealId}/condition-estimate${refresh ? "?refresh=1" : ""}`,
+  );
+  // Platform timeouts (Vercel 504) often return plain text like
+  // "An error occurred with your deployment" — never call .json() blind.
+  const text = await res.text();
+  let body: Record<string, unknown> = {};
+  if (text) {
+    try {
+      body = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      const looksTimedOut =
+        res.status === 504 ||
+        res.status === 524 ||
+        /error occurred|timed out|timeout/i.test(text);
+      throw new Error(
+        looksTimedOut
+          ? "Photo analysis timed out on the server. Wait a moment and try again — progress is saved, click Analyze to resume."
+          : text.slice(0, 240) ||
+              `condition estimate failed (${res.status})`,
+      );
+    }
+  }
+  if (!res.ok) {
+    throw new Error(
+      (typeof body.error === "string" && body.error) ||
+        `condition estimate failed (${res.status})`,
+    );
+  }
+  return parseConditionBody(body);
+}
+
 /**
- * On-demand listing-photo condition / rehab widget. First click runs
- * Claude vision against cached HasData photo URLs; the result is stored
- * on the deal. Fetch success auto-applies suggested Improvements +
- * Maintenance via `onApply` (user can still edit the fields).
+ * On-demand listing-photo condition / rehab widget. Walks the full
+ * gallery in serverless-safe batches; the UI auto-continues until done.
+ * Final success auto-applies Improvements + Maintenance via `onApply`.
  *
  * BILLING: UI copy marks this as premium; server-side subscription gate
  * lands with Stripe metering.
@@ -92,73 +166,48 @@ export function PhotoConditionEstimate({
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progressLabel, setProgressLabel] = useState<string | null>(null);
 
-  async function fetchEstimate(refresh: boolean) {
+  async function runAnalysis(refresh: boolean) {
     setLoading(true);
     setError(null);
+    setProgressLabel(refresh ? "Starting full gallery analysis…" : "Analyzing…");
     try {
-      const res = await fetch(
-        `/api/deals/${dealId}/condition-estimate${refresh ? "?refresh=1" : ""}`,
-      );
-      // Platform timeouts (Vercel 504) often return plain text like
-      // "An error occurred with your deployment" — never call .json() blind.
-      const text = await res.text();
-      let body: Record<string, unknown> = {};
-      if (text) {
-        try {
-          body = JSON.parse(text) as Record<string, unknown>;
-        } catch {
-          const looksTimedOut =
-            res.status === 504 ||
-            res.status === 524 ||
-            /error occurred|timed out|timeout/i.test(text);
-          throw new Error(
-            looksTimedOut
-              ? "Photo analysis timed out on the server. Wait a moment and try again."
-              : text.slice(0, 240) ||
-                  `condition estimate failed (${res.status})`,
-          );
-        }
+      let est = await fetchConditionJson(dealId, refresh);
+      setEstimate(est);
+      // Continue until the server reports done (one batch per request).
+      let guard = 0;
+      while (est.done === false && guard < 40) {
+        guard += 1;
+        const analyzed = est.progress?.analyzed ?? est.photoCount ?? 0;
+        const total = est.progress?.total ?? est.photosTotal ?? "?";
+        setProgressLabel(`Analyzing photos ${analyzed} of ${total}…`);
+        est = await fetchConditionJson(dealId, false);
+        setEstimate(est);
       }
-      if (!res.ok) {
+      if (est.done === false) {
         throw new Error(
-          (typeof body.error === "string" && body.error) ||
-            `condition estimate failed (${res.status})`,
+          "Analysis is still in progress after many batches — click Analyze photos to resume.",
         );
       }
-      const est: ConditionEstimatePayload = {
-        overall: (body.overall as string | null) ?? null,
-        summary: (body.summary as string | null) ?? null,
-        findings: Array.isArray(body.findings)
-          ? (body.findings as ConditionEstimatePayload["findings"])
-          : [],
-        rehabLow:
-          body.rehabLow == null ? null : Number(body.rehabLow as number),
-        rehabHigh:
-          body.rehabHigh == null ? null : Number(body.rehabHigh as number),
-        rehabSuggested: Number(body.rehabSuggested ?? 0),
-        maintenanceMonthlySuggested: Number(
-          body.maintenanceMonthlySuggested ?? 0,
-        ),
-        photoCount:
-          body.photoCount == null ? null : Number(body.photoCount as number),
-        model: (body.model as string | null) ?? null,
-        disclaimer:
-          (typeof body.disclaimer === "string" && body.disclaimer) ||
-          "Based on listing photos only — not a home inspection.",
-        estimatedAt: (body.estimatedAt as string | null) ?? null,
-      };
-      setEstimate(est);
+      setProgressLabel(null);
       onApply({
         improvements: est.rehabSuggested,
         maintenanceMonthly: est.maintenanceMonthlySuggested,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setProgressLabel(null);
     } finally {
       setLoading(false);
     }
   }
+
+  const photosTotal =
+    estimate?.photosTotal ?? estimate?.progress?.total ?? null;
+  const photosAnalyzed =
+    estimate?.photoCount ?? estimate?.progress?.analyzed ?? null;
+  const isComplete = Boolean(estimate?.estimatedAt && estimate.done !== false);
 
   return (
     <div className="bg-surfaceAlt border border-border rounded-xl p-3 space-y-2">
@@ -166,16 +215,22 @@ export function PhotoConditionEstimate({
         <p className="text-text text-xs font-semibold">
           Photo condition analysis
         </p>
-        {estimate ? (
+        {isComplete ? (
           <Badge variant="success">
-            {OVERALL_LABEL[estimate.overall ?? ""] ?? "Analyzed"}
+            {OVERALL_LABEL[estimate?.overall ?? ""] ?? "Analyzed"}
           </Badge>
+        ) : loading ? (
+          <Badge variant="warning">Analyzing…</Badge>
         ) : (
           <Badge>premium · opt-in</Badge>
         )}
       </div>
 
-      {estimate ? (
+      {loading && progressLabel ? (
+        <p className="text-text text-xs font-medium">{progressLabel}</p>
+      ) : null}
+
+      {estimate && (isComplete || loading) ? (
         <>
           <div className="grid grid-cols-2 gap-2 text-center">
             <div>
@@ -205,7 +260,7 @@ export function PhotoConditionEstimate({
             <p className="text-text text-xs leading-5">{estimate.summary}</p>
           ) : null}
 
-          {estimate.findings.length > 0 ? (
+          {isComplete && estimate.findings.length > 0 ? (
             <ul className="max-h-48 overflow-y-auto space-y-2 pr-1">
               {estimate.findings.map((f) => (
                 <li
@@ -247,56 +302,64 @@ export function PhotoConditionEstimate({
             </ul>
           ) : null}
 
-          <p className="text-textMuted text-[11px] leading-4 italic">
-            {estimate.disclaimer}
-          </p>
+          {isComplete ? (
+            <>
+              <p className="text-textMuted text-[11px] leading-4 italic">
+                {estimate.disclaimer}
+              </p>
 
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-textMuted text-[11px]">
-              {estimate.photoCount
-                ? `${estimate.photoCount} photos. `
-                : ""}
-              {estimate.estimatedAt
-                ? `Analyzed ${new Date(estimate.estimatedAt).toLocaleDateString()}.`
-                : ""}
-            </p>
-            <div className="flex gap-2 shrink-0">
-              <button
-                type="button"
-                className="text-xs text-accent hover:underline"
-                onClick={() =>
-                  onApply({
-                    improvements: estimate.rehabSuggested,
-                    maintenanceMonthly: estimate.maintenanceMonthlySuggested,
-                  })
-                }
-              >
-                Apply
-              </button>
-              <button
-                type="button"
-                className="text-xs text-textMuted hover:underline disabled:opacity-50"
-                disabled={loading}
-                onClick={() => fetchEstimate(true)}
-                title="Re-run Claude vision on listing photos"
-              >
-                {loading ? "Refreshing…" : "Refresh"}
-              </button>
-            </div>
-          </div>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-textMuted text-[11px]">
+                  {photosAnalyzed != null && photosTotal != null
+                    ? `${photosAnalyzed} of ${photosTotal} photos. `
+                    : photosAnalyzed != null
+                      ? `${photosAnalyzed} photos. `
+                      : ""}
+                  {estimate.estimatedAt
+                    ? `Analyzed ${new Date(estimate.estimatedAt).toLocaleDateString()}.`
+                    : ""}
+                </p>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    className="text-xs text-accent hover:underline"
+                    onClick={() =>
+                      onApply({
+                        improvements: estimate.rehabSuggested,
+                        maintenanceMonthly:
+                          estimate.maintenanceMonthlySuggested,
+                      })
+                    }
+                  >
+                    Apply
+                  </button>
+                  <button
+                    type="button"
+                    className="text-xs text-textMuted hover:underline disabled:opacity-50"
+                    disabled={loading}
+                    onClick={() => runAnalysis(true)}
+                    title="Re-run Claude vision on the full listing gallery"
+                  >
+                    {loading ? "Refreshing…" : "Refresh"}
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : null}
         </>
-      ) : (
+      ) : !loading ? (
         <>
           <p className="text-textMuted text-xs leading-5">
-            Have Claude review the listing photos for red flags, deferred
-            maintenance, and rough rehab vs. ongoing maintenance costs. Results
-            auto-fill Improvements and Maintenance — you can edit afterward.
+            Have Claude review the full listing photo gallery for red flags,
+            deferred maintenance, and rough rehab vs. ongoing maintenance
+            costs. Large galleries are analyzed in batches so every photo is
+            covered. Results auto-fill Improvements and Maintenance.
           </p>
           <Button
             size="sm"
             variant="secondary"
             loading={loading}
-            onClick={() => fetchEstimate(false)}
+            onClick={() => runAnalysis(false)}
           >
             Analyze photos
           </Button>
@@ -305,7 +368,7 @@ export function PhotoConditionEstimate({
             (billing coming soon).
           </p>
         </>
-      )}
+      ) : null}
 
       {error ? <p className="text-danger text-xs">{error}</p> : null}
     </div>

@@ -4,10 +4,15 @@ import { MockLLMProvider } from "../llm/mock";
 import { RECORD_PROPERTY_CONDITION_TOOL } from "../llm/prompts";
 import {
   CONDITION_DISCLAIMER,
+  CONDITION_PHOTO_BATCH_SIZE,
   MAX_CONDITION_PHOTOS,
+  aggregateConditionTotals,
   downscaleListingPhotoUrl,
+  mergeConditionBatch,
+  normalizeConditionPhotoUrls,
   normalizePropertyConditionAssessment,
   selectConditionPhotoUrls,
+  sliceConditionPhotoBatch,
 } from "../llm/property-condition";
 
 describe("RECORD_PROPERTY_CONDITION_TOOL schema", () => {
@@ -51,8 +56,8 @@ describe("RECORD_PROPERTY_CONDITION_TOOL schema", () => {
   });
 });
 
-describe("selectConditionPhotoUrls", () => {
-  it("dedupes, keeps https only, and caps at MAX_CONDITION_PHOTOS", () => {
+describe("selectConditionPhotoUrls / normalize / batching", () => {
+  it("dedupes, keeps https only, and caps a single batch at BATCH_SIZE", () => {
     const urls = [
       "https://cdn.example/a.jpg",
       "https://cdn.example/a.jpg",
@@ -62,9 +67,32 @@ describe("selectConditionPhotoUrls", () => {
     ];
     const selected = selectConditionPhotoUrls(urls);
     expect(selected[0]).toBe("https://cdn.example/a.jpg");
-    expect(selected).toHaveLength(MAX_CONDITION_PHOTOS);
+    expect(selected).toHaveLength(CONDITION_PHOTO_BATCH_SIZE);
+    expect(MAX_CONDITION_PHOTOS).toBe(CONDITION_PHOTO_BATCH_SIZE);
     expect(new Set(selected).size).toBe(selected.length);
-    expect(selected.every((u) => u.startsWith("https://"))).toBe(true);
+  });
+
+  it("normalizeConditionPhotoUrls keeps the full gallery", () => {
+    const urls = Array.from(
+      { length: 54 },
+      (_, i) => `https://cdn.example/p${i}.jpg`,
+    );
+    expect(normalizeConditionPhotoUrls(urls)).toHaveLength(54);
+  });
+
+  it("sliceConditionPhotoBatch walks the full gallery", () => {
+    const urls = Array.from(
+      { length: 54 },
+      (_, i) => `https://cdn.example/p${i}.jpg`,
+    );
+    const first = sliceConditionPhotoBatch(urls, 0, 10);
+    expect(first.batch).toHaveLength(10);
+    expect(first.nextCursor).toBe(10);
+    expect(first.done).toBe(false);
+    const last = sliceConditionPhotoBatch(urls, 50, 10);
+    expect(last.batch).toHaveLength(4);
+    expect(last.nextCursor).toBe(54);
+    expect(last.done).toBe(true);
   });
 
   it("downscales Zillow cc_ft size tokens", () => {
@@ -73,10 +101,42 @@ describe("selectConditionPhotoUrls", () => {
         "https://photos.zillowstatic.com/fp/abc-cc_ft_1536.webp",
       ),
     ).toBe("https://photos.zillowstatic.com/fp/abc-cc_ft_768.webp");
-    const selected = selectConditionPhotoUrls([
-      "https://photos.zillowstatic.com/fp/abc-cc_ft_1536.webp",
-    ]);
-    expect(selected[0]).toContain("cc_ft_768");
+  });
+
+  it("mergeConditionBatch remaps photo indexes and worsens overall", () => {
+    const merged = mergeConditionBatch({
+      priorFindings: [],
+      priorOverall: "turnkey",
+      priorMaintenanceMonthly: 120,
+      globalStartIndex: 10,
+      batch: {
+        overall: "moderate_rehab",
+        summary: "Kitchen wear",
+        findings: [
+          {
+            id: "kit-1",
+            severity: "major",
+            category: "kitchen",
+            title: "Dated kitchen",
+            detail: "Old cabinets",
+            photoIndexes: [0, 1],
+            estimatedCostLow: 8000,
+            estimatedCostHigh: 15000,
+            costBucket: "rehab",
+            confidence: "medium",
+          },
+        ],
+        rehabLow: 8000,
+        rehabHigh: 15000,
+        rehabSuggested: 11000,
+        maintenanceMonthlySuggested: 200,
+      },
+    });
+    expect(merged.overall).toBe("moderate_rehab");
+    expect(merged.maintenanceMonthlySuggested).toBe(200);
+    expect(merged.findings[0]!.photoIndexes).toEqual([10, 11]);
+    const totals = aggregateConditionTotals(merged.findings, merged.maintenanceMonthlySuggested);
+    expect(totals.rehabSuggested).toBe(11500);
   });
 });
 

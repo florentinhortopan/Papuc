@@ -1,18 +1,10 @@
 "use client";
 
 import {
-  assumeHoaMonthly,
   computeAutoPMIRateFromLoan,
   computeBreakevenADR,
   computeProForma,
-  DEFAULT_CLOSING_COSTS_PCT,
-  DEFAULT_LTR_MANAGEMENT_FEE_RATE,
   DEFAULT_LTR_VACANCY_RATE,
-  DEFAULT_STR_MANAGEMENT_FEE_RATE,
-  defaultStrSchedule,
-  estimateMaintenanceMonthly,
-  insuranceRateForState,
-  propertyTaxRateForState,
   solveBreakevenDownPayment,
   solveBreakevenPrice,
   solveBreakevenRent,
@@ -57,6 +49,7 @@ import {
 } from "@/lib/scenarios";
 import { getDealSourceLink } from "@/lib/source-url";
 import { createClient } from "@/lib/supabase/client";
+import { underwriteSeeds } from "@/lib/underwrite";
 
 interface ProFormaState {
   price: string;
@@ -127,9 +120,10 @@ export function DealDetailClient({
         }
       : null;
 
-  /** Photo-condition estimate cached on the deal from a prior Analyze click. */
+  /** Completed photo-condition estimate cached on the deal (full gallery). */
   const cachedConditionEstimate: ConditionEstimatePayload | null =
     deal.condition_estimated_at &&
+    (deal.condition_status === "complete" || deal.condition_status == null) &&
     deal.condition_rehab_suggested != null &&
     deal.condition_maintenance_monthly_suggested != null
       ? {
@@ -151,92 +145,66 @@ export function DealDetailClient({
             deal.condition_maintenance_monthly_suggested,
           ),
           photoCount: deal.condition_photo_count,
+          photosTotal: deal.condition_photos_total,
           model: deal.condition_model,
           disclaimer:
             deal.condition_disclaimer ??
             "Based on listing photos only — not a home inspection.",
           estimatedAt: deal.condition_estimated_at,
+          done: true,
         }
       : null;
 
   /**
-   * Seed the STR matrix with the SAME priority chain the scout uses:
-   * cached AirROI comps estimate → rent heuristic clamped to the
-   * researched market ADR range → plain rent heuristic. Any drift here
-   * makes the deal card (scout numbers) and this page disagree on
-   * cashflow for the same listing — that class of bug has bitten twice
-   * (est_rent/30 seeding, then market-clamping only at scout time), so
-   * the seed and the scout must always route through the same helpers.
+   * All default assumptions come from the shared `underwriteSeeds`
+   * helper — the SAME function the public share page computes its live
+   * verdict from, mirroring what the scout underwrote at scout time.
+   * Any drift between these surfaces makes the deal card, the share
+   * page, and this editor disagree on cashflow for the same listing —
+   * that class of bug has bitten three times now (est_rent/30 seeding,
+   * market-clamping only at scout time, share page quoting stale
+   * deal_scores after the cost model evolved). Seed ONLY through the
+   * helper.
    */
-  const seedMonthlyRent = Number(deal.est_rent ?? 2500);
-  const [strMatrix, setStrMatrix] = useState<StrMatrixValue>(() => {
-    if (project.constraints.strategy !== "STR") {
-      return defaultStrMatrix(seedMonthlyRent / 30 || 200);
-    }
-    const schedule = cachedStrEstimate
-      ? strScheduleFromEstimate({
-          adr: cachedStrEstimate.adr,
-          occupancy: cachedStrEstimate.occupancy,
-          monthlyRevenueDistribution:
-            cachedStrEstimate.monthlyRevenueDistribution,
-        })
-      : defaultStrSchedule(seedMonthlyRent, marketAdrIntel ?? undefined);
-    return {
-      monthlyNights: schedule.monthlyNights,
-      monthlyADR: schedule.monthlyADR.map((a) => a || 200),
-      monthlyOccupancy: schedule.monthlyOccupancy,
-      monthlyAvgStays: schedule.monthlyAvgStays,
-    };
-  });
+  const seeds = underwriteSeeds(
+    deal,
+    project.constraints,
+    marketAdrIntel ?? undefined,
+  );
+  const seedMonthlyRent = seeds.monthlyRent;
+  const [strMatrix, setStrMatrix] = useState<StrMatrixValue>(() =>
+    seeds.strSchedule
+      ? {
+          monthlyNights: seeds.strSchedule.monthlyNights,
+          monthlyADR: seeds.strSchedule.monthlyADR,
+          monthlyOccupancy: seeds.strSchedule.monthlyOccupancy,
+          monthlyAvgStays: seeds.strSchedule.monthlyAvgStays,
+        }
+      : defaultStrMatrix(seedMonthlyRent / 30 || 200),
+  );
   const seedAdr =
     project.constraints.strategy === "STR"
       ? strMatrix.monthlyADR[0] || 200
       : seedMonthlyRent / 30 || 200;
   const [state, setState] = useState<ProFormaState>(() => {
     const c = project.constraints;
-    const seedPrice = Number(deal.price ?? c.priceMax ?? 400000);
-    const fallbackDown = seedPrice * (1 - c.mortgage.ltv);
-    // Every seed below must mirror what the scout underwrote this deal at
-    // (see lib/scouting.ts) or the card and this page will disagree:
-    // state-aware insurance + property tax rates, price-scaled
-    // maintenance, assumed HOA for condos with unreported fees, and 3%
-    // closing costs.
-    const seedInsuranceAnnual = Math.max(
-      400,
-      Math.round(seedPrice * insuranceRateForState(deal.state)),
-    );
-    const seedTaxRate =
-      deal.property_tax_rate != null
-        ? Number(deal.property_tax_rate)
-        : propertyTaxRateForState(deal.state);
-    const homeType =
-      deal.mls_data &&
-      typeof (deal.mls_data as Record<string, unknown>).homeType === "string"
-        ? ((deal.mls_data as Record<string, unknown>).homeType as string)
-        : null;
     return {
-      price: String(seedPrice),
-      downPayment: String(c.downPayment ?? fallbackDown ?? 0),
+      price: String(seeds.price),
+      downPayment: String(seeds.downPayment),
       improvements: "0",
-      closingCosts: String(Math.round(seedPrice * DEFAULT_CLOSING_COSTS_PCT)),
+      closingCosts: String(seeds.closingCosts),
       taxRate: "0.30",
-      rateAPR: c.mortgage.rateAPR.toFixed(4),
-      termYears: String(c.mortgage.termYears),
-      propertyTaxRatePct: String(seedTaxRate),
-      insuranceAnnual: String(seedInsuranceAnnual),
-      hoaMonthly: String(deal.hoa_monthly ?? assumeHoaMonthly(homeType)),
+      rateAPR: seeds.rateAPR.toFixed(4),
+      termYears: String(seeds.termYears),
+      propertyTaxRatePct: String(seeds.propertyTaxRatePct),
+      insuranceAnnual: String(seeds.insuranceAnnual),
+      hoaMonthly: String(seeds.hoaMonthly),
       pmiOverride: null,
-      utilitiesMonthly: c.strategy === "STR" ? "400" : "0",
-      maintenanceMonthly: String(
-        Math.round(estimateMaintenanceMonthly(seedPrice)),
-      ),
-      miscMonthly: "100",
-      managementFeePct: String(
-        c.strategy === "STR"
-          ? DEFAULT_STR_MANAGEMENT_FEE_RATE
-          : DEFAULT_LTR_MANAGEMENT_FEE_RATE,
-      ),
-      vacancyRateLTR: String(DEFAULT_LTR_VACANCY_RATE),
+      utilitiesMonthly: String(seeds.utilitiesMonthly),
+      maintenanceMonthly: String(seeds.maintenanceMonthly),
+      miscMonthly: String(seeds.miscMonthly),
+      managementFeePct: String(seeds.managementFeeRate),
+      vacancyRateLTR: String(seeds.vacancyRateLTR),
       // In STR mode this field is the "ADR baseline" used by the
       // patchRentOrAdr handler to broadcast a single daily rate into all
       // 12 matrix cells — seed it from the same per-night value that
@@ -305,6 +273,7 @@ export function DealDetailClient({
       taxRate: toNum(state.taxRate, 0.3),
       rateAPR: toNum(state.rateAPR, 0.075),
       termYears: toNum(state.termYears, 30),
+      interestOnly: project.constraints.mortgage?.interestOnly ?? false,
       propertyTaxRatePct: toNum(state.propertyTaxRatePct, 0.011),
       insuranceMonthly: derived.insuranceMonthly,
       hoaMonthly: toNum(state.hoaMonthly, 0),

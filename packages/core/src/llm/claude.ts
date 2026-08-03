@@ -11,8 +11,8 @@ import {
   RESEARCH_STR_MARKET_SYSTEM,
 } from "./prompts";
 import {
+  downscaleListingPhotoUrl,
   normalizePropertyConditionAssessment,
-  selectConditionPhotoUrls,
   type AnalyzePropertyConditionArgs,
   type PropertyConditionAssessment,
 } from "./property-condition";
@@ -153,7 +153,10 @@ export class ClaudeProvider implements LLMProvider {
   async analyzePropertyCondition(
     args: AnalyzePropertyConditionArgs,
   ): Promise<PropertyConditionAssessment> {
-    const photoUrls = selectConditionPhotoUrls(args.photoUrls);
+    // Caller supplies a batch (already capped). Only normalize/downscale here.
+    const photoUrls = args.photoUrls
+      .map((u) => downscaleListingPhotoUrl(String(u).trim()))
+      .filter((u) => /^https?:\/\//i.test(u));
     if (photoUrls.length === 0) {
       throw new Error("no usable photo URLs to analyze");
     }
@@ -200,16 +203,19 @@ export class ClaudeProvider implements LLMProvider {
       }
     }
 
+    const batch = args.batch;
     const contextLines = [
       "Analyze the listing photos above for property condition, red flags, and rehab/maintenance cost implications.",
-      `Photo count: ${imageBlocks.length} (indexes 0..${imageBlocks.length - 1}).`,
+      batch
+        ? `This is batch ${batch.batchIndex + 1} of ${batch.batchCount} (gallery photos ${batch.globalStartIndex}–${batch.globalStartIndex + imageBlocks.length - 1} of ${batch.totalPhotos}). photoIndexes in findings are 0-based within THIS batch only.`
+        : `Photo count: ${imageBlocks.length} (indexes 0..${imageBlocks.length - 1}).`,
       args.address ? `Address: ${args.address}` : null,
       args.beds != null ? `Beds: ${args.beds}` : null,
       args.baths != null ? `Baths: ${args.baths}` : null,
       args.sqft != null ? `Sqft: ${args.sqft}` : null,
       args.yearBuilt != null ? `Year built: ${args.yearBuilt}` : null,
       args.price != null ? `List/est. price: $${Math.round(args.price)}` : null,
-      "Call recordPropertyCondition with your assessment.",
+      "Report only issues visible in these photos. Call recordPropertyCondition with your assessment.",
     ].filter(Boolean);
 
     const content: Anthropic.ContentBlockParam[] = [

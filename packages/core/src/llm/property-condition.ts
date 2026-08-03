@@ -1,11 +1,14 @@
 import { z } from "zod";
 
 /**
- * Max listing photos sent to the vision model. Kept low so the Vercel
- * serverless window (often 60s, Hobby 10s unless configured) can finish —
- * 20+ full-res Zillow frames routinely 504 with a non-JSON platform body.
+ * Photos per vision API call. Kept small so each Vercel invocation
+ * finishes inside maxDuration; the client continues until the full
+ * gallery is covered. Not an Anthropic hard limit.
  */
-export const MAX_CONDITION_PHOTOS = 10;
+export const CONDITION_PHOTO_BATCH_SIZE = 10;
+
+/** @deprecated Use CONDITION_PHOTO_BATCH_SIZE — alias for older imports/tests. */
+export const MAX_CONDITION_PHOTOS = CONDITION_PHOTO_BATCH_SIZE;
 
 export const CONDITION_DISCLAIMER =
   "Based on listing photos only — marketing shots can hide defects. Not a home inspection; verify on site before underwriting.";
@@ -73,6 +76,13 @@ export interface AnalyzePropertyConditionArgs {
   sqft?: number;
   yearBuilt?: number;
   price?: number;
+  /** When set, photos are one batch of a larger gallery. */
+  batch?: {
+    globalStartIndex: number;
+    totalPhotos: number;
+    batchIndex: number;
+    batchCount: number;
+  };
 }
 
 /**
@@ -87,14 +97,9 @@ export function downscaleListingPhotoUrl(url: string): string {
 }
 
 /**
- * Deduplicate and cap photo URLs for vision analysis. Always keeps the
- * first URL (cover) when present, then fills up to `max` unique https URLs.
- * Applies {@link downscaleListingPhotoUrl} so remote fetches stay light.
+ * Deduplicate + downscale the full gallery (no batch cap).
  */
-export function selectConditionPhotoUrls(
-  photoUrls: string[],
-  max: number = MAX_CONDITION_PHOTOS,
-): string[] {
+export function normalizeConditionPhotoUrls(photoUrls: string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const raw of photoUrls) {
@@ -104,9 +109,149 @@ export function selectConditionPhotoUrls(
     if (seen.has(url)) continue;
     seen.add(url);
     out.push(url);
-    if (out.length >= max) break;
   }
   return out;
+}
+
+/**
+ * First `max` normalized URLs — used for single-shot / test helpers.
+ * Production multi-batch flow uses {@link normalizeConditionPhotoUrls} + slices.
+ */
+export function selectConditionPhotoUrls(
+  photoUrls: string[],
+  max: number = CONDITION_PHOTO_BATCH_SIZE,
+): string[] {
+  return normalizeConditionPhotoUrls(photoUrls).slice(0, max);
+}
+
+export function sliceConditionPhotoBatch(
+  allUrls: string[],
+  cursor: number,
+  batchSize: number = CONDITION_PHOTO_BATCH_SIZE,
+): { batch: string[]; nextCursor: number; done: boolean } {
+  const start = Math.max(0, Math.min(cursor, allUrls.length));
+  const batch = allUrls.slice(start, start + batchSize);
+  const nextCursor = start + batch.length;
+  return {
+    batch,
+    nextCursor,
+    done: nextCursor >= allUrls.length,
+  };
+}
+
+const OVERALL_RANK: Record<ConditionOverall, number> = {
+  turnkey: 0,
+  light_cosmetic: 1,
+  moderate_rehab: 2,
+  heavy_rehab: 3,
+  unknown: 1,
+};
+
+export function worseConditionOverall(
+  a: ConditionOverall,
+  b: ConditionOverall,
+): ConditionOverall {
+  return OVERALL_RANK[a] >= OVERALL_RANK[b] ? a : b;
+}
+
+/**
+ * Remap a batch assessment onto the global gallery index space and
+ * merge with prior findings.
+ */
+export function mergeConditionBatch(args: {
+  priorFindings: ConditionFinding[];
+  batch: PropertyConditionAssessment;
+  globalStartIndex: number;
+  priorOverall?: ConditionOverall | null;
+  priorMaintenanceMonthly?: number | null;
+}): {
+  findings: ConditionFinding[];
+  overall: ConditionOverall;
+  maintenanceMonthlySuggested: number;
+} {
+  const remapped = args.batch.findings.map((f, i) => ({
+    ...f,
+    id: `b${args.globalStartIndex}-${f.id || i}`,
+    photoIndexes: (f.photoIndexes ?? []).map(
+      (idx) => idx + args.globalStartIndex,
+    ),
+  }));
+
+  const findings = [...args.priorFindings, ...remapped].slice(0, 100);
+  const priorOverall = args.priorOverall ?? "unknown";
+  const overall = worseConditionOverall(priorOverall, args.batch.overall);
+  const maintenanceMonthlySuggested = Math.max(
+    args.priorMaintenanceMonthly ?? 0,
+    args.batch.maintenanceMonthlySuggested,
+  );
+
+  return { findings, overall, maintenanceMonthlySuggested };
+}
+
+/**
+ * Roll up dollar totals from merged findings (+ fallback maintenance).
+ */
+export function aggregateConditionTotals(
+  findings: ConditionFinding[],
+  maintenanceMonthlySuggested: number,
+): Pick<
+  PropertyConditionAssessment,
+  "rehabLow" | "rehabHigh" | "rehabSuggested" | "maintenanceMonthlySuggested"
+> {
+  let rehabLow = 0;
+  let rehabHigh = 0;
+  let rehabSuggested = 0;
+  let rehabCount = 0;
+
+  for (const f of findings) {
+    if (f.costBucket !== "rehab") continue;
+    const lo = f.estimatedCostLow ?? f.estimatedCostHigh ?? 0;
+    const hi = f.estimatedCostHigh ?? f.estimatedCostLow ?? 0;
+    if (lo <= 0 && hi <= 0) continue;
+    rehabLow += lo;
+    rehabHigh += Math.max(lo, hi);
+    rehabSuggested += Math.round((lo + Math.max(lo, hi)) / 2);
+    rehabCount += 1;
+  }
+
+  if (rehabCount === 0) {
+    rehabLow = 0;
+    rehabHigh = 0;
+    rehabSuggested = 0;
+  }
+
+  if (rehabLow > rehabHigh) [rehabLow, rehabHigh] = [rehabHigh, rehabLow];
+  rehabSuggested = Math.min(
+    rehabHigh,
+    Math.max(rehabLow, rehabSuggested),
+  );
+
+  return {
+    rehabLow: Math.round(rehabLow),
+    rehabHigh: Math.round(rehabHigh),
+    rehabSuggested: Math.round(rehabSuggested),
+    maintenanceMonthlySuggested: Math.max(
+      100,
+      Math.round(maintenanceMonthlySuggested || 100),
+    ),
+  };
+}
+
+export function buildConditionSummary(args: {
+  overall: ConditionOverall;
+  findings: ConditionFinding[];
+  photosAnalyzed: number;
+  photosTotal: number;
+  complete: boolean;
+}): string {
+  const n = args.findings.length;
+  if (!args.complete) {
+    return `Analyzing listing photos… ${args.photosAnalyzed} of ${args.photosTotal} reviewed so far (${n} finding${n === 1 ? "" : "s"}).`;
+  }
+  if (n === 0) {
+    return `Reviewed all ${args.photosTotal} listing photos. No clear condition issues were visible.`;
+  }
+  return `Reviewed all ${args.photosTotal} listing photos. Found ${n} notable item${n === 1 ? "" : "s"} — overall: ${args.overall.replace(/_/g, " ")}.`;
 }
 
 /**
