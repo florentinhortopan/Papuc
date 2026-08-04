@@ -2,10 +2,19 @@
 
 import useEmblaCarousel from "embla-carousel-react";
 import { ChevronLeft, ChevronRight, Expand } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import { PhotoLightbox } from "@/components/photo-lightbox";
 import { cn } from "@/lib/utils";
+
+/** Ignore clicks that follow a carousel swipe (Embla v8 has no clickAllowed). */
+const DRAG_CLICK_THRESHOLD_PX = 8;
 
 export type PhotoAnalysisBadge = {
   label: string;
@@ -45,11 +54,34 @@ export function PhotoCarousel({
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: false });
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const draggedRef = useRef(false);
 
   const scrollPrev = useCallback(() => emblaApi?.scrollPrev(), [emblaApi]);
   const scrollNext = useCallback(() => emblaApi?.scrollNext(), [emblaApi]);
 
   const openLightbox = useCallback(() => setLightboxOpen(true), []);
+
+  const onSlidePointerDown = useCallback((e: ReactPointerEvent) => {
+    pointerStartRef.current = { x: e.clientX, y: e.clientY };
+    draggedRef.current = false;
+  }, []);
+
+  const onSlidePointerMove = useCallback((e: ReactPointerEvent) => {
+    const start = pointerStartRef.current;
+    if (!start || draggedRef.current) return;
+    if (
+      Math.abs(e.clientX - start.x) > DRAG_CLICK_THRESHOLD_PX ||
+      Math.abs(e.clientY - start.y) > DRAG_CLICK_THRESHOLD_PX
+    ) {
+      draggedRef.current = true;
+    }
+  }, []);
+
+  const onSlideClick = useCallback(() => {
+    if (draggedRef.current) return;
+    openLightbox();
+  }, [openLightbox]);
 
   useEffect(() => {
     if (!emblaApi) return;
@@ -101,12 +133,9 @@ export function PhotoCarousel({
                 src={url}
                 alt=""
                 loading={i === 0 ? "eager" : "lazy"}
-                onClick={() => {
-                  // Embla sets clickAllowed false after a drag so swipes
-                  // don't accidentally open the lightbox.
-                  if (emblaApi && !emblaApi.clickAllowed()) return;
-                  openLightbox();
-                }}
+                onPointerDown={onSlidePointerDown}
+                onPointerMove={onSlidePointerMove}
+                onClick={onSlideClick}
                 className="w-full h-full object-cover cursor-zoom-in"
               />
             </div>
