@@ -66,8 +66,12 @@ Berkeley.xlsx               Source-of-truth pro-forma model
      - Authorized redirect URI:
        `https://<your-project>.supabase.co/auth/v1/callback`
    - Paste the Google client id + secret into the Supabase provider config.
-4. **Auth → URL Configuration → Redirect URLs**: add
-   `http://localhost:3000/auth/callback` (and your Vercel URL once deployed).
+4. **Auth → URL Configuration**:
+   - **Site URL**: `https://papuc.app` (production)
+   - **Redirect URLs**: add
+     `http://localhost:3000/auth/callback`,
+     `https://papuc.app/auth/callback`
+     (and preview URLs if you use them).
 5. **Copy env vars**:
    ```bash
    cp apps/web/.env.example apps/web/.env.local
@@ -93,12 +97,15 @@ Berkeley.xlsx               Source-of-truth pro-forma model
 2. In Vercel → New Project, import the repo. Set the **Root Directory** to
    `apps/web`. Vercel auto-detects Next.js.
 3. Paste the same env vars from `.env.example` into Project → Settings →
-   Environment Variables. Set `NEXT_PUBLIC_SITE_URL` to your Vercel domain
-   (e.g. `https://papuc.vercel.app`).
-4. Deploy. Vercel reads `apps/web/vercel.json` and registers the nightly-scout
+   Environment Variables. Set `NEXT_PUBLIC_SITE_URL=https://papuc.app`
+   (used for share links and server-side absolute URLs — not OAuth).
+4. Domains → add `papuc.app`, set it as the **primary** domain, and enable
+   redirect from `*.vercel.app` → `papuc.app` so users never stay on the
+   deployment URL.
+5. Deploy. Vercel reads `apps/web/vercel.json` and registers the nightly-scout
    cron automatically.
-5. Add the production + preview URLs to Supabase Auth → URL Configuration →
-   Redirect URLs.
+6. Supabase Auth → URL Configuration: Site URL `https://papuc.app`, and
+   Redirect URLs including `https://papuc.app/auth/callback`.
 
 That's it — no Docker, no Supabase CLI, no `supabase functions deploy`.
 

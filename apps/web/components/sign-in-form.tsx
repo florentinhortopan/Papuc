@@ -39,8 +39,10 @@ export function SignInForm() {
     setSubmitting(true);
     try {
       const supabase = createClient();
-      const siteUrl =
-        process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin;
+      // Always return to the host the user signed in on (papuc.app in
+      // production). Do not use NEXT_PUBLIC_SITE_URL here — a stale
+      // vercel.app value would bounce OAuth back to the wrong domain.
+      const siteUrl = window.location.origin;
       const { error: e } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
