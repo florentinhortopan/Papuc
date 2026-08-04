@@ -154,39 +154,59 @@ export function DealDetailClient({
   const isLandDeal = Boolean(dealHomeType && /^(LOT|LAND)$/i.test(dealHomeType));
 
   /** Completed photo-condition estimate cached on the deal (full gallery). */
-  const cachedConditionEstimate: ConditionEstimatePayload | null =
-    deal.condition_estimated_at &&
-    (deal.condition_status === "complete" || deal.condition_status == null) &&
-    deal.condition_rehab_suggested != null &&
-    deal.condition_maintenance_monthly_suggested != null
-      ? {
-          overall: deal.condition_overall,
-          summary: deal.condition_summary,
-          findings: Array.isArray(deal.condition_findings)
-            ? (deal.condition_findings as ConditionEstimatePayload["findings"])
-            : [],
-          rehabLow:
-            deal.condition_rehab_low != null
-              ? Number(deal.condition_rehab_low)
-              : null,
-          rehabHigh:
-            deal.condition_rehab_high != null
-              ? Number(deal.condition_rehab_high)
-              : null,
-          rehabSuggested: Number(deal.condition_rehab_suggested),
-          maintenanceMonthlySuggested: Number(
-            deal.condition_maintenance_monthly_suggested,
-          ),
-          photoCount: deal.condition_photo_count,
-          photosTotal: deal.condition_photos_total,
-          model: deal.condition_model,
-          disclaimer:
-            deal.condition_disclaimer ??
-            "Based on listing photos only — not a home inspection.",
-          estimatedAt: deal.condition_estimated_at,
-          done: true,
-        }
-      : null;
+  const cachedConditionEstimate: ConditionEstimatePayload | null = useMemo(() => {
+    if (
+      !(
+        deal.condition_estimated_at &&
+        (deal.condition_status === "complete" || deal.condition_status == null) &&
+        deal.condition_rehab_suggested != null &&
+        deal.condition_maintenance_monthly_suggested != null
+      )
+    ) {
+      return null;
+    }
+    return {
+      overall: deal.condition_overall,
+      summary: deal.condition_summary,
+      findings: Array.isArray(deal.condition_findings)
+        ? (deal.condition_findings as ConditionEstimatePayload["findings"])
+        : [],
+      rehabLow:
+        deal.condition_rehab_low != null
+          ? Number(deal.condition_rehab_low)
+          : null,
+      rehabHigh:
+        deal.condition_rehab_high != null
+          ? Number(deal.condition_rehab_high)
+          : null,
+      rehabSuggested: Number(deal.condition_rehab_suggested),
+      maintenanceMonthlySuggested: Number(
+        deal.condition_maintenance_monthly_suggested,
+      ),
+      photoCount: deal.condition_photo_count,
+      photosTotal: deal.condition_photos_total,
+      model: deal.condition_model,
+      disclaimer:
+        deal.condition_disclaimer ??
+        "Based on listing photos only — not a home inspection.",
+      estimatedAt: deal.condition_estimated_at,
+      done: true,
+    };
+  }, [
+    deal.condition_estimated_at,
+    deal.condition_status,
+    deal.condition_rehab_suggested,
+    deal.condition_maintenance_monthly_suggested,
+    deal.condition_overall,
+    deal.condition_summary,
+    deal.condition_findings,
+    deal.condition_rehab_low,
+    deal.condition_rehab_high,
+    deal.condition_photo_count,
+    deal.condition_photos_total,
+    deal.condition_model,
+    deal.condition_disclaimer,
+  ]);
 
   /**
    * All default assumptions come from the shared `underwriteSeeds`
@@ -603,7 +623,7 @@ export function DealDetailClient({
 
   useEffect(() => {
     setLiveConditionEstimate(cachedConditionEstimate);
-  }, [cachedConditionEstimate]);
+  }, [deal.id, cachedConditionEstimate]);
 
   const conditionAnalysisReady = Boolean(
     liveConditionEstimate?.estimatedAt &&

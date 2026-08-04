@@ -240,14 +240,21 @@ export function PhotoConditionEstimate({
   const [activeFindingId, setActiveFindingId] = useState<string | null>(null);
   const [panelPulse, setPanelPulse] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const onEstimateChangeRef = useRef(onEstimateChange);
+  onEstimateChangeRef.current = onEstimateChange;
+  const cachedRef = useRef(cached);
+  cachedRef.current = cached;
+
+  // Key by deal + cache timestamp — not `cached` object identity. A new
+  // object literal each parent render would otherwise loop setState (#185).
+  const cachedAt = cached?.estimatedAt ?? null;
+  useEffect(() => {
+    setEstimate(cachedRef.current);
+  }, [dealId, cachedAt]);
 
   useEffect(() => {
-    setEstimate(cached);
-  }, [cached]);
-
-  useEffect(() => {
-    onEstimateChange?.(estimate);
-  }, [estimate, onEstimateChange]);
+    onEstimateChangeRef.current?.(estimate);
+  }, [estimate]);
 
   useEffect(() => {
     if (!focusNonce) return;
