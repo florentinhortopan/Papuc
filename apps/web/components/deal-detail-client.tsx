@@ -388,16 +388,46 @@ export function DealDetailClient({
     patch("monthlyRentLTR", String(Math.round(est.median)));
   }
 
-  /** Seed Improvements + Maintenance from a photo-condition analysis. */
-  function applyConditionEstimate(vals: {
-    improvements: number;
-    maintenanceMonthly: number;
-  }) {
+  /**
+   * Snapshot of Improvements / Maintenance taken right before photo-
+   * condition costs are injected, so the toggle can reverse cleanly.
+   */
+  const conditionRestoreRef = useRef<{
+    improvements: string;
+    maintenanceMonthly: string;
+  } | null>(null);
+  const [conditionCostsIncluded, setConditionCostsIncluded] = useState(false);
+
+  /** Toggle photo-condition rehab/maintenance into (or out of) the scenario. */
+  function setConditionCostsIncludedInScenario(
+    include: boolean,
+    vals?: { improvements: number; maintenanceMonthly: number },
+  ) {
+    if (include && vals) {
+      if (!conditionCostsIncluded) {
+        conditionRestoreRef.current = {
+          improvements: state.improvements,
+          maintenanceMonthly: state.maintenanceMonthly,
+        };
+      }
+      setState((s) => ({
+        ...s,
+        improvements: String(Math.round(vals.improvements)),
+        maintenanceMonthly: String(Math.round(vals.maintenanceMonthly)),
+      }));
+      setConditionCostsIncluded(true);
+      return;
+    }
+    const restore = conditionRestoreRef.current ?? {
+      improvements: "0",
+      maintenanceMonthly: String(Math.round(seeds.maintenanceMonthly)),
+    };
     setState((s) => ({
       ...s,
-      improvements: String(Math.round(vals.improvements)),
-      maintenanceMonthly: String(Math.round(vals.maintenanceMonthly)),
+      improvements: restore.improvements,
+      maintenanceMonthly: restore.maintenanceMonthly,
     }));
+    setConditionCostsIncluded(false);
   }
 
   async function reload() {
@@ -553,6 +583,8 @@ export function DealDetailClient({
   })();
   const [photos, setPhotos] = useState<string[]>(cachedPhotos);
   const [photosLoading, setPhotosLoading] = useState(false);
+  /** Driven by swipes and by taps on photo-condition findings. */
+  const [photoIndex, setPhotoIndex] = useState(0);
   const isSaved = deal.action === "saved";
   const sourceLink = getDealSourceLink(deal);
 
@@ -745,7 +777,11 @@ export function DealDetailClient({
           the STR matrix table instead of scrolling it horizontally. */}
       <div className="space-y-6 min-w-0">
         <div className="relative">
-          <PhotoCarousel photos={photos} />
+          <PhotoCarousel
+            photos={photos}
+            index={photoIndex}
+            onIndexChange={setPhotoIndex}
+          />
           {photosLoading ? (
             <div className="absolute left-3 top-3 bg-black/65 rounded-full px-2 py-1">
               <span className="text-white text-[11px]">Loading photos…</span>
@@ -1147,7 +1183,17 @@ export function DealDetailClient({
         <PhotoConditionEstimate
           dealId={deal.id}
           cached={cachedConditionEstimate}
-          onApply={applyConditionEstimate}
+          included={conditionCostsIncluded}
+          onIncludedChange={setConditionCostsIncludedInScenario}
+          photoCount={photos.length}
+          onSelectPhoto={(i) => {
+            setPhotoIndex(i);
+            if (typeof document !== "undefined") {
+              document
+                .getElementById("deal-photos")
+                ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+          }}
         />
 
         {state.strategy === "STR" ? (
@@ -1584,33 +1630,24 @@ function ScenarioSimulator({
   const [lockLtv, setLockLtv] = useState(false);
 
   /**
-   * Slider ranges. Anchored to the baseline so the original deal sits at
-   * a sensible spot, but they auto-grow when the user (or a solver) lands
-   * outside the default window — without that, the slider thumb
-   * disappears and the user has no way to drag back.
-   *
-   *   Price: 30% → 200% of baseline. Wider than the original 50% → 110%
-   *     so power users can model "what if comps rebound?" or a deeply
-   *     under-asking offer.
-   *   Down:  0%  → 100% of current price. The old cap at 50% silently
-   *     prevented users from exploring "raise more cash to make this
-   *     work" — which is exactly the lever the user flagged. Going all
-   *     the way to 100% means an all-cash deal (loan = $0, no P&I) is
-   *     selectable, which is a legitimate scenario.
+   * Slider ranges are anchored ONLY to the baseline — never to the live
+   * currentPrice. The old `priceMax = max(baseline*2, current*1.1)` /
+   * `downMax = currentPrice` pair created a positive feedback loop with
+   * Lock LTV: Radix would re-emit at the new max → applyDown set
+   * price = down/ratio ≈ current/0.05 → ranges grew → repeat →
+   * septillion-dollar offers. Hard caps keep coupling safe.
    */
-  const priceMin = Math.min(
-    Math.round(baseline.price * 0.3),
-    Math.round(currentPrice * 0.9),
-  );
-  const priceMax = Math.max(
-    Math.round(baseline.price * 2),
-    Math.round(currentPrice * 1.1),
-  );
+  const priceMin = Math.max(1, Math.round(baseline.price * 0.3));
+  const priceMax = Math.max(priceMin + 1, Math.round(baseline.price * 2));
   const downMin = 0;
-  const downMax = Math.max(Math.round(currentPrice), 1);
+  // All-cash at the top of the price window (not at the live price).
+  const downMax = priceMax;
   const safePrice = Math.min(priceMax, Math.max(priceMin, currentPrice));
   const safeDown = Math.min(downMax, Math.max(downMin, currentDownPayment));
-  const downPct = currentPrice > 0 ? currentDownPayment / currentPrice : 0;
+  const downPct =
+    currentPrice > 0 && Number.isFinite(currentPrice)
+      ? currentDownPayment / currentPrice
+      : 0;
 
   const priceDelta = currentPrice - baseline.price;
   const downDelta = currentDownPayment - baseline.downPayment;
@@ -1618,34 +1655,57 @@ function ScenarioSimulator({
   const isDirty =
     Math.abs(priceDelta) > 0.5 || Math.abs(downDelta) > 0.5;
 
+  const valuesExploded =
+    !Number.isFinite(currentPrice) ||
+    !Number.isFinite(currentDownPayment) ||
+    currentPrice > baseline.price * 3 ||
+    currentPrice < 1;
+
+  // Heal runaway state from the old Lock-LTV feedback loop.
+  useEffect(() => {
+    if (!valuesExploded) return;
+    setLockLtv(false);
+    setError("Scenario values were out of range and were reset to baseline.");
+    onChange(baseline);
+  }, [valuesExploded, baseline, onChange]);
+
+  function clampPrice(p: number): number {
+    if (!Number.isFinite(p)) return baseline.price;
+    return Math.min(priceMax, Math.max(priceMin, Math.round(p)));
+  }
+
   /** Handle a slider drag, applying LTV coupling when locked. */
   function applyPrice(nextPrice: number) {
-    if (lockLtv && currentPrice > 0) {
-      const ratio = currentDownPayment / currentPrice;
+    const price = clampPrice(nextPrice);
+    if (lockLtv && currentPrice > 0 && Number.isFinite(currentDownPayment)) {
+      const ratio = Math.min(1, Math.max(0, currentDownPayment / currentPrice));
       onChange({
-        price: nextPrice,
-        downPayment: Math.min(nextPrice, Math.max(0, ratio * nextPrice)),
+        price,
+        downPayment: Math.min(price, Math.max(0, Math.round(ratio * price))),
       });
     } else {
       onChange({
-        price: nextPrice,
-        downPayment: Math.min(nextPrice, currentDownPayment),
+        price,
+        downPayment: Math.min(price, Math.max(0, currentDownPayment)),
       });
     }
   }
   function applyDown(nextDown: number) {
-    if (lockLtv && currentDownPayment > 0) {
-      // Solve for the price that preserves the current LTV. ratio = down /
-      // price, so newPrice = newDown / ratio.
-      const ratio = currentDownPayment / currentPrice;
-      const nextPrice =
-        ratio > 0 ? nextDown / ratio : currentPrice;
+    const down = Math.min(downMax, Math.max(downMin, Math.round(nextDown)));
+    if (lockLtv && currentPrice > 0 && currentDownPayment > 0) {
+      // Preserve LTV: price = down / ratio. Clamp price to the baseline
+      // window so a drag (or a Radix re-emit at downMax) cannot invent
+      // an unbounded offer.
+      const ratio = Math.min(1, Math.max(0.01, currentDownPayment / currentPrice));
+      const rawPrice = down / ratio;
+      const price = clampPrice(rawPrice);
       onChange({
-        price: Math.max(nextDown, nextPrice),
-        downPayment: nextDown,
+        price,
+        downPayment: Math.min(price, Math.round(ratio * price)),
       });
     } else {
-      onChange({ price: currentPrice, downPayment: nextDown });
+      const price = clampPrice(currentPrice);
+      onChange({ price, downPayment: Math.min(price, down) });
     }
   }
 
@@ -1769,7 +1829,12 @@ function ScenarioSimulator({
               }`}
             >
               ({priceDelta >= 0 ? "+" : ""}
-              {Math.round((priceDelta / baseline.price) * 100)}%)
+              {baseline.price > 0 && Number.isFinite(priceDelta)
+                ? `${Math.round(
+                    Math.min(9999, Math.max(-9999, (priceDelta / baseline.price) * 100)),
+                  )}%`
+                : "—"}
+              )
             </span>
           </span>
         </div>

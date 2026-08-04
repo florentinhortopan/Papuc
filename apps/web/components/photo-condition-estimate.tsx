@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -173,7 +173,9 @@ async function fetchConditionJson(
 /**
  * On-demand listing-photo condition / rehab widget. Walks the full
  * gallery in serverless-safe batches; the UI auto-continues until done.
- * Final success auto-applies Improvements + Maintenance via `onApply`.
+ * Rehab/maintenance are injected into the scenario only while the
+ * labeled toggle is on — turning it off restores the pre-injection
+ * Improvements / Maintenance values.
  *
  * BILLING: UI copy marks this as premium; server-side subscription gate
  * lands with Stripe metering.
@@ -181,11 +183,27 @@ async function fetchConditionJson(
 export function PhotoConditionEstimate({
   dealId,
   cached,
-  onApply,
+  included,
+  onIncludedChange,
+  photoCount = 0,
+  onSelectPhoto,
 }: {
   dealId: string;
   cached: ConditionEstimatePayload | null;
-  onApply: (vals: ConditionApplyPayload) => void;
+  /** Whether estimated rehab/maintenance are currently in the pro-forma. */
+  included: boolean;
+  /**
+   * Toggle handler. When `include` is true, `vals` carries the estimate
+   * to inject; when false, the parent should restore the prior baseline.
+   */
+  onIncludedChange: (
+    include: boolean,
+    vals?: ConditionApplyPayload,
+  ) => void;
+  /** Length of the deal photo gallery — used to validate photoIndexes. */
+  photoCount?: number;
+  /** Jump the listing photo carousel to a 0-based gallery index. */
+  onSelectPhoto?: (index: number) => void;
 }) {
   const [estimate, setEstimate] = useState<ConditionEstimatePayload | null>(
     cached,
@@ -193,6 +211,9 @@ export function PhotoConditionEstimate({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
+  /** Per-finding cursor into photoIndexes for multi-tap cycling. */
+  const photoCycleRef = useRef<Record<string, number>>({});
+  const [activeFindingId, setActiveFindingId] = useState<string | null>(null);
 
   async function runAnalysis(refresh: boolean) {
     setLoading(true);
@@ -221,16 +242,51 @@ export function PhotoConditionEstimate({
         );
       }
       setProgressLabel(null);
-      onApply({
-        improvements: est.rehabSuggested,
-        maintenanceMonthly: est.maintenanceMonthlySuggested,
-      });
+      // Fresh analysis: leave the toggle off so the user opts in. If they
+      // already had costs included, re-apply the new numbers so the
+      // scenario stays in sync with the refreshed estimate.
+      if (included) {
+        onIncludedChange(true, {
+          improvements: est.rehabSuggested,
+          maintenanceMonthly: est.maintenanceMonthlySuggested,
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setProgressLabel(null);
     } finally {
       setLoading(false);
     }
+  }
+
+  function toggleIncluded() {
+    if (!estimate || estimate.done === false) return;
+    if (included) {
+      onIncludedChange(false);
+    } else {
+      onIncludedChange(true, {
+        improvements: estimate.rehabSuggested,
+        maintenanceMonthly: estimate.maintenanceMonthlySuggested,
+      });
+    }
+  }
+
+  /**
+   * Jump the gallery to the next photo cited by this finding. Repeated
+   * taps cycle through its photoIndexes (already remapped to the full
+   * gallery at merge time).
+   */
+  function showFindingPhotos(f: ConditionFinding) {
+    if (!onSelectPhoto) return;
+    const indexes = (f.photoIndexes ?? []).filter(
+      (i) => Number.isInteger(i) && i >= 0 && i < photoCount,
+    );
+    if (!indexes.length) return;
+    const cursor = photoCycleRef.current[f.id] ?? 0;
+    const next = indexes[cursor % indexes.length]!;
+    photoCycleRef.current[f.id] = (cursor + 1) % indexes.length;
+    setActiveFindingId(f.id);
+    onSelectPhoto(next);
   }
 
   const photosTotal =
@@ -302,44 +358,78 @@ export function PhotoConditionEstimate({
                   : "Findings so far (most serious first)"}
               </p>
               <ul className="max-h-56 overflow-y-auto space-y-2 pr-1">
-                {sortedFindings.map((f) => (
-                  <li
-                    key={f.id}
-                    className="border border-border rounded-lg px-2 py-1.5 space-y-0.5"
-                  >
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <Badge variant={severityVariant(f.severity)}>
-                        {f.severity}
-                      </Badge>
-                      <Badge>{f.costBucket}</Badge>
-                      <span className="text-text text-xs font-medium">
-                        {f.title}
-                      </span>
-                    </div>
-                    <p className="text-textMuted text-[11px] leading-4">
-                      {f.detail}
-                    </p>
-                    {f.estimatedCostLow != null ||
-                    f.estimatedCostHigh != null ? (
-                      <p className="text-textMuted text-[10px]">
-                        Est.{" "}
-                        {f.estimatedCostLow != null
-                          ? formatMoney(f.estimatedCostLow)
-                          : "—"}
-                        –
-                        {f.estimatedCostHigh != null
-                          ? formatMoney(f.estimatedCostHigh)
-                          : "—"}
-                        {" · "}
-                        {f.confidence} confidence
-                      </p>
-                    ) : (
-                      <p className="text-textMuted text-[10px]">
-                        {f.confidence} confidence
-                      </p>
-                    )}
-                  </li>
-                ))}
+                {sortedFindings.map((f) => {
+                  const photoIndexes = (f.photoIndexes ?? []).filter(
+                    (i) => Number.isInteger(i) && i >= 0 && i < photoCount,
+                  );
+                  const tappable = photoIndexes.length > 0 && !!onSelectPhoto;
+                  const active = activeFindingId === f.id;
+                  return (
+                    <li key={f.id}>
+                      <button
+                        type="button"
+                        disabled={!tappable}
+                        onClick={() => showFindingPhotos(f)}
+                        title={
+                          tappable
+                            ? photoIndexes.length === 1
+                              ? `Show photo ${photoIndexes[0]! + 1}`
+                              : `Cycle photos ${photoIndexes.map((i) => i + 1).join(", ")}`
+                            : undefined
+                        }
+                        className={`w-full text-left border rounded-lg px-2 py-1.5 space-y-0.5 transition-colors ${
+                          active
+                            ? "border-primary bg-primary/5"
+                            : "border-border"
+                        } ${
+                          tappable
+                            ? "hover:border-primary/60 cursor-pointer"
+                            : "cursor-default"
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Badge variant={severityVariant(f.severity)}>
+                            {f.severity}
+                          </Badge>
+                          <Badge>{f.costBucket}</Badge>
+                          <span className="text-text text-xs font-medium">
+                            {f.title}
+                          </span>
+                          {photoIndexes.length > 0 ? (
+                            <span className="text-primary text-[10px] font-semibold ml-auto">
+                              {photoIndexes.length === 1
+                                ? `Pic ${photoIndexes[0]! + 1}`
+                                : `Pics ${photoIndexes.map((i) => i + 1).join(" · ")}`}
+                              {photoIndexes.length > 1 ? " · tap to cycle" : ""}
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="text-textMuted text-[11px] leading-4">
+                          {f.detail}
+                        </p>
+                        {f.estimatedCostLow != null ||
+                        f.estimatedCostHigh != null ? (
+                          <p className="text-textMuted text-[10px]">
+                            Est.{" "}
+                            {f.estimatedCostLow != null
+                              ? formatMoney(f.estimatedCostLow)
+                              : "—"}
+                            –
+                            {f.estimatedCostHigh != null
+                              ? formatMoney(f.estimatedCostHigh)
+                              : "—"}
+                            {" · "}
+                            {f.confidence} confidence
+                          </p>
+                        ) : (
+                          <p className="text-textMuted text-[10px]">
+                            {f.confidence} confidence
+                          </p>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             </>
           ) : loading ? (
@@ -354,6 +444,38 @@ export function PhotoConditionEstimate({
                 {estimate.disclaimer}
               </p>
 
+              <div className="flex items-center justify-between gap-3 bg-surface border border-border rounded-xl px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-text text-xs font-semibold">
+                    Include rehab costs in scenario
+                  </p>
+                  <p className="text-textMuted text-[11px] leading-4">
+                    {included
+                      ? `Using ${formatMoney(estimate.rehabSuggested)} rehab + ${formatMoney(estimate.maintenanceMonthlySuggested)}/mo maintenance`
+                      : "Off — Improvements / Maintenance stay at your baseline"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleIncluded}
+                  aria-pressed={included}
+                  aria-label={
+                    included
+                      ? "Remove rehab costs from scenario"
+                      : "Include rehab costs in scenario"
+                  }
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                    included ? "bg-primary" : "bg-border"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
+                      included ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+              </div>
+
               <div className="flex items-center justify-between gap-2">
                 <p className="text-textMuted text-[11px]">
                   {photosAnalyzed != null && photosTotal != null
@@ -365,30 +487,15 @@ export function PhotoConditionEstimate({
                     ? `Analyzed ${new Date(estimate.estimatedAt).toLocaleDateString()}.`
                     : ""}
                 </p>
-                <div className="flex gap-2 shrink-0">
-                  <button
-                    type="button"
-                    className="text-xs text-accent hover:underline"
-                    onClick={() =>
-                      onApply({
-                        improvements: estimate.rehabSuggested,
-                        maintenanceMonthly:
-                          estimate.maintenanceMonthlySuggested,
-                      })
-                    }
-                  >
-                    Apply
-                  </button>
-                  <button
-                    type="button"
-                    className="text-xs text-textMuted hover:underline disabled:opacity-50"
-                    disabled={loading}
-                    onClick={() => runAnalysis(true)}
-                    title="Re-run Claude vision on the full listing gallery"
-                  >
-                    {loading ? "Refreshing…" : "Refresh"}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="text-xs text-textMuted hover:underline disabled:opacity-50 shrink-0"
+                  disabled={loading}
+                  onClick={() => runAnalysis(true)}
+                  title="Re-run Claude vision on the full listing gallery"
+                >
+                  {loading ? "Refreshing…" : "Refresh"}
+                </button>
               </div>
             </>
           ) : null}
@@ -399,7 +506,8 @@ export function PhotoConditionEstimate({
             Have Claude review the full listing photo gallery for red flags,
             deferred maintenance, and rough rehab vs. ongoing maintenance
             costs. Large galleries are analyzed in batches so every photo is
-            covered. Results auto-fill Improvements and Maintenance.
+            covered. Use the toggle afterward to include those costs in the
+            scenario — or leave them out.
           </p>
           <Button
             size="sm"

@@ -9,9 +9,14 @@ import { cn } from "@/lib/utils";
 export function PhotoCarousel({
   photos,
   className,
+  index,
+  onIndexChange,
 }: {
   photos: string[];
   className?: string;
+  /** Controlled 0-based slide index (e.g. from a rehab finding tap). */
+  index?: number;
+  onIndexChange?: (index: number) => void;
 }) {
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: false });
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -21,13 +26,26 @@ export function PhotoCarousel({
 
   useEffect(() => {
     if (!emblaApi) return;
-    const onSelect = () => setSelectedIndex(emblaApi.selectedScrollSnap());
+    const onSelect = () => {
+      const i = emblaApi.selectedScrollSnap();
+      setSelectedIndex(i);
+      onIndexChange?.(i);
+    };
     emblaApi.on("select", onSelect);
     onSelect();
     return () => {
       emblaApi.off("select", onSelect);
     };
-  }, [emblaApi]);
+  }, [emblaApi, onIndexChange]);
+
+  // External jump (rehab finding tap) — only scroll when the requested
+  // index differs from the current snap so we don't fight user swipes.
+  useEffect(() => {
+    if (!emblaApi || index === undefined) return;
+    if (index < 0 || index >= photos.length) return;
+    if (emblaApi.selectedScrollSnap() === index) return;
+    emblaApi.scrollTo(index);
+  }, [emblaApi, index, photos.length]);
 
   if (!photos.length) {
     return (
@@ -43,7 +61,7 @@ export function PhotoCarousel({
   }
 
   return (
-    <div className={cn("relative", className)}>
+    <div id="deal-photos" className={cn("relative", className)}>
       <div ref={emblaRef} className="overflow-hidden rounded-2xl">
         <div className="flex">
           {photos.map((url, i) => (
