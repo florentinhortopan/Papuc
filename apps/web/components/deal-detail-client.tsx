@@ -861,12 +861,14 @@ export function DealDetailClient({
     }
   }
 
+  // Mobile stacks as one column via `contents` + order-*; desktop keeps the
+  // two-column layout (media/charts left, editor/actions right).
   return (
-    <div className="mt-2 grid lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] gap-6">
+    <div className="mt-2 flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
       {/* min-w-0: grid items default to min-width:auto and will grow to fit
           the STR matrix table instead of scrolling it horizontally. */}
-      <div className="space-y-6 min-w-0">
-        <div className="relative">
+      <div className="contents lg:flex lg:flex-col lg:gap-6 lg:min-w-0">
+        <div className="relative order-1 lg:order-none">
           <PhotoCarousel
             photos={photos}
             index={photoIndex}
@@ -880,7 +882,7 @@ export function DealDetailClient({
           ) : null}
         </div>
 
-        <div>
+        <div className="order-2 lg:order-none">
           <h1 className="text-2xl font-bold">
             {dealStreetAddress(deal) ?? "Address pending"}
           </h1>
@@ -940,436 +942,456 @@ export function DealDetailClient({
         </div>
 
         {deal.score?.rationale ? (
-          <div className="bg-surface border border-border rounded-2xl p-4">
+          <div className="bg-surface border border-border rounded-2xl p-4 order-3 lg:order-none">
             <p className="text-textMuted text-xs mb-1">Why this matched</p>
             <p className="text-text text-sm leading-6">{deal.score.rationale}</p>
           </div>
         ) : null}
 
         {state.strategy === "STR" && deal.city && deal.state ? (
-          <StrRegulationsCard city={deal.city} state={deal.state} />
+          <div className="order-8 lg:order-none">
+            <StrRegulationsCard city={deal.city} state={deal.state} />
+          </div>
         ) : null}
 
-        {state.strategy === "STR" ? (
-          <StrCashflowMatrix
-            monthlyPreTaxProfit={result.monthlyPreTaxProfit}
-            value={strMatrix}
-            onChange={setStrMatrix}
-          />
-        ) : (
-          <CashflowChart monthlyPreTaxProfit={result.monthlyPreTaxProfit} />
-        )}
+        <div className="order-7 lg:order-none">
+          {state.strategy === "STR" ? (
+            <StrCashflowMatrix
+              monthlyPreTaxProfit={result.monthlyPreTaxProfit}
+              value={strMatrix}
+              onChange={setStrMatrix}
+            />
+          ) : (
+            <CashflowChart monthlyPreTaxProfit={result.monthlyPreTaxProfit} />
+          )}
+        </div>
 
-        <ComparablesPanel
-          dealId={deal.id}
-          projectId={deal.project_id}
-          scenario={{
-            price: derived.price > 0 ? derived.price : undefined,
-            beds: deal.beds != null ? Number(deal.beds) : undefined,
-            baths: deal.baths != null ? Number(deal.baths) : undefined,
-            sqft: deal.sqft != null ? Number(deal.sqft) : undefined,
-          }}
-        />
+        <div className="order-[13] lg:order-none">
+          <ComparablesPanel
+            dealId={deal.id}
+            projectId={deal.project_id}
+            scenario={{
+              price: derived.price > 0 ? derived.price : undefined,
+              beds: deal.beds != null ? Number(deal.beds) : undefined,
+              baths: deal.baths != null ? Number(deal.baths) : undefined,
+              sqft: deal.sqft != null ? Number(deal.sqft) : undefined,
+            }}
+          />
+        </div>
       </div>
 
-      <div className="space-y-4 min-w-0">
+      <div className="contents lg:flex lg:flex-col lg:gap-4 lg:min-w-0">
         {error ? (
-          <div className="bg-danger/10 border border-danger/30 rounded-xl p-3">
+          <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 order-4 lg:order-none">
             <p className="text-danger text-xs">{error}</p>
           </div>
         ) : null}
 
-        <CollapsibleCard
-          stats={[
-            {
-              label: "Cashflow",
-              value: `${result.annualPreTaxProfit >= 0 ? "+" : ""}${formatMoney(
+        <div className="order-5 lg:order-none">
+          <CollapsibleCard
+            stats={[
+              {
+                label: "Cashflow",
+                value: `${result.annualPreTaxProfit >= 0 ? "+" : ""}${formatMoney(
+                  result.annualPreTaxProfit / 12,
+                )}/mo`,
+                tone:
+                  result.annualPreTaxProfit / 12 >= 100
+                    ? "positive"
+                    : result.annualPreTaxProfit / 12 >= -100
+                      ? "neutral"
+                      : "negative",
+              },
+              {
+                label: "DSCR (lender)",
+                value: formatDscr(result.dscrLenderHaircut),
+                tone:
+                  result.dscrLenderHaircut >= 1.25
+                    ? "positive"
+                    : result.dscrLenderHaircut >= 1
+                      ? "neutral"
+                      : "negative",
+              },
+              {
+                label: "PITIA",
+                value: `${formatMoney(result.pitiaMonthly.total)}/mo`,
+              },
+              state.strategy === "STR"
+                ? {
+                    label: "Break-even ADR",
+                    value:
+                      breakevenADR === null
+                        ? "—"
+                        : `${formatMoney(breakevenADR)}/night`,
+                  }
+                : {
+                    label: "Cash-on-cash",
+                    value: formatPct(result.cashOnCashReturn),
+                  },
+            ]}
+          >
+            <SummaryRow
+              label="Monthly cashflow"
+              value={`${result.annualPreTaxProfit >= 0 ? "+" : ""}${formatMoney(
                 result.annualPreTaxProfit / 12,
-              )}/mo`,
-              tone:
+              )}/mo`}
+              emphasis={
                 result.annualPreTaxProfit / 12 >= 100
                   ? "positive"
                   : result.annualPreTaxProfit / 12 >= -100
                     ? "neutral"
-                    : "negative",
-            },
-            {
-              label: "DSCR (lender)",
-              value: formatDscr(result.dscrLenderHaircut),
-              tone:
-                result.dscrLenderHaircut >= 1.25
-                  ? "positive"
-                  : result.dscrLenderHaircut >= 1
-                    ? "neutral"
-                    : "negative",
-            },
-            {
-              label: "PITIA",
-              value: `${formatMoney(result.pitiaMonthly.total)}/mo`,
-            },
-            state.strategy === "STR"
-              ? {
-                  label: "Break-even ADR",
-                  value:
-                    breakevenADR === null
-                      ? "—"
-                      : `${formatMoney(breakevenADR)}/night`,
+                    : "negative"
+              }
+            />
+            <SummaryRow label="Initial sunk investment" value={formatMoney(result.initialSunkInvestment)} />
+            <SummaryRow label="Annual pre-tax profit" value={formatMoney(result.annualPreTaxProfit)} />
+            <SummaryRow label="Annual after-tax profit" value={formatMoney(result.annualPostTaxProfit)} />
+            <SummaryRow label="Cash-on-cash return" value={formatPct(result.cashOnCashReturn)} />
+            <SummaryRow
+              label="Payout (years)"
+              value={isFinite(result.payoutYears) ? result.payoutYears.toFixed(2) : "—"}
+            />
+            <SummaryRow
+              label="5-yr IRR"
+              value={result.irr5Yr !== null ? formatPct(result.irr5Yr) : "—"}
+            />
+            <SummaryRow
+              label="5-yr equity multiple"
+              value={`${result.equityMultiple5Yr.toFixed(2)}x`}
+            />
+            <SummaryRow label="DSCR" value={formatDscr(result.dscr)} />
+            <SummaryRow
+              label="DSCR (lender 75% rent)"
+              value={formatDscr(result.dscrLenderHaircut)}
+            />
+            <SummaryRow label="Monthly PITIA" value={formatMoney(result.pitiaMonthly.total)} />
+            <div className="ml-4 mt-1 mb-2 space-y-1">
+              <SummaryRow
+                label="↳ Principal + Interest"
+                value={formatMoney(result.pitiaMonthly.principalAndInterest)}
+                muted
+              />
+              <SummaryRow
+                label="↳ Property taxes"
+                value={formatMoney(result.pitiaMonthly.taxes)}
+                muted
+              />
+              <SummaryRow
+                label="↳ Insurance"
+                value={formatMoney(result.pitiaMonthly.insurance)}
+                muted
+              />
+              <SummaryRow
+                label="↳ HOA"
+                value={formatMoney(result.pitiaMonthly.hoa)}
+                muted
+              />
+              <SummaryRow
+                label="↳ PMI"
+                value={
+                  result.pitiaMonthly.pmi > 0
+                    ? formatMoney(result.pitiaMonthly.pmi)
+                    : "—"
                 }
-              : {
-                  label: "Cash-on-cash",
-                  value: formatPct(result.cashOnCashReturn),
-                },
-          ]}
-        >
-          <SummaryRow
-            label="Monthly cashflow"
-            value={`${result.annualPreTaxProfit >= 0 ? "+" : ""}${formatMoney(
-              result.annualPreTaxProfit / 12,
-            )}/mo`}
-            emphasis={
-              result.annualPreTaxProfit / 12 >= 100
-                ? "positive"
-                : result.annualPreTaxProfit / 12 >= -100
-                  ? "neutral"
-                  : "negative"
-            }
-          />
-          <SummaryRow label="Initial sunk investment" value={formatMoney(result.initialSunkInvestment)} />
-          <SummaryRow label="Annual pre-tax profit" value={formatMoney(result.annualPreTaxProfit)} />
-          <SummaryRow label="Annual after-tax profit" value={formatMoney(result.annualPostTaxProfit)} />
-          <SummaryRow label="Cash-on-cash return" value={formatPct(result.cashOnCashReturn)} />
-          <SummaryRow
-            label="Payout (years)"
-            value={isFinite(result.payoutYears) ? result.payoutYears.toFixed(2) : "—"}
-          />
-          <SummaryRow
-            label="5-yr IRR"
-            value={result.irr5Yr !== null ? formatPct(result.irr5Yr) : "—"}
-          />
-          <SummaryRow
-            label="5-yr equity multiple"
-            value={`${result.equityMultiple5Yr.toFixed(2)}x`}
-          />
-          <SummaryRow label="DSCR" value={formatDscr(result.dscr)} />
-          <SummaryRow
-            label="DSCR (lender 75% rent)"
-            value={formatDscr(result.dscrLenderHaircut)}
-          />
-          <SummaryRow label="Monthly PITIA" value={formatMoney(result.pitiaMonthly.total)} />
-          <div className="ml-4 mt-1 mb-2 space-y-1">
-            <SummaryRow
-              label="↳ Principal + Interest"
-              value={formatMoney(result.pitiaMonthly.principalAndInterest)}
-              muted
-            />
-            <SummaryRow
-              label="↳ Property taxes"
-              value={formatMoney(result.pitiaMonthly.taxes)}
-              muted
-            />
-            <SummaryRow
-              label="↳ Insurance"
-              value={formatMoney(result.pitiaMonthly.insurance)}
-              muted
-            />
-            <SummaryRow
-              label="↳ HOA"
-              value={formatMoney(result.pitiaMonthly.hoa)}
-              muted
-            />
-            <SummaryRow
-              label="↳ PMI"
-              value={
-                result.pitiaMonthly.pmi > 0
-                  ? formatMoney(result.pitiaMonthly.pmi)
-                  : "—"
-              }
-              muted
-            />
-          </div>
-          {state.strategy === "STR" ? (
-            <SummaryRow
-              label="Break-even ADR"
-              value={
-                breakevenADR === null
-                  ? "—"
-                  : `${formatMoney(breakevenADR)}/night`
-              }
-            />
-          ) : null}
-        </CollapsibleCard>
+                muted
+              />
+            </div>
+            {state.strategy === "STR" ? (
+              <SummaryRow
+                label="Break-even ADR"
+                value={
+                  breakevenADR === null
+                    ? "—"
+                    : `${formatMoney(breakevenADR)}/night`
+                }
+              />
+            ) : null}
+          </CollapsibleCard>
+        </div>
 
-        <CollapsibleCard
-          headerExtra={<Badge variant="primary">{state.strategy}</Badge>}
-          stats={[
-            { label: "Price", value: formatMoney(derived.price) },
-            {
-              label: "Down",
-              value: `${formatMoney(derived.downPayment)}`,
-            },
-            {
-              label: "Rate APR",
-              value: `${(toNum(state.rateAPR) * 100).toFixed(2)}%`,
-            },
-            {
-              label: "Term",
-              value: `${Math.round(toNum(state.termYears))} yrs`,
-            },
-          ]}
-        >
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Price ($)" type="number" value={state.price} onChange={(e) => patch("price", e.target.value)} />
-            <Field label="Down ($)" type="number" value={state.downPayment} onChange={(e) => patch("downPayment", e.target.value)} />
-            <Field label="Closing costs ($)" type="number" value={state.closingCosts} onChange={(e) => patch("closingCosts", e.target.value)} hint="One-time; counts toward cash invested" />
-            <Field
-              label="Improvements / rehab ($)"
-              type="number"
-              value={state.improvements}
-              onChange={(e) => patch("improvements", e.target.value)}
-              hint="One-time CapEx; counts toward cash invested"
-            />
-            <Field label="Rate APR" type="number" inputMode="decimal" value={state.rateAPR} onChange={(e) => patch("rateAPR", e.target.value)} hint="e.g. 0.075 = 7.5%" />
-            <Field label="Term (yrs)" type="number" value={state.termYears} onChange={(e) => patch("termYears", e.target.value)} />
-            <Field label="Tax rate" type="number" inputMode="decimal" value={state.taxRate} onChange={(e) => patch("taxRate", e.target.value)} hint="On rental profits" />
-            <Field
-              label="Prop tax %/yr"
-              type="number"
-              inputMode="decimal"
-              value={state.propertyTaxRatePct}
-              onChange={(e) => patch("propertyTaxRatePct", e.target.value)}
-              hint={
-                deal.property_tax_rate != null
-                  ? "Actual rate from listing data"
-                  : `${deal.state ?? "State"} average effective rate`
-              }
-            />
-            <Field
-              label="Insurance ($/yr)"
-              type="number"
-              value={state.insuranceAnnual}
-              onChange={(e) => patch("insuranceAnnual", e.target.value)}
-              hint={`≈ $${(derived.insuranceMonthly).toFixed(0)}/mo`}
-            />
-            <Field
-              label="Insurance rate (%/yr)"
-              type="number"
-              inputMode="decimal"
-              step="0.0001"
-              value={derived.insuranceRatePct.toFixed(4)}
-              onChange={(e) => {
-                const pct = Number(e.target.value);
-                if (Number.isFinite(pct) && derived.price > 0) {
-                  patch(
-                    "insuranceAnnual",
-                    String(Math.round(pct * derived.price)),
-                  );
+        <div className="order-6 lg:order-none">
+          <CollapsibleCard
+            headerExtra={<Badge variant="primary">{state.strategy}</Badge>}
+            stats={[
+              { label: "Price", value: formatMoney(derived.price) },
+              {
+                label: "Down",
+                value: `${formatMoney(derived.downPayment)}`,
+              },
+              {
+                label: "Rate APR",
+                value: `${(toNum(state.rateAPR) * 100).toFixed(2)}%`,
+              },
+              {
+                label: "Term",
+                value: `${Math.round(toNum(state.termYears))} yrs`,
+              },
+            ]}
+          >
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Price ($)" type="number" value={state.price} onChange={(e) => patch("price", e.target.value)} />
+              <Field label="Down ($)" type="number" value={state.downPayment} onChange={(e) => patch("downPayment", e.target.value)} />
+              <Field label="Closing costs ($)" type="number" value={state.closingCosts} onChange={(e) => patch("closingCosts", e.target.value)} hint="One-time; counts toward cash invested" />
+              <Field
+                label="Improvements / rehab ($)"
+                type="number"
+                value={state.improvements}
+                onChange={(e) => patch("improvements", e.target.value)}
+                hint="One-time CapEx; counts toward cash invested"
+              />
+              <Field label="Rate APR" type="number" inputMode="decimal" value={state.rateAPR} onChange={(e) => patch("rateAPR", e.target.value)} hint="e.g. 0.075 = 7.5%" />
+              <Field label="Term (yrs)" type="number" value={state.termYears} onChange={(e) => patch("termYears", e.target.value)} />
+              <Field label="Tax rate" type="number" inputMode="decimal" value={state.taxRate} onChange={(e) => patch("taxRate", e.target.value)} hint="On rental profits" />
+              <Field
+                label="Prop tax %/yr"
+                type="number"
+                inputMode="decimal"
+                value={state.propertyTaxRatePct}
+                onChange={(e) => patch("propertyTaxRatePct", e.target.value)}
+                hint={
+                  deal.property_tax_rate != null
+                    ? "Actual rate from listing data"
+                    : `${deal.state ?? "State"} average effective rate`
                 }
-              }}
-              hint={`% of price; 0.0035 ≈ 0.35%/yr (US avg)`}
-            />
-            <Field
-              label="HOA ($/mo)"
-              type="number"
-              value={state.hoaMonthly}
-              onChange={(e) => patch("hoaMonthly", e.target.value)}
-              hint={
-                deal.hoa_monthly != null
-                  ? `Provider reported $${deal.hoa_monthly}/mo`
-                  : toNum(state.hoaMonthly) > 0
-                    ? "Unreported — assumed typical fee for this property type"
-                    : "Not reported by provider — enter manually if known"
-              }
-            />
-            <div className="mb-3">
-              <Label htmlFor="pmi-input">PMI %/yr</Label>
-              <Input
-                id="pmi-input"
+              />
+              <Field
+                label="Insurance ($/yr)"
+                type="number"
+                value={state.insuranceAnnual}
+                onChange={(e) => patch("insuranceAnnual", e.target.value)}
+                hint={`≈ $${(derived.insuranceMonthly).toFixed(0)}/mo`}
+              />
+              <Field
+                label="Insurance rate (%/yr)"
                 type="number"
                 inputMode="decimal"
                 step="0.0001"
-                readOnly={state.pmiOverride === null}
-                value={
-                  state.pmiOverride !== null
-                    ? state.pmiOverride
-                    : derived.autoPmiRate.toFixed(4)
-                }
-                onChange={(e) => patch("pmiOverride", e.target.value)}
-              />
-              <div className="flex items-center justify-between mt-1">
-                <p className="text-xs text-textMuted">
-                  {state.pmiOverride === null
-                    ? derived.ltv > 0.8
-                      ? `Auto: ${(derived.autoPmiRate * 100).toFixed(2)}% · LTV ${(derived.ltv * 100).toFixed(1)}%`
-                      : `Auto: 0% · LTV ${(derived.ltv * 100).toFixed(1)}% (no PMI)`
-                    : `Manual override`}
-                </p>
-                <button
-                  type="button"
-                  className="text-xs text-accent hover:underline"
-                  onClick={() =>
+                value={derived.insuranceRatePct.toFixed(4)}
+                onChange={(e) => {
+                  const pct = Number(e.target.value);
+                  if (Number.isFinite(pct) && derived.price > 0) {
                     patch(
-                      "pmiOverride",
-                      state.pmiOverride === null
-                        ? derived.autoPmiRate.toFixed(4)
-                        : null,
-                    )
+                      "insuranceAnnual",
+                      String(Math.round(pct * derived.price)),
+                    );
                   }
-                >
-                  {state.pmiOverride === null ? "Edit" : "↻ Auto"}
-                </button>
-              </div>
-            </div>
-            <Field label="Utilities ($/mo)" type="number" value={state.utilitiesMonthly} onChange={(e) => patch("utilitiesMonthly", e.target.value)} />
-            <Field label="Maintenance ($/mo)" type="number" value={state.maintenanceMonthly} onChange={(e) => patch("maintenanceMonthly", e.target.value)} hint="Seeded at 1%/yr of price" />
-            <Field label="Misc ($/mo)" type="number" value={state.miscMonthly} onChange={(e) => patch("miscMonthly", e.target.value)} />
-            <Field
-              label="Mgmt fee (of revenue)"
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              value={state.managementFeePct}
-              onChange={(e) => patch("managementFeePct", e.target.value)}
-              hint="0.15 = 15%; set 0 if self-managing"
-            />
-            {state.strategy === "LTR" ? (
+                }}
+                hint={`% of price; 0.0035 ≈ 0.35%/yr (US avg)`}
+              />
               <Field
-                label="Vacancy (of year)"
+                label="HOA ($/mo)"
+                type="number"
+                value={state.hoaMonthly}
+                onChange={(e) => patch("hoaMonthly", e.target.value)}
+                hint={
+                  deal.hoa_monthly != null
+                    ? `Provider reported $${deal.hoa_monthly}/mo`
+                    : toNum(state.hoaMonthly) > 0
+                      ? "Unreported — assumed typical fee for this property type"
+                      : "Not reported by provider — enter manually if known"
+                }
+              />
+              <div className="mb-3">
+                <Label htmlFor="pmi-input">PMI %/yr</Label>
+                <Input
+                  id="pmi-input"
+                  type="number"
+                  inputMode="decimal"
+                  step="0.0001"
+                  readOnly={state.pmiOverride === null}
+                  value={
+                    state.pmiOverride !== null
+                      ? state.pmiOverride
+                      : derived.autoPmiRate.toFixed(4)
+                  }
+                  onChange={(e) => patch("pmiOverride", e.target.value)}
+                />
+                <div className="flex items-center justify-between mt-1">
+                  <p className="text-xs text-textMuted">
+                    {state.pmiOverride === null
+                      ? derived.ltv > 0.8
+                        ? `Auto: ${(derived.autoPmiRate * 100).toFixed(2)}% · LTV ${(derived.ltv * 100).toFixed(1)}%`
+                        : `Auto: 0% · LTV ${(derived.ltv * 100).toFixed(1)}% (no PMI)`
+                      : `Manual override`}
+                  </p>
+                  <button
+                    type="button"
+                    className="text-xs text-accent hover:underline"
+                    onClick={() =>
+                      patch(
+                        "pmiOverride",
+                        state.pmiOverride === null
+                          ? derived.autoPmiRate.toFixed(4)
+                          : null,
+                      )
+                    }
+                  >
+                    {state.pmiOverride === null ? "Edit" : "↻ Auto"}
+                  </button>
+                </div>
+              </div>
+              <Field label="Utilities ($/mo)" type="number" value={state.utilitiesMonthly} onChange={(e) => patch("utilitiesMonthly", e.target.value)} />
+              <Field label="Maintenance ($/mo)" type="number" value={state.maintenanceMonthly} onChange={(e) => patch("maintenanceMonthly", e.target.value)} hint="Seeded at 1%/yr of price" />
+              <Field label="Misc ($/mo)" type="number" value={state.miscMonthly} onChange={(e) => patch("miscMonthly", e.target.value)} />
+              <Field
+                label="Mgmt fee (of revenue)"
                 type="number"
                 inputMode="decimal"
                 step="0.01"
-                value={state.vacancyRateLTR}
-                onChange={(e) => patch("vacancyRateLTR", e.target.value)}
-                hint="0.05 = ~18 unrented days/yr"
+                value={state.managementFeePct}
+                onChange={(e) => patch("managementFeePct", e.target.value)}
+                hint="0.15 = 15%; set 0 if self-managing"
               />
-            ) : null}
-          </div>
-          <Field
-            label={
-              state.strategy === "STR"
-                ? "Average daily rate ($, fills all 12 months below)"
-                : "Monthly rent ($)"
-            }
-            type="number"
-            value={state.monthlyRentLTR}
-            onChange={(e) => patchRentOrAdr(e.target.value)}
-            hint={
-              state.strategy === "STR"
-                ? "Changes propagate into the 12-month matrix below"
-                : undefined
-            }
-          />
-          <Field
-            label="Strategy"
-            value={state.strategy}
-            onChange={(e) =>
-              patch(
-                "strategy",
-                e.target.value.toUpperCase() === "STR" ? "STR" : "LTR",
-              )
-            }
-            hint="LTR or STR"
-          />
-        </CollapsibleCard>
+              {state.strategy === "LTR" ? (
+                <Field
+                  label="Vacancy (of year)"
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  value={state.vacancyRateLTR}
+                  onChange={(e) => patch("vacancyRateLTR", e.target.value)}
+                  hint="0.05 = ~18 unrented days/yr"
+                />
+              ) : null}
+            </div>
+            <Field
+              label={
+                state.strategy === "STR"
+                  ? "Average daily rate ($, fills all 12 months below)"
+                  : "Monthly rent ($)"
+              }
+              type="number"
+              value={state.monthlyRentLTR}
+              onChange={(e) => patchRentOrAdr(e.target.value)}
+              hint={
+                state.strategy === "STR"
+                  ? "Changes propagate into the 12-month matrix below"
+                  : undefined
+              }
+            />
+            <Field
+              label="Strategy"
+              value={state.strategy}
+              onChange={(e) =>
+                patch(
+                  "strategy",
+                  e.target.value.toUpperCase() === "STR" ? "STR" : "LTR",
+                )
+              }
+              hint="LTR or STR"
+            />
+          </CollapsibleCard>
+        </div>
 
-        <PhotoConditionEstimate
-          dealId={deal.id}
-          cached={cachedConditionEstimate}
-          included={conditionCostsIncluded}
-          onIncludedChange={setConditionCostsIncludedInScenario}
-          photoCount={photos.length}
-          onEstimateChange={setLiveConditionEstimate}
-          focusFindingId={focusFindingId}
-          focusNonce={focusFindingNonce}
-          autoRun={autoConditionAnalysis}
-          onSelectPhoto={(i) => {
-            setPhotoIndex(i);
-            if (typeof document !== "undefined") {
-              document
-                .getElementById("deal-photos")
-                ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-            }
-          }}
-        />
-
-        {state.strategy === "STR" ? (
-          <StrMarketEstimate
+        <div className="order-12 lg:order-none">
+          <PhotoConditionEstimate
             dealId={deal.id}
-            cached={cachedStrEstimate}
-            onApply={applyStrEstimate}
-            baselineSource={
-              marketAdrIntel &&
-              (marketAdrIntel.adrLow !== undefined ||
-                marketAdrIntel.adrMedian !== undefined ||
-                marketAdrIntel.adrHigh !== undefined)
-                ? "market_checked"
-                : "heuristic"
-            }
-          />
-        ) : (
-          <LtrMarketEstimate
-            dealId={deal.id}
-            cached={cachedLtrEstimate}
-            onApply={applyLtrEstimate}
-            disabledReason={
-              isLandDeal
-                ? "Vacant land has no rental comps — LTR rent estimate is not available."
-                : null
-            }
-            projectRent={(monthlyRent) => {
-              const projected = computeProForma({
-                ...inputs,
-                strategy: "LTR",
-                monthlyRentLTR: monthlyRent,
-              });
-              return {
-                monthlyCashflow: projected.annualPreTaxProfit / 12,
-                annualAfterTax: projected.annualPostTaxProfit,
-              };
+            cached={cachedConditionEstimate}
+            included={conditionCostsIncluded}
+            onIncludedChange={setConditionCostsIncludedInScenario}
+            photoCount={photos.length}
+            onEstimateChange={setLiveConditionEstimate}
+            focusFindingId={focusFindingId}
+            focusNonce={focusFindingNonce}
+            autoRun={autoConditionAnalysis}
+            onSelectPhoto={(i) => {
+              setPhotoIndex(i);
+              if (typeof document !== "undefined") {
+                document
+                  .getElementById("deal-photos")
+                  ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              }
             }}
           />
-        )}
+        </div>
 
-        <ScenarioSimulator
-          baseline={baseline}
-          currentPrice={derived.price}
-          currentDownPayment={derived.downPayment}
-          monthlyCashflow={result.annualPreTaxProfit / 12}
-          onChange={(next) => {
-            setState((s) => ({
-              ...s,
-              price: String(Math.round(next.price)),
-              downPayment: String(Math.round(next.downPayment)),
-            }));
-          }}
-          inputs={inputs}
-        />
+        <div className="order-11 lg:order-none">
+          {state.strategy === "STR" ? (
+            <StrMarketEstimate
+              dealId={deal.id}
+              cached={cachedStrEstimate}
+              onApply={applyStrEstimate}
+              baselineSource={
+                marketAdrIntel &&
+                (marketAdrIntel.adrLow !== undefined ||
+                  marketAdrIntel.adrMedian !== undefined ||
+                  marketAdrIntel.adrHigh !== undefined)
+                  ? "market_checked"
+                  : "heuristic"
+              }
+            />
+          ) : (
+            <LtrMarketEstimate
+              dealId={deal.id}
+              cached={cachedLtrEstimate}
+              onApply={applyLtrEstimate}
+              disabledReason={
+                isLandDeal
+                  ? "Vacant land has no rental comps — LTR rent estimate is not available."
+                  : null
+              }
+              projectRent={(monthlyRent) => {
+                const projected = computeProForma({
+                  ...inputs,
+                  strategy: "LTR",
+                  monthlyRentLTR: monthlyRent,
+                });
+                return {
+                  monthlyCashflow: projected.annualPreTaxProfit / 12,
+                  annualAfterTax: projected.annualPostTaxProfit,
+                };
+              }}
+            />
+          )}
+        </div>
 
-        <GapDiagnosis
-          inputs={inputs}
-          monthlyCashflow={result.annualPreTaxProfit / 12}
-          onApplyPrice={(price) =>
-            setState((s) => ({ ...s, price: String(Math.round(price)) }))
-          }
-          onApplyDown={(down) =>
-            setState((s) => ({ ...s, downPayment: String(Math.round(down)) }))
-          }
-          onApplyRent={(rent) =>
-            setState((s) => ({ ...s, monthlyRentLTR: String(Math.round(rent)) }))
-          }
-        />
+        <div className="order-9 lg:order-none">
+          <ScenarioSimulator
+            baseline={baseline}
+            currentPrice={derived.price}
+            currentDownPayment={derived.downPayment}
+            monthlyCashflow={result.annualPreTaxProfit / 12}
+            onChange={(next) => {
+              setState((s) => ({
+                ...s,
+                price: String(Math.round(next.price)),
+                downPayment: String(Math.round(next.downPayment)),
+              }));
+            }}
+            inputs={inputs}
+          />
+        </div>
 
-        <ScenariosPanel
-          scenarios={scenarios}
-          loading={scenariosLoading}
-          activeId={activeScenarioId}
-          onSave={saveScenario}
-          onLoad={loadScenario}
-          onDelete={removeScenario}
-          saving={busy === "save-scenario"}
-          deleting={busy === "delete-scenario"}
-        />
+        <div className="order-10 lg:order-none">
+          <GapDiagnosis
+            inputs={inputs}
+            monthlyCashflow={result.annualPreTaxProfit / 12}
+            onApplyPrice={(price) =>
+              setState((s) => ({ ...s, price: String(Math.round(price)) }))
+            }
+            onApplyDown={(down) =>
+              setState((s) => ({ ...s, downPayment: String(Math.round(down)) }))
+            }
+            onApplyRent={(rent) =>
+              setState((s) => ({ ...s, monthlyRentLTR: String(Math.round(rent)) }))
+            }
+          />
+        </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="order-[14] lg:order-none">
+          <ScenariosPanel
+            scenarios={scenarios}
+            loading={scenariosLoading}
+            activeId={activeScenarioId}
+            onSave={saveScenario}
+            onLoad={loadScenario}
+            onDelete={removeScenario}
+            saving={busy === "save-scenario"}
+            deleting={busy === "delete-scenario"}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 order-[15] lg:order-none">
           {isSaved ? (
             <Button variant="secondary" onClick={unsave}>
               Unsave
