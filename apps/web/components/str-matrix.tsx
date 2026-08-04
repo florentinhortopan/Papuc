@@ -79,9 +79,9 @@ export function StrMatrix({
   }
 
   return (
-    <div className="bg-surfaceAlt border border-border rounded-2xl p-4">
+    <div className="bg-surfaceAlt border border-border rounded-2xl p-4 min-w-0 max-w-full">
       <div className="flex items-start justify-between gap-2 mb-3">
-        <div>
+        <div className="min-w-0">
           <p className="text-text text-sm font-semibold">12-month STR matrix</p>
           <p className="text-textMuted text-xs mt-0.5">
             Nights, ADR, occupancy, and stays. Swipe months on small screens.
@@ -94,11 +94,11 @@ export function StrMatrix({
 
       {/*
         Sticky row labels + horizontally swipeable month cells. The table
-        is sized to its content (not squeezed into the viewport) so inputs
-        stay readable; overflow-x handles the swipe.
+        keeps intrinsic width for readable inputs; min-w-0 + overflow-x on
+        the wrapper keeps it from blowing out the page grid.
       */}
-      <div className="overflow-x-auto overscroll-x-contain touch-pan-x -mx-1 px-1">
-        <table className="border-separate border-spacing-0 text-sm min-w-max w-max">
+      <div className="min-w-0 max-w-full overflow-x-auto overscroll-x-contain touch-pan-x">
+        <table className="border-separate border-spacing-0 text-sm w-max">
           <thead>
             <tr>
               <th

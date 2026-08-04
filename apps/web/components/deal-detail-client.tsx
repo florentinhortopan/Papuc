@@ -709,8 +709,10 @@ export function DealDetailClient({
   }
 
   return (
-    <div className="mt-2 grid lg:grid-cols-[1.4fr,1fr] gap-6">
-      <div className="space-y-6">
+    <div className="mt-2 grid lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] gap-6">
+      {/* min-w-0: grid items default to min-width:auto and will grow to fit
+          the STR matrix table instead of scrolling it horizontally. */}
+      <div className="space-y-6 min-w-0">
         <div className="relative">
           <PhotoCarousel photos={photos} />
           {photosLoading ? (
@@ -799,7 +801,7 @@ export function DealDetailClient({
         <ComparablesPanel dealId={deal.id} />
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-4 min-w-0">
         {error ? (
           <div className="bg-danger/10 border border-danger/30 rounded-xl p-3">
             <p className="text-danger text-xs">{error}</p>
