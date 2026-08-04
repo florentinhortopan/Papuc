@@ -111,6 +111,39 @@ describe("ProjectConstraints new optional filter fields", () => {
     expect(hoaMax.minimum).toBe(0);
   });
 
+  it("accepts state-wide markets and lotSizeMinSqft (land searches)", () => {
+    const ok = ProjectConstraintsSchema.safeParse({
+      markets: [{ kind: "state", state: "CA" }],
+      mortgage: { rateAPR: 0.075, termYears: 30, ltv: 0.75 },
+      propertyTypes: ["land"],
+      lotSizeMinSqft: 217_800, // 5 acres
+    });
+    expect(ok.success).toBe(true);
+
+    const negativeLot = ProjectConstraintsSchema.safeParse({
+      markets: [{ kind: "state", state: "CA" }],
+      mortgage: { rateAPR: 0.075, termYears: 30, ltv: 0.75 },
+      lotSizeMinSqft: -1,
+    });
+    expect(negativeLot.success).toBe(false);
+  });
+
+  it("exposes the state market kind and lotSizeMinSqft in the Claude tool schema", () => {
+    const constraints = PARSE_PROJECT_TOOL.input_schema.properties
+      .constraints as {
+      properties: {
+        markets: { items: { oneOf: Array<{ properties: { kind: { const: string } } }> } };
+        lotSizeMinSqft?: { type?: string; minimum?: number };
+      };
+    };
+    const kinds = constraints.properties.markets.items.oneOf.map(
+      (v) => v.properties.kind.const,
+    );
+    expect(kinds).toContain("state");
+    expect(constraints.properties.lotSizeMinSqft?.type).toBe("number");
+    expect(constraints.properties.lotSizeMinSqft?.minimum).toBe(0);
+  });
+
   it("rejects nonsensical year built and unknown days-on-market tokens", () => {
     const earlyYear = ProjectConstraintsSchema.safeParse({
       markets: [{ kind: "zip", zip: "10001" }],

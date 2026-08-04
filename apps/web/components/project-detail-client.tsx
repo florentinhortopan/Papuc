@@ -334,6 +334,9 @@ export function ProjectDetailClient({
           {c.bedsMax ? <Badge>≤ {c.bedsMax} bd</Badge> : null}
           {c.bathsMin ? <Badge>≥ {c.bathsMin} ba</Badge> : null}
           {c.sqftMin ? <Badge>≥ {c.sqftMin} sqft</Badge> : null}
+          {c.lotSizeMinSqft ? (
+            <Badge>≥ {Math.round((c.lotSizeMinSqft / 43_560) * 100) / 100} ac</Badge>
+          ) : null}
           {c.yearBuiltMin ? <Badge>Built ≥ {c.yearBuiltMin}</Badge> : null}
           {c.daysOnMarketMax ? <Badge>Listed ≤ {c.daysOnMarketMax}</Badge> : null}
           {c.downPayment ? (

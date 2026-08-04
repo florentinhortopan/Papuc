@@ -5,6 +5,7 @@ import {
   computeBatchContext,
   scoreAsset,
   scoreFinance,
+  scoreLandFinance,
   scoreOpportunity,
   type ScoreSignals,
 } from "../scoring";
@@ -203,5 +204,57 @@ describe("computeBatchContext", () => {
     const ctx = computeBatchContext([]);
     expect(ctx.medianSqft).toBeUndefined();
     expect(ctx.medianLotSqft).toBeUndefined();
+    expect(ctx.medianPricePerLotSqft).toBeUndefined();
+  });
+});
+
+describe("land scoring", () => {
+  // Four 1-acre parcels at $1, $2, $3, $4 per lot-sqft.
+  const batch = computeBatchContext([
+    { lotSizeSqft: 43_560, price: 43_560 },
+    { lotSizeSqft: 43_560, price: 87_120 },
+    { lotSizeSqft: 43_560, price: 130_680 },
+    { lotSizeSqft: 43_560, price: 174_240 },
+  ]);
+
+  it("computes price-per-lot-sqft percentiles", () => {
+    expect(batch.medianPricePerLotSqft).toBeCloseTo(2.5);
+    expect(batch.bottomQuartilePricePerLotSqft).toBeCloseTo(1.75);
+  });
+
+  it("rewards cheap dirt and stays neutral without data", () => {
+    // At/below the batch's cheap quartile.
+    expect(
+      scoreLandFinance({ price: 43_560, lotSizeSqft: 43_560 }, batch),
+    ).toBe(55);
+    // Below median but above the cheap quartile.
+    expect(
+      scoreLandFinance({ price: 87_120, lotSizeSqft: 43_560 }, batch),
+    ).toBe(42);
+    // Above median: neutral.
+    expect(
+      scoreLandFinance({ price: 174_240, lotSizeSqft: 43_560 }, batch),
+    ).toBe(30);
+    // Missing signals or lot size: neutral.
+    expect(scoreLandFinance(undefined, batch)).toBe(30);
+    expect(scoreLandFinance({ price: 100_000 }, batch)).toBe(30);
+  });
+
+  it("computeBaseScore in land mode swaps the DSCR tiers for the land bucket", () => {
+    const common = {
+      dscr: 0,
+      monthlyCashflow: -450, // carrying cost — normal for vacant land
+      targetCashflow: 0,
+      cashOnCash: -0.05,
+      signals: { price: 43_560, lotSizeSqft: 43_560 } as ScoreSignals,
+      batch,
+      now: NOW,
+    };
+    const land = computeBaseScore({ ...common, assetClass: "land" });
+    const rental = computeBaseScore(common);
+    expect(land.components.finance).toBe(55);
+    // The same numbers scored as a rental crater on the DSCR tier.
+    expect(rental.components.finance).toBeLessThan(land.components.finance);
+    expect(land.score).toBeGreaterThan(rental.score);
   });
 });

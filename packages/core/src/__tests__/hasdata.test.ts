@@ -95,6 +95,20 @@ describe("extractLotSizeSqft", () => {
     expect(extractLotSizeSqft({ lotAreaValue: -1 })).toBeUndefined();
     expect(extractLotSizeSqft({ lotAreaValue: "n/a" })).toBeUndefined();
   });
+
+  it("treats unitless values under 100 as acres (bare acreage records)", () => {
+    // No US lot is under 100 sqft, so 2.5 without units means 2.5 acres —
+    // previously this was read as 2.5 sqft.
+    expect(extractLotSizeSqft({ lotAreaValue: 2.5 })).toBe(108_900);
+    expect(extractLotSizeSqft({ lotSize: 40.7 })).toBe(1_772_892);
+    // Larger bare values are already sqft.
+    expect(extractLotSizeSqft({ lotAreaValue: 8000 })).toBe(8000);
+  });
+
+  it("parses combined value+unit strings", () => {
+    expect(extractLotSizeSqft({ lotSize: "2.5 acres" })).toBe(108_900);
+    expect(extractLotSizeSqft({ lotSize: "10,890 sqft" })).toBe(10_890);
+  });
 });
 
 describe("normalizeZillowListing", () => {
