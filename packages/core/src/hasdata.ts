@@ -518,14 +518,25 @@ const SQFT_PER_ACRE = 43_560;
 
 /**
  * Normalize `lotAreaValue` + `lotAreaUnits` to square feet. Live records
- * use "acres" or "sqft" (sometimes "Square Feet"); anything else is
- * treated as already-sqft since Zillow's US inventory only uses the two.
+ * use "acres" or "sqft" (sometimes "Square Feet"); legacy/variant records
+ * sometimes ship a combined string like "2.5 acres" instead. When no units
+ * can be found anywhere, disambiguate by magnitude: no US lot is under
+ * 100 sqft, so a bare value below 100 (e.g. 2.5 on a 2.5-acre parcel) is
+ * acreage; anything larger is assumed to already be sqft.
  */
 export function extractLotSizeSqft(o: Record<string, any>): number | undefined {
-  const value = toFiniteNumber(o.lotAreaValue ?? o.lotSize);
+  const raw = o.lotAreaValue ?? o.lotSize;
+  const value =
+    toFiniteNumber(raw) ??
+    (typeof raw === "string"
+      ? toFiniteNumber(raw.replace(/[^\d.]/g, ""))
+      : undefined);
   if (value === undefined || value <= 0) return undefined;
-  const units = String(o.lotAreaUnits ?? "").toLowerCase();
+  const embeddedUnits =
+    typeof raw === "string" ? raw.replace(/[\d.,\s]/g, "") : "";
+  const units = String(o.lotAreaUnits ?? embeddedUnits).toLowerCase();
   if (units.startsWith("acre")) return Math.round(value * SQFT_PER_ACRE);
+  if (units === "" && value < 100) return Math.round(value * SQFT_PER_ACRE);
   return Math.round(value);
 }
 

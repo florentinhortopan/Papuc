@@ -54,6 +54,8 @@ export const MarketSchema = z.union([
   z.object({ kind: z.literal("city"), city: z.string(), state: z.string() }),
   z.object({ kind: z.literal("zip"), zip: z.string() }),
   z.object({ kind: z.literal("county"), county: z.string(), state: z.string() }),
+  /** State-wide search, e.g. "land in California" → { kind: "state", state: "CA" }. */
+  z.object({ kind: z.literal("state"), state: z.string() }),
   z.object({
     kind: z.literal("polygon"),
     polygon: z.array(z.tuple([z.number(), z.number()])),
@@ -90,6 +92,12 @@ export const ProjectConstraintsSchema = z.object({
   bathsMax: z.number().nonnegative().optional(),
   sqftMin: z.number().nonnegative().optional(),
   sqftMax: z.number().nonnegative().optional(),
+  /**
+   * Minimum lot size in SQUARE FEET (1 acre = 43,560 sqft). This is the
+   * only place a land-size requirement belongs — `sqftMin` is interior
+   * living area and would zero out lot searches if misused for acreage.
+   */
+  lotSizeMinSqft: z.number().nonnegative().optional(),
   yearBuiltMin: z
     .number()
     .int()

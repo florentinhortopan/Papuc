@@ -573,12 +573,20 @@ function buildHasDataFilters(
   };
   if (constraints.priceMin !== undefined) filters.priceMin = constraints.priceMin;
   if (constraints.priceMax !== undefined) filters.priceMax = constraints.priceMax;
-  if (constraints.bedsMin !== undefined) filters.bedsMin = constraints.bedsMin;
-  if (constraints.bedsMax !== undefined) filters.bedsMax = constraints.bedsMax;
-  if (constraints.bathsMin !== undefined) filters.bathsMin = constraints.bathsMin;
-  if (constraints.bathsMax !== undefined) filters.bathsMax = constraints.bathsMax;
-  if (constraints.sqftMin !== undefined) filters.sqftMin = constraints.sqftMin;
-  if (constraints.sqftMax !== undefined) filters.sqftMax = constraints.sqftMax;
+  // Vacant lots carry no beds/baths/interior sqft on Zillow, so any of
+  // those filters on a land-only search wipes out the entire inventory
+  // (live probe: beds[min]=1 cut 28,477 CA lots to 21; squareFeet[min]
+  // cut them to 1). Lot size is the only structural filter that applies.
+  if (!isLandOnlyProject(constraints)) {
+    if (constraints.bedsMin !== undefined) filters.bedsMin = constraints.bedsMin;
+    if (constraints.bedsMax !== undefined) filters.bedsMax = constraints.bedsMax;
+    if (constraints.bathsMin !== undefined) filters.bathsMin = constraints.bathsMin;
+    if (constraints.bathsMax !== undefined) filters.bathsMax = constraints.bathsMax;
+    if (constraints.sqftMin !== undefined) filters.sqftMin = constraints.sqftMin;
+    if (constraints.sqftMax !== undefined) filters.sqftMax = constraints.sqftMax;
+  }
+  if (constraints.lotSizeMinSqft !== undefined)
+    filters.lotSizeMin = constraints.lotSizeMinSqft;
   if (constraints.yearBuiltMin !== undefined)
     filters.yearBuiltMin = constraints.yearBuiltMin;
   if (constraints.hoaMax !== undefined) filters.hoaMax = constraints.hoaMax;
@@ -610,7 +618,10 @@ export const ZILLOW_UNSUPPORTED_TYPES = new Set([
 /**
  * Zillow's Listing API takes a free-form area string as `keyword`. For
  * city markets we use "City, ST"; for zip we pass the zip code directly;
- * for county we fall back to "<County> County, ST". Polygon markets aren't
+ * for county we fall back to "<County> County, ST"; for state-wide
+ * searches the bare 2-letter code works ("CA" → 28k+ results, verified by
+ * live probe — while "California, CA" resolves to nothing, which is how
+ * state-wide scouts used to silently return zero). Polygon markets aren't
  * supported by the listing endpoint — surface a clear error rather than
  * silently returning the wrong region.
  */
@@ -618,8 +629,9 @@ function marketToZillowKeyword(market: Market): string {
   if (market.kind === "city") return `${market.city}, ${market.state}`;
   if (market.kind === "zip") return market.zip;
   if (market.kind === "county") return `${market.county} County, ${market.state}`;
+  if (market.kind === "state") return market.state;
   throw new Error(
-    "HasData/Zillow scout does not support polygon markets — pick a city, zip, or county.",
+    "HasData/Zillow scout does not support polygon markets — pick a city, zip, county, or state.",
   );
 }
 

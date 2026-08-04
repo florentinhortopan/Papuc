@@ -19,6 +19,14 @@ If the user mentions Airbnb / short-term rental / vacation rental, set strategy 
 
 If the user gives a single market, return one entry. Always include at least one market.
 
+MARKET KINDS — pick the most specific shape the user actually gave:
+- A city ("Austin, TX") → { kind: "city", city: "Austin", state: "TX" }.
+- A zip code → { kind: "zip", zip: "78704" }.
+- A county ("Placer County") → { kind: "county", county: "Placer", state: "CA" }.
+- A whole state ("California", "anywhere in Texas") → { kind: "state", state: "CA" }. NEVER fabricate a city for a state-wide request — do not return { kind: "city", city: "California" }.
+
+LAND / LOT SIZE — land size lives in lotSizeMinSqft, ALWAYS in square feet (1 acre = 43,560 sqft): "at least 5 acres" → lotSizeMinSqft: 217800; "half an acre or more" → lotSizeMinSqft: 21780. NEVER put land/lot size into sqftMin or sqftMax — those are interior living area, and vacant land has none. For land searches, omit bedsMin/bathsMin/sqftMin entirely unless the user explicitly asks about a structure.
+
 PROPERTY TYPE DISAMBIGUATION — pick the most specific value(s) and only fall back to "any" when the user is genuinely silent on type:
 - "house", "SFR", "single family", "detached" → single_family
 - "condo", "condominium" → condo
@@ -55,6 +63,8 @@ DEFINITION OF A "BEST PROPERTY" — apply in this order:
 3. Asset quality breaks remaining ties: larger sqft or lot for the money, and no HOA (hoaMonthly = 0) are pluses; a heavy HOA (> $150/mo) drags an otherwise-equal deal down. Old listings are NOT penalized for staleness — treat high daysOnMarket as neutral, or even as price-negotiation room when paired with a cut.
 
 Numbers come first. Mention specific numbers in the rationale (e.g., "$760/mo cashflow at 1.32 DSCR"), and weave in the strongest opportunity/asset signal when one exists.
+
+LAND DEALS (isLand: true) — vacant land has no rent, so DSCR/cashflow are not meaningful gates: dscr is 0 and monthlyCashflow is just the (negative) monthly carrying cost. Do NOT apply rule 1's DSCR tiers to land. Instead rank land on value per acre (pricePerAcre vs. the batch's peers — cheaper is better), price cuts, freshness, and how well the lot size fits the user's stated goal. Mention acreage and price per acre in the rationale (e.g., "$4.2k/acre for 12 acres, cut $10k last week").
 
 STR DEALS — trust the revenue assumption in proportion to its provenance (adrSource): "airroi" means the ADR/occupancy come from real comparable Airbnb listings (most trustworthy); "market_checked" means a rent-based heuristic clamped to a researched market range; "heuristic" is a pure guess — hedge accordingly. When marketAdrMedian is present, flag deals whose assumed adr is far above it (revenue likely optimistic) and credit deals that cashflow at or below the market's typical rate (e.g., "pencils at $180/night vs $220 market median").
 
@@ -103,6 +113,18 @@ export const PARSE_PROJECT_TOOL = {
                     state: { type: "string" },
                   },
                 },
+                {
+                  type: "object",
+                  required: ["kind", "state"],
+                  properties: {
+                    kind: { const: "state" },
+                    state: {
+                      type: "string",
+                      description:
+                        "2-letter state code for a state-wide search (e.g. 'CA' for 'land in California').",
+                    },
+                  },
+                },
               ],
             },
           },
@@ -122,8 +144,21 @@ export const PARSE_PROJECT_TOOL = {
           bedsMax: { type: "integer" },
           bathsMin: { type: "number" },
           bathsMax: { type: "number" },
-          sqftMin: { type: "number" },
-          sqftMax: { type: "number" },
+          sqftMin: {
+            type: "number",
+            description:
+              "Minimum INTERIOR living area in sqft. NEVER use for land/lot size — use lotSizeMinSqft for that.",
+          },
+          sqftMax: {
+            type: "number",
+            description: "Maximum INTERIOR living area in sqft.",
+          },
+          lotSizeMinSqft: {
+            type: "number",
+            minimum: 0,
+            description:
+              "Minimum lot size in SQUARE FEET. Convert acres at 43,560 sqft/acre: '5 acres' is 217800.",
+          },
           yearBuiltMin: {
             type: "integer",
             minimum: 1800,

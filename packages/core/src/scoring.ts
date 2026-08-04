@@ -46,6 +46,10 @@ export interface BatchContext {
   medianLotSqft?: number;
   /** 75th-percentile lot size (sqft). */
   topQuartileLotSqft?: number;
+  /** Median price per lot-sqft across the batch — the land value metric. */
+  medianPricePerLotSqft?: number;
+  /** 25th-percentile price per lot-sqft (the cheap end of the batch). */
+  bottomQuartilePricePerLotSqft?: number;
 }
 
 export interface ScoreComponents {
@@ -66,6 +70,12 @@ export interface BaseScoreArgs {
   /** User's monthly cashflow goal; 0/absent = no target set. */
   targetCashflow: number;
   cashOnCash: number;
+  /**
+   * "rental" (default) scores the finance bucket on DSCR/cashflow.
+   * "land" swaps it for price-per-lot-sqft vs. the batch — vacant land has
+   * no rent, so DSCR tiers would unfairly floor every parcel.
+   */
+  assetClass?: "rental" | "land";
   signals?: ScoreSignals;
   batch?: BatchContext;
   /** Injectable clock for tests (defaults to Date.now()). */
@@ -97,6 +107,33 @@ export function scoreFinance(args: {
   if (args.cashOnCash >= 0.1) s += 4;
   if (args.cashOnCash < 0) s -= 8;
 
+  return clamp(s, 0, 60);
+}
+
+/**
+ * Land finance bucket, 0–60. Vacant land earns no rent, so "finance" here
+ * means acquisition value: price per lot-sqft compared to the rest of the
+ * scout batch. Cheaper-than-peers dirt scores up; missing data stays at a
+ * neutral 30 so opportunity/asset signals still differentiate.
+ */
+export function scoreLandFinance(
+  signals: ScoreSignals | undefined,
+  batch: BatchContext | undefined,
+): number {
+  let s = 30;
+  const price = positiveOrUndefined(signals?.price);
+  const lot = positiveOrUndefined(signals?.lotSizeSqft);
+  if (price !== undefined && lot !== undefined && batch?.medianPricePerLotSqft) {
+    const ppsf = price / lot;
+    if (
+      batch.bottomQuartilePricePerLotSqft &&
+      ppsf <= batch.bottomQuartilePricePerLotSqft
+    ) {
+      s += 25;
+    } else if (ppsf < batch.medianPricePerLotSqft) {
+      s += 12;
+    }
+  }
   return clamp(s, 0, 60);
 }
 
@@ -175,7 +212,10 @@ export function scoreAsset(
 export function computeBaseScore(args: BaseScoreArgs): BaseScoreResult {
   const now = args.now ?? Date.now();
   const components: ScoreComponents = {
-    finance: scoreFinance(args),
+    finance:
+      args.assetClass === "land"
+        ? scoreLandFinance(args.signals, args.batch)
+        : scoreFinance(args),
     opportunity: scoreOpportunity(args.signals, now),
     asset: scoreAsset(args.signals, args.batch),
   };
@@ -193,7 +233,7 @@ export function computeBaseScore(args: BaseScoreArgs): BaseScoreResult {
  * are everything the market offered, not just survivors).
  */
 export function computeBatchContext(
-  candidates: Array<{ sqft?: number; lotSizeSqft?: number }>,
+  candidates: Array<{ sqft?: number; lotSizeSqft?: number; price?: number }>,
 ): BatchContext {
   const sqfts = candidates
     .map((c) => positiveOrUndefined(c.sqft))
@@ -201,11 +241,20 @@ export function computeBatchContext(
   const lots = candidates
     .map((c) => positiveOrUndefined(c.lotSizeSqft))
     .filter((v): v is number => v !== undefined);
+  const pricesPerLotSqft = candidates
+    .map((c) => {
+      const price = positiveOrUndefined(c.price);
+      const lot = positiveOrUndefined(c.lotSizeSqft);
+      return price !== undefined && lot !== undefined ? price / lot : undefined;
+    })
+    .filter((v): v is number => v !== undefined);
   return {
     medianSqft: percentile(sqfts, 0.5),
     topQuartileSqft: percentile(sqfts, 0.75),
     medianLotSqft: percentile(lots, 0.5),
     topQuartileLotSqft: percentile(lots, 0.75),
+    medianPricePerLotSqft: percentile(pricesPerLotSqft, 0.5),
+    bottomQuartilePricePerLotSqft: percentile(pricesPerLotSqft, 0.25),
   };
 }
 
