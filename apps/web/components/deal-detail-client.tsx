@@ -787,6 +787,10 @@ export function DealDetailClient({
 
         <CashflowChart monthlyPreTaxProfit={result.monthlyPreTaxProfit} />
 
+        {state.strategy === "STR" ? (
+          <StrMatrix value={strMatrix} onChange={setStrMatrix} />
+        ) : null}
+
         <ComparablesPanel dealId={deal.id} />
       </div>
 
@@ -1096,10 +1100,6 @@ export function DealDetailClient({
           saving={busy === "save-scenario"}
           deleting={busy === "delete-scenario"}
         />
-
-        {state.strategy === "STR" ? (
-          <StrMatrix value={strMatrix} onChange={setStrMatrix} />
-        ) : null}
 
         <div className="grid grid-cols-2 gap-2">
           {isSaved ? (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,32 @@ export interface ConditionFinding {
   estimatedCostHigh?: number;
   costBucket: "rehab" | "maintenance" | "none";
   confidence: "high" | "medium" | "low";
+}
+
+/** Keep in sync with packages/core sortFindingsByGravity — critical first. */
+const SEVERITY_RANK: Record<ConditionSeverity, number> = {
+  critical: 4,
+  major: 3,
+  minor: 2,
+  cosmetic: 1,
+};
+
+function sortFindingsClient(findings: ConditionFinding[]): ConditionFinding[] {
+  return [...findings].sort((a, b) => {
+    const sev =
+      (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0);
+    if (sev !== 0) return sev;
+    const bucketRank = (c: ConditionFinding["costBucket"]) =>
+      c === "rehab" ? 2 : c === "maintenance" ? 1 : 0;
+    const bucket = bucketRank(b.costBucket) - bucketRank(a.costBucket);
+    if (bucket !== 0) return bucket;
+    const mid = (f: ConditionFinding) => {
+      const lo = f.estimatedCostLow ?? 0;
+      const hi = f.estimatedCostHigh ?? lo;
+      return (lo + hi) / 2;
+    };
+    return mid(b) - mid(a);
+  });
 }
 
 export interface ConditionEstimatePayload {
@@ -175,13 +201,17 @@ export function PhotoConditionEstimate({
     try {
       let est = await fetchConditionJson(dealId, refresh);
       setEstimate(est);
-      // Continue until the server reports done (one batch per request).
+      // One vision batch per request — not status polling. Each response
+      // carries merged findings so far; we re-request until done.
       let guard = 0;
       while (est.done === false && guard < 40) {
         guard += 1;
         const analyzed = est.progress?.analyzed ?? est.photoCount ?? 0;
         const total = est.progress?.total ?? est.photosTotal ?? "?";
-        setProgressLabel(`Analyzing photos ${analyzed} of ${total}…`);
+        const n = est.findings.length;
+        setProgressLabel(
+          `Analyzing photos ${analyzed} of ${total}… ${n} finding${n === 1 ? "" : "s"} so far`,
+        );
         est = await fetchConditionJson(dealId, false);
         setEstimate(est);
       }
@@ -208,6 +238,10 @@ export function PhotoConditionEstimate({
   const photosAnalyzed =
     estimate?.photoCount ?? estimate?.progress?.analyzed ?? null;
   const isComplete = Boolean(estimate?.estimatedAt && estimate.done !== false);
+  const sortedFindings = useMemo(
+    () => sortFindingsClient(estimate?.findings ?? []),
+    [estimate?.findings],
+  );
 
   return (
     <div className="bg-surfaceAlt border border-border rounded-xl p-3 space-y-2">
@@ -260,46 +294,58 @@ export function PhotoConditionEstimate({
             <p className="text-text text-xs leading-5">{estimate.summary}</p>
           ) : null}
 
-          {isComplete && estimate.findings.length > 0 ? (
-            <ul className="max-h-48 overflow-y-auto space-y-2 pr-1">
-              {estimate.findings.map((f) => (
-                <li
-                  key={f.id}
-                  className="border border-border rounded-lg px-2 py-1.5 space-y-0.5"
-                >
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <Badge variant={severityVariant(f.severity)}>
-                      {f.severity}
-                    </Badge>
-                    <Badge>{f.costBucket}</Badge>
-                    <span className="text-text text-xs font-medium">
-                      {f.title}
-                    </span>
-                  </div>
-                  <p className="text-textMuted text-[11px] leading-4">
-                    {f.detail}
-                  </p>
-                  {f.estimatedCostLow != null || f.estimatedCostHigh != null ? (
-                    <p className="text-textMuted text-[10px]">
-                      Est.{" "}
-                      {f.estimatedCostLow != null
-                        ? formatMoney(f.estimatedCostLow)
-                        : "—"}
-                      –
-                      {f.estimatedCostHigh != null
-                        ? formatMoney(f.estimatedCostHigh)
-                        : "—"}
-                      {" · "}
-                      {f.confidence} confidence
+          {sortedFindings.length > 0 ? (
+            <>
+              <p className="text-textMuted text-[10px] uppercase tracking-wide">
+                {isComplete
+                  ? "Findings (most serious first)"
+                  : "Findings so far (most serious first)"}
+              </p>
+              <ul className="max-h-56 overflow-y-auto space-y-2 pr-1">
+                {sortedFindings.map((f) => (
+                  <li
+                    key={f.id}
+                    className="border border-border rounded-lg px-2 py-1.5 space-y-0.5"
+                  >
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Badge variant={severityVariant(f.severity)}>
+                        {f.severity}
+                      </Badge>
+                      <Badge>{f.costBucket}</Badge>
+                      <span className="text-text text-xs font-medium">
+                        {f.title}
+                      </span>
+                    </div>
+                    <p className="text-textMuted text-[11px] leading-4">
+                      {f.detail}
                     </p>
-                  ) : (
-                    <p className="text-textMuted text-[10px]">
-                      {f.confidence} confidence
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
+                    {f.estimatedCostLow != null ||
+                    f.estimatedCostHigh != null ? (
+                      <p className="text-textMuted text-[10px]">
+                        Est.{" "}
+                        {f.estimatedCostLow != null
+                          ? formatMoney(f.estimatedCostLow)
+                          : "—"}
+                        –
+                        {f.estimatedCostHigh != null
+                          ? formatMoney(f.estimatedCostHigh)
+                          : "—"}
+                        {" · "}
+                        {f.confidence} confidence
+                      </p>
+                    ) : (
+                      <p className="text-textMuted text-[10px]">
+                        {f.confidence} confidence
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : loading ? (
+            <p className="text-textMuted text-[11px]">
+              Waiting for the first batch of photo findings…
+            </p>
           ) : null}
 
           {isComplete ? (

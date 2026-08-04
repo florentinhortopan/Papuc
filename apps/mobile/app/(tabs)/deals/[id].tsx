@@ -297,6 +297,12 @@ export default function DealDetail() {
           />
         </View>
 
+        {state.strategy === "STR" && strMatrix ? (
+          <View className="mb-4">
+            <StrMatrix value={strMatrix} onChange={setStrMatrix} />
+          </View>
+        ) : null}
+
         <Card className="mb-3">
           <Text className="text-text text-base font-semibold mb-2">Pro-forma summary</Text>
           <SummaryRow label="Initial sunk investment" value={formatMoney(result.initialSunkInvestment)} />
@@ -397,12 +403,6 @@ export default function DealDetail() {
             hint="LTR or STR"
           />
         </Card>
-
-        {state.strategy === "STR" && strMatrix ? (
-          <View className="mb-3">
-            <StrMatrix value={strMatrix} onChange={setStrMatrix} />
-          </View>
-        ) : null}
 
         <View className="my-3">
           <ComparablesPanel dealId={deal.id} />

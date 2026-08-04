@@ -154,6 +154,44 @@ export function worseConditionOverall(
   return OVERALL_RANK[a] >= OVERALL_RANK[b] ? a : b;
 }
 
+/** Higher = more serious (red flags first). */
+const SEVERITY_RANK: Record<ConditionSeverity, number> = {
+  critical: 4,
+  major: 3,
+  minor: 2,
+  cosmetic: 1,
+};
+
+const COST_BUCKET_RANK: Record<ConditionCostBucket, number> = {
+  rehab: 2,
+  maintenance: 1,
+  none: 0,
+};
+
+/**
+ * Order findings by gravity: critical/major red flags first, then
+ * rehab over maintenance, then higher estimated mid cost.
+ */
+export function sortFindingsByGravity(
+  findings: ConditionFinding[],
+): ConditionFinding[] {
+  return [...findings].sort((a, b) => {
+    const sev =
+      (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0);
+    if (sev !== 0) return sev;
+    const bucket =
+      (COST_BUCKET_RANK[b.costBucket] ?? 0) -
+      (COST_BUCKET_RANK[a.costBucket] ?? 0);
+    if (bucket !== 0) return bucket;
+    const mid = (f: ConditionFinding) => {
+      const lo = f.estimatedCostLow ?? 0;
+      const hi = f.estimatedCostHigh ?? lo;
+      return (lo + hi) / 2;
+    };
+    return mid(b) - mid(a);
+  });
+}
+
 /**
  * Remap a batch assessment onto the global gallery index space and
  * merge with prior findings.
@@ -177,7 +215,9 @@ export function mergeConditionBatch(args: {
     ),
   }));
 
-  const findings = [...args.priorFindings, ...remapped].slice(0, 100);
+  const findings = sortFindingsByGravity(
+    [...args.priorFindings, ...remapped].slice(0, 100),
+  );
   const priorOverall = args.priorOverall ?? "unknown";
   const overall = worseConditionOverall(priorOverall, args.batch.overall);
   const maintenanceMonthlySuggested = Math.max(

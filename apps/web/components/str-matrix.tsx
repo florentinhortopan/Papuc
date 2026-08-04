@@ -4,7 +4,20 @@ import { defaultStrSchedule } from "@papuc/core";
 
 import { Input } from "@/components/ui/input";
 
-const MONTHS = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 export interface StrMatrixValue {
   monthlyNights: number[];
@@ -22,25 +35,25 @@ const ROWS: Array<{
   {
     key: "monthlyNights",
     label: "Nights",
-    hint: "Days available per month",
+    hint: "Days available",
     formatter: (n) => String(Math.round(n)),
   },
   {
     key: "monthlyADR",
     label: "ADR ($)",
-    hint: "Average daily rate",
+    hint: "Avg daily rate",
     formatter: (n) => String(Math.round(n)),
   },
   {
     key: "monthlyOccupancy",
     label: "Occ %",
-    hint: "Occupancy fraction (0–1)",
+    hint: "0–1 fraction",
     formatter: (n) => n.toFixed(2),
   },
   {
     key: "monthlyAvgStays",
     label: "Stays",
-    hint: "Bookings per month",
+    hint: "Bookings / mo",
     formatter: (n) => String(Math.round(n)),
   },
 ];
@@ -67,19 +80,36 @@ export function StrMatrix({
 
   return (
     <div className="bg-surfaceAlt border border-border rounded-2xl p-4">
-      <p className="text-text text-sm font-semibold mb-1">12-month STR matrix</p>
-      <p className="text-textMuted text-xs mb-3">
-        Berkeley.xlsx rows 31-34: nights, ADR, occupancy, stays per month.
-      </p>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div>
+          <p className="text-text text-sm font-semibold">12-month STR matrix</p>
+          <p className="text-textMuted text-xs mt-0.5">
+            Nights, ADR, occupancy, and stays. Swipe months on small screens.
+          </p>
+        </div>
+        <p className="text-textMuted text-[10px] shrink-0 pt-0.5 sm:hidden">
+          ← swipe →
+        </p>
+      </div>
+
+      {/*
+        Sticky row labels + horizontally swipeable month cells. The table
+        is sized to its content (not squeezed into the viewport) so inputs
+        stay readable; overflow-x handles the swipe.
+      */}
+      <div className="overflow-x-auto overscroll-x-contain touch-pan-x -mx-1 px-1">
+        <table className="border-separate border-spacing-0 text-sm min-w-max w-max">
           <thead>
             <tr>
-              <th className="text-left text-textMuted font-normal w-28 pb-1"></th>
+              <th
+                scope="col"
+                className="sticky left-0 z-20 bg-surfaceAlt text-left text-textMuted font-normal pb-2 pr-3 min-w-[5.5rem]"
+              />
               {MONTHS.map((m, i) => (
                 <th
                   key={i}
-                  className="text-textMuted font-normal text-center pb-1 w-14"
+                  scope="col"
+                  className="text-textMuted font-normal text-center pb-2 px-1 min-w-[3.75rem]"
                 >
                   {m}
                 </th>
@@ -89,17 +119,23 @@ export function StrMatrix({
           <tbody>
             {ROWS.map((row) => (
               <tr key={row.key}>
-                <td className="pr-2 py-1 align-middle">
-                  <p className="text-text text-xs">{row.label}</p>
-                  <p className="text-textMuted text-[10px]">{row.hint}</p>
-                </td>
+                <th
+                  scope="row"
+                  className="sticky left-0 z-10 bg-surfaceAlt text-left align-middle pr-3 py-1.5 min-w-[5.5rem] shadow-[2px_0_6px_-2px_rgba(0,0,0,0.35)]"
+                >
+                  <p className="text-text text-xs font-medium">{row.label}</p>
+                  <p className="text-textMuted text-[10px] leading-tight">
+                    {row.hint}
+                  </p>
+                </th>
                 {value[row.key].map((v, i) => (
-                  <td key={i} className="px-0.5 py-1 w-14">
+                  <td key={i} className="px-1 py-1.5 min-w-[3.75rem]">
                     <Input
                       value={row.formatter(v)}
                       onChange={(e) => updateCell(row.key, i, e.target.value)}
                       inputMode="decimal"
-                      className="h-8 px-1.5 py-0 text-xs text-center"
+                      aria-label={`${row.label} ${MONTHS[i]}`}
+                      className="h-9 min-w-[3.25rem] px-1.5 py-0 text-sm text-center tabular-nums"
                     />
                   </td>
                 ))}

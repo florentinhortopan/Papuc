@@ -13,6 +13,7 @@ import {
   normalizePropertyConditionAssessment,
   selectConditionPhotoUrls,
   sliceConditionPhotoBatch,
+  sortFindingsByGravity,
 } from "../llm/property-condition";
 
 describe("RECORD_PROPERTY_CONDITION_TOOL schema", () => {
@@ -137,6 +138,46 @@ describe("selectConditionPhotoUrls / normalize / batching", () => {
     expect(merged.findings[0]!.photoIndexes).toEqual([10, 11]);
     const totals = aggregateConditionTotals(merged.findings, merged.maintenanceMonthlySuggested);
     expect(totals.rehabSuggested).toBe(11500);
+  });
+
+  it("sortFindingsByGravity puts critical/major red flags first", () => {
+    const sorted = sortFindingsByGravity([
+      {
+        id: "c",
+        severity: "cosmetic",
+        category: "paint",
+        title: "Scuff",
+        detail: "Wall scuff",
+        photoIndexes: [],
+        costBucket: "none",
+        confidence: "high",
+      },
+      {
+        id: "a",
+        severity: "critical",
+        category: "roof",
+        title: "Roof leak",
+        detail: "Active staining",
+        photoIndexes: [],
+        estimatedCostLow: 5000,
+        estimatedCostHigh: 12000,
+        costBucket: "rehab",
+        confidence: "medium",
+      },
+      {
+        id: "b",
+        severity: "major",
+        category: "hvac",
+        title: "Old HVAC",
+        detail: "Aging unit",
+        photoIndexes: [],
+        estimatedCostLow: 3000,
+        estimatedCostHigh: 6000,
+        costBucket: "rehab",
+        confidence: "low",
+      },
+    ]);
+    expect(sorted.map((f) => f.id)).toEqual(["a", "b", "c"]);
   });
 });
 
