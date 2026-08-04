@@ -21,6 +21,8 @@ import { cn } from "@/lib/utils";
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
 const ZOOM_STEP = 0.5;
+/** Horizontal swipe distance (px) to change photos at 1× zoom. */
+const SWIPE_THRESHOLD_PX = 56;
 
 export function PhotoLightbox({
   photos,
@@ -37,6 +39,8 @@ export function PhotoLightbox({
 }) {
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  /** Live drag offset while swiping between photos at 1× (visual only). */
+  const [swipeOffset, setSwipeOffset] = useState(0);
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -47,10 +51,13 @@ export function PhotoLightbox({
   } | null>(null);
   const suppressClickRef = useRef(false);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
 
   const resetView = useCallback(() => {
     setScale(1);
     setPan({ x: 0, y: 0 });
+    setSwipeOffset(0);
     dragRef.current = null;
   }, []);
 
@@ -68,6 +75,11 @@ export function PhotoLightbox({
     if (photos.length < 2) return;
     onIndexChange(Math.min(photos.length - 1, index + 1));
   }, [index, onIndexChange, photos.length]);
+
+  const goPrevRef = useRef(goPrev);
+  const goNextRef = useRef(goNext);
+  goPrevRef.current = goPrev;
+  goNextRef.current = goNext;
 
   const zoomBy = useCallback((delta: number) => {
     setScale((prev) => {
@@ -105,7 +117,8 @@ export function PhotoLightbox({
   }, [open, goPrev, goNext, zoomBy, resetView]);
 
   function onPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
-    if (scale <= MIN_SCALE) return;
+    // Only primary button / touch; ignore secondary mouse buttons.
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     dragRef.current = {
       pointerId: e.pointerId,
@@ -123,16 +136,44 @@ export function PhotoLightbox({
     const dx = e.clientX - drag.startX;
     const dy = e.clientY - drag.startY;
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
-    setPan({
-      x: drag.originX + dx,
-      y: drag.originY + dy,
-    });
+
+    if (scaleRef.current > MIN_SCALE) {
+      // Zoomed: pan the image.
+      setPan({
+        x: drag.originX + dx,
+        y: drag.originY + dy,
+      });
+      return;
+    }
+
+    // 1×: rubber-band horizontal swipe preview (only when mostly horizontal).
+    if (photos.length > 1 && Math.abs(dx) > Math.abs(dy)) {
+      const atStart = index <= 0 && dx > 0;
+      const atEnd = index >= photos.length - 1 && dx < 0;
+      setSwipeOffset(atStart || atEnd ? dx * 0.25 : dx);
+    }
   }
 
   function onPointerUp(e: ReactPointerEvent<HTMLDivElement>) {
-    if (dragRef.current?.pointerId === e.pointerId) {
-      if (dragRef.current.moved) suppressClickRef.current = true;
-      dragRef.current = null;
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+
+    if (drag.moved) suppressClickRef.current = true;
+
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    dragRef.current = null;
+    setSwipeOffset(0);
+
+    // At 1×, a clear horizontal flick changes photos. When zoomed, pan only.
+    if (
+      scaleRef.current <= MIN_SCALE &&
+      photos.length > 1 &&
+      Math.abs(dx) >= SWIPE_THRESHOLD_PX &&
+      Math.abs(dx) > Math.abs(dy) * 1.15
+    ) {
+      if (dx < 0) goNextRef.current();
+      else goPrevRef.current();
     }
   }
 
@@ -143,7 +184,7 @@ export function PhotoLightbox({
   }
 
   function onImageClick() {
-    // Toggle a comfortable zoom; ignore if the user was dragging.
+    // Toggle a comfortable zoom; ignore if the user was dragging/swiping.
     if (suppressClickRef.current) {
       suppressClickRef.current = false;
       return;
@@ -157,6 +198,9 @@ export function PhotoLightbox({
 
   const url = photos[index];
   if (!url) return null;
+
+  const translateX = scale > MIN_SCALE ? pan.x : swipeOffset;
+  const translateY = scale > MIN_SCALE ? pan.y : 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -177,20 +221,22 @@ export function PhotoLightbox({
       >
         <DialogTitle className="sr-only">Photo gallery</DialogTitle>
         <DialogDescription className="sr-only">
-          Expanded photo {index + 1} of {photos.length}. Use arrow keys to
-          change photos, plus and minus to zoom.
+          Expanded photo {index + 1} of {photos.length}. Swipe or use arrow
+          keys to change photos, pinch or tap to zoom.
         </DialogDescription>
 
         <div
           ref={stageRef}
           tabIndex={-1}
-          className="relative flex h-full w-full items-center justify-center outline-none"
+          className="relative flex h-full w-full items-center justify-center outline-none touch-none"
           onWheel={onWheel}
         >
           <div
             className={cn(
-              "relative flex h-full w-full items-center justify-center overflow-hidden",
-              scale > MIN_SCALE ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in",
+              "relative flex h-full w-full items-center justify-center overflow-hidden touch-none",
+              scale > MIN_SCALE
+                ? "cursor-grab active:cursor-grabbing"
+                : "cursor-pointer",
             )}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
@@ -203,9 +249,14 @@ export function PhotoLightbox({
               alt=""
               draggable={false}
               onClick={onImageClick}
-              className="max-h-[min(92dvh,100%)] max-w-[min(96vw,100%)] select-none object-contain transition-transform duration-150"
+              className={cn(
+                "max-h-[min(92dvh,100%)] max-w-[min(96vw,100%)] select-none object-contain",
+                swipeOffset === 0
+                  ? "transition-transform duration-150"
+                  : "transition-none",
+              )}
               style={{
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+                transform: `translate(${translateX}px, ${translateY}px) scale(${scale})`,
               }}
             />
           </div>
@@ -258,6 +309,9 @@ export function PhotoLightbox({
             </button>
           </div>
 
+          <p className="pointer-events-none absolute left-3 top-3 z-10 text-[11px] text-white/60 sm:hidden">
+            Swipe photos · tap zoom
+          </p>
           <p className="pointer-events-none absolute left-3 top-3 z-10 hidden text-[11px] text-white/60 sm:block">
             ← → photos · + − zoom · Esc close
           </p>

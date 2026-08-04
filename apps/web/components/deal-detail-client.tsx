@@ -1511,15 +1511,13 @@ function ScenariosPanel({
 }
 
 /**
- * Layer 1 "Gap diagnosis": for the current scenario, surface the *exact*
- * size of each independent lever that would zero out monthly cashflow.
- * This converts "this deal doesn't work" into concrete asks like
- * "negotiate $42k off, OR put $58k more down, OR find $310/mo more rent",
- * so the user can pick the path that's actually achievable.
- *
- * The card is read-only by default; each row's "Apply" button writes the
- * proposed value into the parent state so the rest of the page (chart,
- * PITIA, badges) updates live.
+ * Break-even lever panel. Mode depends on cashflow sign:
+ *  - Gap (cashflow < 0): what to change to reach $0 (negotiate ask down,
+ *    raise down, raise rent).
+ *  - Headroom (cashflow ≥ 0): how far you can stretch before cashflow
+ *    hits $0 (max price, min down, floor rent/ADR).
+ * Apply writes the proposed value into parent state so the rest of the
+ * page updates live.
  */
 function GapDiagnosis({
   inputs,
@@ -1534,18 +1532,34 @@ function GapDiagnosis({
   onApplyDown: (down: number) => void;
   onApplyRent: (rent: number) => void;
 }) {
-  const bePrice = useMemo(() => solveBreakevenPrice(inputs), [inputs]);
-  const beDown = useMemo(() => solveBreakevenDownPayment(inputs), [inputs]);
-  const beRent = useMemo(() => solveBreakevenRent(inputs), [inputs]);
+  const isHeadroom = monthlyCashflow >= 0;
+  const minDownFloor = inputs.price > 0 ? inputs.price * 0.2 : 0;
 
-  const isPositive = monthlyCashflow >= 0;
-  const gapMonthly = -monthlyCashflow; // amount short of break-even
-  const headline = isPositive
+  const bePrice = useMemo(() => solveBreakevenPrice(inputs), [inputs]);
+  const beDownRaise = useMemo(
+    () => solveBreakevenDownPayment(inputs),
+    [inputs],
+  );
+  const beDownMin = useMemo(
+    () =>
+      solveMinDownPaymentForBreakeven(inputs, {
+        minDownPayment: minDownFloor,
+      }),
+    [inputs, minDownFloor],
+  );
+  const beRent = useMemo(() => solveBreakevenRent(inputs), [inputs]);
+  const beAdr = useMemo(
+    () => (inputs.strategy === "STR" ? computeBreakevenADR(inputs) : null),
+    [inputs],
+  );
+
+  const beDown = isHeadroom ? beDownMin : beDownRaise;
+
+  const gapMonthly = -monthlyCashflow;
+  const headline = isHeadroom
     ? `Already $${Math.round(monthlyCashflow).toLocaleString()}/mo above break-even`
     : `Need ${formatMoney(gapMonthly)}/mo more to break even`;
 
-  // Compute % deltas relative to current values so the user sees the
-  // magnitude of each ask at a glance.
   const priceDeltaPct =
     bePrice !== null && inputs.price > 0
       ? ((bePrice - inputs.price) / inputs.price) * 100
@@ -1560,57 +1574,116 @@ function GapDiagnosis({
           (inputs.monthlyRentLTR ?? 1)) *
         100
       : null;
+  const currentAdr = inputs.monthlyADR?.[0] ?? null;
+  const adrDeltaPct =
+    beAdr !== null && currentAdr != null && currentAdr > 0
+      ? ((beAdr - currentAdr) / currentAdr) * 100
+      : null;
+
+  // Headroom: higher max price / lower min down is cushion (success).
+  // Gap: lower ask / higher down or rent closes the hole (success).
+  const priceDeltaFavorable = isHeadroom
+    ? (pct: number) => pct > 0
+    : (pct: number) => pct < 0;
+  const downDeltaFavorable = isHeadroom
+    ? (pct: number) => pct < 0
+    : (pct: number) => pct > 0;
+  const rentDeltaFavorable = isHeadroom
+    ? (pct: number) => pct < 0
+    : (pct: number) => pct > 0;
+
+  let downUnsolvable: string | null = null;
+  if (beDown === null) {
+    downUnsolvable = isHeadroom
+      ? "Could not find a lower down payment that still breaks even."
+      : "Even putting the full price down still loses money to carry costs.";
+  }
+
+  const priceLabel = isHeadroom
+    ? "Max purchase price at break-even"
+    : "Negotiate ask down to";
+  const downLabel = isHeadroom
+    ? "Min down payment at break-even"
+    : "Increase down payment to";
+  const rentLabel = isHeadroom
+    ? "Floor rent still at break-even"
+    : "Monthly rent needed";
+
+  // Gap mode: only offer Apply when BE price is actually below ask.
+  const priceIsNegotiateDown =
+    bePrice !== null && bePrice < inputs.price - 0.5;
+  const priceUnsolvable =
+    bePrice === null
+      ? "No price in the search range fits — this lever alone may not fix cashflow."
+      : !isHeadroom && !priceIsNegotiateDown
+        ? "Break-even price is at or above ask — cut costs or raise rent instead."
+        : null;
 
   return (
     <div className="bg-surface border border-border rounded-2xl p-4">
-      <div className="flex items-baseline justify-between mb-3">
+      <div className="flex items-baseline justify-between gap-3 mb-3">
         <p className="text-text text-base font-semibold">Equivalent levers</p>
         <p
-          className={`text-xs ${isPositive ? "text-success" : "text-warning"}`}
+          className={`text-xs shrink-0 ${isHeadroom ? "text-success" : "text-warning"}`}
         >
           {headline}
         </p>
       </div>
       <p className="text-textMuted text-xs mb-3">
-        Any one of these changes (holding the rest constant) would put
-        monthly cashflow at exactly $0. Pick the lever you can realistically
-        move.
+        {isHeadroom
+          ? "How far you can stretch each input (holding the rest fixed) before monthly cashflow hits $0."
+          : "Any one of these changes (holding the rest fixed) gets monthly cashflow to $0. Pick the lever you can realistically move."}
       </p>
 
       <LeverRow
-        label="Negotiate price to"
+        label={priceLabel}
         value={bePrice}
         deltaPct={priceDeltaPct}
         deltaPrefix="vs ask"
         format={(v) => `$${Math.round(v).toLocaleString()}`}
-        onApply={bePrice !== null ? () => onApplyPrice(bePrice) : null}
-        unsolvable={
-          bePrice === null
-            ? "No price in the search range fits — the deal might be unfixable on this lever alone."
+        onApply={
+          bePrice !== null && (isHeadroom || priceIsNegotiateDown)
+            ? () => onApplyPrice(bePrice)
             : null
         }
+        unsolvable={priceUnsolvable}
+        deltaFavorable={priceDeltaFavorable}
+        applyLabel={isHeadroom ? "Set max" : "Apply"}
       />
       <LeverRow
-        label="Down payment to"
+        label={downLabel}
         value={beDown}
         deltaPct={downDeltaPct}
         deltaPrefix="of price"
         format={(v) => `$${Math.round(v).toLocaleString()}`}
         onApply={beDown !== null ? () => onApplyDown(beDown) : null}
-        unsolvable={
-          beDown === null
-            ? "Even putting the full price down still loses money to carry costs."
-            : null
-        }
+        unsolvable={downUnsolvable}
+        deltaFavorable={downDeltaFavorable}
+        applyLabel={isHeadroom ? "Set min" : "Apply"}
       />
       {inputs.strategy === "STR" ? (
-        <p className="text-textMuted text-xs italic">
-          STR rent break-even is the "Break-even ADR" shown in the pro-forma
-          summary (the matrix below drives nightly revenue).
-        </p>
+        <LeverRow
+          label={
+            isHeadroom
+              ? "Floor ADR still at break-even"
+              : "Break-even ADR needed"
+          }
+          value={beAdr}
+          deltaPct={adrDeltaPct}
+          deltaPrefix="vs assumed"
+          format={(v) => `${formatMoney(v)}/n`}
+          onApply={null}
+          unsolvable={
+            beAdr === null
+              ? "Could not compute break-even ADR at these inputs."
+              : null
+          }
+          deltaFavorable={rentDeltaFavorable}
+          hint="Also shown in the pro-forma summary; the matrix below drives nightly revenue."
+        />
       ) : (
         <LeverRow
-          label="Monthly rent to"
+          label={rentLabel}
           value={beRent}
           deltaPct={rentDeltaPct}
           deltaPrefix="vs current"
@@ -1621,6 +1694,7 @@ function GapDiagnosis({
               ? "Rent doesn't move cashflow enough at these inputs."
               : null
           }
+          deltaFavorable={rentDeltaFavorable}
         />
       )}
     </div>
@@ -1635,6 +1709,9 @@ function LeverRow({
   format,
   onApply,
   unsolvable,
+  deltaFavorable,
+  applyLabel = "Apply",
+  hint,
 }: {
   label: string;
   value: number | null;
@@ -1643,44 +1720,55 @@ function LeverRow({
   format: (v: number) => string;
   onApply: (() => void) | null;
   unsolvable: string | null;
+  /** Whether a given delta % is "good" for this lever in the current mode. */
+  deltaFavorable: (pct: number) => boolean;
+  applyLabel?: string;
+  hint?: string;
 }) {
   if (unsolvable) {
     return (
-      <div className="flex items-center justify-between py-2 border-t border-border first:border-t-0">
-        <span className="text-textMuted text-sm">{label}</span>
-        <span className="text-textMuted text-xs italic">{unsolvable}</span>
+      <div className="flex items-start justify-between gap-3 py-2 border-t border-border first:border-t-0">
+        <span className="text-textMuted text-sm shrink-0">{label}</span>
+        <span className="text-textMuted text-xs italic text-right">
+          {unsolvable}
+        </span>
       </div>
     );
   }
   const deltaTone =
     deltaPct === null
       ? "text-textMuted"
-      : deltaPct > 0
-        ? "text-warning"
-        : "text-success";
+      : deltaFavorable(deltaPct)
+        ? "text-success"
+        : "text-warning";
   return (
-    <div className="flex items-center justify-between py-2 border-t border-border first:border-t-0">
-      <span className="text-textMuted text-sm">{label}</span>
-      <div className="flex items-center gap-3">
-        <span className="text-text text-sm font-semibold">
-          {value !== null ? format(value) : "—"}
-        </span>
-        {deltaPct !== null ? (
-          <span className={`text-xs ${deltaTone} min-w-[64px] text-right`}>
-            {deltaPct > 0 ? "+" : ""}
-            {deltaPct.toFixed(1)}% {deltaPrefix}
+    <div className="py-2 border-t border-border first:border-t-0">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-textMuted text-sm">{label}</span>
+        <div className="flex items-center gap-3">
+          <span className="text-text text-sm font-semibold">
+            {value !== null ? format(value) : "—"}
           </span>
-        ) : null}
-        {onApply ? (
-          <button
-            type="button"
-            onClick={onApply}
-            className="text-xs text-primary hover:underline"
-          >
-            Apply
-          </button>
-        ) : null}
+          {deltaPct !== null ? (
+            <span className={`text-xs ${deltaTone} min-w-[72px] text-right`}>
+              {deltaPct > 0 ? "+" : ""}
+              {deltaPct.toFixed(1)}% {deltaPrefix}
+            </span>
+          ) : null}
+          {onApply ? (
+            <button
+              type="button"
+              onClick={onApply}
+              className="text-xs text-primary hover:underline"
+            >
+              {applyLabel}
+            </button>
+          ) : null}
+        </div>
       </div>
+      {hint ? (
+        <p className="text-textMuted text-[11px] italic mt-1">{hint}</p>
+      ) : null}
     </div>
   );
 }
