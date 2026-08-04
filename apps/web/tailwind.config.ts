@@ -50,10 +50,24 @@ const config: Config = {
           from: { opacity: "0", transform: "scale(0.96)" },
           to: { opacity: "1", transform: "scale(1)" },
         },
+        swirl: {
+          to: { transform: "rotate(360deg)" },
+        },
+        "swirl-reverse": {
+          to: { transform: "rotate(-360deg)" },
+        },
+        "progress-shimmer": {
+          "0%": { backgroundPosition: "200% 0" },
+          "100%": { backgroundPosition: "-200% 0" },
+        },
       },
       animation: {
         "fade-in": "fade-in 150ms ease-out",
         "scale-in": "scale-in 150ms ease-out",
+        swirl: "swirl 0.9s linear infinite",
+        "swirl-reverse": "swirl-reverse 1.4s linear infinite",
+        "progress-shimmer":
+          "progress-shimmer 1.8s ease-in-out infinite",
       },
     },
   },

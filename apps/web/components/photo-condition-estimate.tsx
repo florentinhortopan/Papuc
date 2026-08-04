@@ -7,6 +7,75 @@ import { Button } from "@/components/ui/button";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+type AnalysisProgress = {
+  analyzed: number | null;
+  total: number | null;
+  findings: number;
+};
+
+function AnalysisSwirl({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn("relative inline-flex h-5 w-5 shrink-0", className)}
+      aria-hidden
+    >
+      <span className="absolute inset-0 rounded-full border-2 border-primary/15" />
+      <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-primary border-r-primary/50 animate-swirl" />
+      <span className="absolute inset-[3px] rounded-full border border-transparent border-b-warning/70 border-l-warning/40 animate-swirl-reverse" />
+    </span>
+  );
+}
+
+function AnalysisProgressBanner({ progress }: { progress: AnalysisProgress }) {
+  const { analyzed, total, findings } = progress;
+  const hasCounts =
+    analyzed != null && total != null && Number.isFinite(total) && total > 0;
+  const pct = hasCounts
+    ? Math.min(100, Math.round((analyzed / total) * 100))
+    : null;
+  const title = hasCounts
+    ? `Analyzing ${analyzed} of ${total} photos`
+    : "Preparing gallery…";
+  const subtitle = hasCounts
+    ? `${findings} finding${findings === 1 ? "" : "s"} so far`
+    : "Loading listing photos for Catch the catch";
+
+  return (
+    <div
+      className="rounded-lg border border-primary/25 bg-primary/5 px-2.5 py-2 space-y-1.5"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div className="flex items-center gap-2.5">
+        <AnalysisSwirl />
+        <div className="min-w-0 flex-1">
+          <p className="text-text text-xs font-semibold tabular-nums">
+            {title}
+          </p>
+          <p className="text-textMuted text-[11px] leading-4">{subtitle}</p>
+        </div>
+        {pct != null ? (
+          <span className="text-primary text-[11px] font-semibold tabular-nums shrink-0">
+            {pct}%
+          </span>
+        ) : null}
+      </div>
+      <div className="h-1 w-full overflow-hidden rounded-full bg-border/80">
+        <div
+          className={cn(
+            "h-full rounded-full transition-[width] duration-500 ease-out",
+            pct == null
+              ? "w-1/3 bg-gradient-to-r from-primary/40 via-primary to-primary/40 bg-[length:200%_100%] animate-progress-shimmer"
+              : "bg-primary",
+          )}
+          style={pct != null ? { width: `${Math.max(pct, 4)}%` } : undefined}
+        />
+      </div>
+    </div>
+  );
+}
+
 export type ConditionSeverity = "critical" | "major" | "minor" | "cosmetic";
 export type ConditionOverall =
   | "turnkey"
@@ -243,7 +312,7 @@ export function PhotoConditionEstimate({
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [progressLabel, setProgressLabel] = useState<string | null>(null);
+  const [progress, setProgress] = useState<AnalysisProgress | null>(null);
   /** Per-finding cursor into photoIndexes for multi-tap cycling. */
   const photoCycleRef = useRef<Record<string, number>>({});
   const [activeFindingId, setActiveFindingId] = useState<string | null>(null);
@@ -297,30 +366,35 @@ export function PhotoConditionEstimate({
   const runAnalysis = useCallback(async (refresh: boolean) => {
     setLoading(true);
     setError(null);
-    setProgressLabel(refresh ? "Starting full gallery analysis…" : "Analyzing…");
+    setProgress({ analyzed: null, total: null, findings: 0 });
     try {
       let est = await fetchConditionJson(dealId, refresh);
       setEstimate(est);
+      const syncProgress = (e: ConditionEstimatePayload) => {
+        const analyzed = e.progress?.analyzed ?? e.photoCount ?? null;
+        const total = e.progress?.total ?? e.photosTotal ?? null;
+        setProgress({
+          analyzed: analyzed != null ? Number(analyzed) : null,
+          total: total != null ? Number(total) : null,
+          findings: e.findings.length,
+        });
+      };
+      syncProgress(est);
       // One vision batch per request — not status polling. Each response
       // carries merged findings so far; we re-request until done.
       let guard = 0;
       while (est.done === false && guard < 40) {
         guard += 1;
-        const analyzed = est.progress?.analyzed ?? est.photoCount ?? 0;
-        const total = est.progress?.total ?? est.photosTotal ?? "?";
-        const n = est.findings.length;
-        setProgressLabel(
-          `Analyzing photos ${analyzed} of ${total}… ${n} finding${n === 1 ? "" : "s"} so far`,
-        );
         est = await fetchConditionJson(dealId, false);
         setEstimate(est);
+        syncProgress(est);
       }
       if (est.done === false) {
         throw new Error(
           "Analysis is still in progress after many batches — click Analyze photos to resume.",
         );
       }
-      setProgressLabel(null);
+      setProgress(null);
       // Fresh analysis: leave the toggle off so the user opts in. If they
       // already had costs included, re-apply the new numbers so the
       // scenario stays in sync with the refreshed estimate.
@@ -332,7 +406,7 @@ export function PhotoConditionEstimate({
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      setProgressLabel(null);
+      setProgress(null);
       // Allow a later visit / Analyze click to retry auto-run.
       autoStartedDealIds.delete(dealId);
     } finally {
@@ -417,15 +491,16 @@ export function PhotoConditionEstimate({
             {OVERALL_LABEL[estimate?.overall ?? ""] ?? "Analyzed"}
           </Badge>
         ) : loading ? (
-          <Badge variant="warning">Analyzing…</Badge>
+          <Badge variant="warning" className="gap-1.5">
+            <AnalysisSwirl className="h-3.5 w-3.5" />
+            Running
+          </Badge>
         ) : (
           <Badge>premium · opt-in</Badge>
         )}
       </div>
 
-      {loading && progressLabel ? (
-        <p className="text-text text-xs font-medium">{progressLabel}</p>
-      ) : null}
+      {loading && progress ? <AnalysisProgressBanner progress={progress} /> : null}
 
       {estimate && (isComplete || loading) ? (
         <>
@@ -540,10 +615,6 @@ export function PhotoConditionEstimate({
                 })}
               </ul>
             </>
-          ) : loading ? (
-            <p className="text-textMuted text-[11px]">
-              Waiting for the first batch of photo findings…
-            </p>
           ) : null}
 
           {isComplete ? (
