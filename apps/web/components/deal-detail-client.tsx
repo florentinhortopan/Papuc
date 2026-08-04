@@ -22,7 +22,7 @@ import { ComparablesPanel } from "@/components/comparables-panel";
 import { DscrBadge } from "@/components/dscr-badge";
 import { MarketSignalBadges } from "@/components/market-signal-badges";
 import { PhotoCarousel } from "@/components/photo-carousel";
-import { StrMatrix, defaultStrMatrix, type StrMatrixValue } from "@/components/str-matrix";
+import { StrCashflowMatrix, defaultStrMatrix, type StrMatrixValue } from "@/components/str-matrix";
 import {
   PhotoConditionEstimate,
   type ConditionEstimatePayload,
@@ -792,11 +792,15 @@ export function DealDetailClient({
           <StrRegulationsCard city={deal.city} state={deal.state} />
         ) : null}
 
-        <CashflowChart monthlyPreTaxProfit={result.monthlyPreTaxProfit} />
-
         {state.strategy === "STR" ? (
-          <StrMatrix value={strMatrix} onChange={setStrMatrix} />
-        ) : null}
+          <StrCashflowMatrix
+            monthlyPreTaxProfit={result.monthlyPreTaxProfit}
+            value={strMatrix}
+            onChange={setStrMatrix}
+          />
+        ) : (
+          <CashflowChart monthlyPreTaxProfit={result.monthlyPreTaxProfit} />
+        )}
 
         <ComparablesPanel dealId={deal.id} />
       </div>
