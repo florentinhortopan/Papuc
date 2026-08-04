@@ -24,3 +24,18 @@ export async function markOnboarded(supabase: SupabaseClient): Promise<void> {
     .update({ onboarded_at: new Date().toISOString() })
     .eq("id", userId);
 }
+
+export async function updateProfileSettings(
+  supabase: SupabaseClient,
+  patch: {
+    auto_condition_analysis?: boolean;
+  },
+): Promise<void> {
+  const userId = (await supabase.auth.getUser()).data.user?.id;
+  if (!userId) throw new Error("not signed in");
+  const { error } = await supabase
+    .from("profiles")
+    .update(patch)
+    .eq("id", userId);
+  if (error) throw error;
+}

@@ -33,7 +33,7 @@ export async function GET(
   const { data: deal, error } = await supabase
     .from("deals")
     .select(
-      "id, source, source_url, photos, primary_image_url, hoa_monthly, property_tax_rate, address, city, state, zip",
+      "id, source, source_url, photos, primary_image_url, hoa_monthly, property_tax_rate, address, city, state, zip, mls_data",
     )
     .eq("id", dealId)
     .single();

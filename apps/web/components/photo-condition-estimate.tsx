@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -193,6 +193,9 @@ async function fetchConditionJson(
  * BILLING: UI copy marks this as premium; server-side subscription gate
  * lands with Stripe metering.
  */
+/** Session guard so React Strict Mode / remounts don't double-bill vision. */
+const autoStartedDealIds = new Set<string>();
+
 export function PhotoConditionEstimate({
   dealId,
   cached,
@@ -203,6 +206,7 @@ export function PhotoConditionEstimate({
   onEstimateChange,
   focusFindingId = null,
   focusNonce = 0,
+  autoRun = false,
 }: {
   dealId: string;
   cached: ConditionEstimatePayload | null;
@@ -228,6 +232,11 @@ export function PhotoConditionEstimate({
    */
   focusFindingId?: string | null;
   focusNonce?: number;
+  /**
+   * When true (user setting, default on), start analysis on open unless a
+   * complete estimate is already cached on the deal.
+   */
+  autoRun?: boolean;
 }) {
   const [estimate, setEstimate] = useState<ConditionEstimatePayload | null>(
     cached,
@@ -244,6 +253,10 @@ export function PhotoConditionEstimate({
   onEstimateChangeRef.current = onEstimateChange;
   const cachedRef = useRef(cached);
   cachedRef.current = cached;
+  const includedRef = useRef(included);
+  includedRef.current = included;
+  const onIncludedChangeRef = useRef(onIncludedChange);
+  onIncludedChangeRef.current = onIncludedChange;
 
   // Key by deal + cache timestamp — not `cached` object identity. A new
   // object literal each parent render would otherwise loop setState (#185).
@@ -281,7 +294,7 @@ export function PhotoConditionEstimate({
     return () => window.clearTimeout(clearPulse);
   }, [focusNonce, focusFindingId]);
 
-  async function runAnalysis(refresh: boolean) {
+  const runAnalysis = useCallback(async (refresh: boolean) => {
     setLoading(true);
     setError(null);
     setProgressLabel(refresh ? "Starting full gallery analysis…" : "Analyzing…");
@@ -311,8 +324,8 @@ export function PhotoConditionEstimate({
       // Fresh analysis: leave the toggle off so the user opts in. If they
       // already had costs included, re-apply the new numbers so the
       // scenario stays in sync with the refreshed estimate.
-      if (included) {
-        onIncludedChange(true, {
+      if (includedRef.current) {
+        onIncludedChangeRef.current(true, {
           improvements: est.rehabSuggested,
           maintenanceMonthly: est.maintenanceMonthlySuggested,
         });
@@ -320,10 +333,29 @@ export function PhotoConditionEstimate({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setProgressLabel(null);
+      // Allow a later visit / Analyze click to retry auto-run.
+      autoStartedDealIds.delete(dealId);
     } finally {
       setLoading(false);
     }
-  }
+  }, [dealId]);
+
+  // Auto-start when the user setting is on and nothing complete is cached.
+  // The API short-circuits on cached complete estimates, so refresh stays
+  // an explicit panel action.
+  useEffect(() => {
+    if (!autoRun) return;
+    const complete =
+      Boolean(cached?.estimatedAt && cached.done !== false) ||
+      Boolean(estimate?.estimatedAt && estimate.done !== false);
+    if (complete) {
+      autoStartedDealIds.add(dealId);
+      return;
+    }
+    if (autoStartedDealIds.has(dealId)) return;
+    autoStartedDealIds.add(dealId);
+    void runAnalysis(false);
+  }, [autoRun, dealId, cachedAt, cached?.done, estimate?.estimatedAt, estimate?.done, runAnalysis]);
 
   function toggleIncluded() {
     if (!estimate || estimate.done === false) return;
@@ -594,8 +626,9 @@ export function PhotoConditionEstimate({
             Analyze photos
           </Button>
           <p className="text-textMuted text-[11px] italic">
-            Listing photos only — not a home inspection. Premium feature
-            (billing coming soon).
+            Listing photos only — not a home inspection. Auto-run on open is
+            controlled in Settings
+            {autoRun ? " (currently on)" : " (currently off)"}.
           </p>
         </>
       ) : null}

@@ -42,6 +42,7 @@ import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
+import { dealStreetAddress } from "@/lib/deal-address";
 import { actOnDeal, clearDealAction, type DealWithScore } from "@/lib/deals";
 import { exportProFormaCsv } from "@/lib/export";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
@@ -103,11 +104,17 @@ export function DealDetailClient({
   deal: initialDeal,
   project,
   marketAdrIntel,
+  autoConditionAnalysis = true,
 }: {
   deal: DealWithScore;
   project: ProjectRow;
   /** Cached web-search market ADR intel for this deal's city (or null). */
   marketAdrIntel?: StrMarketAdrIntel | null;
+  /**
+   * User setting: auto-start Catch the catch when this page opens
+   * (skipped when a complete estimate is already cached).
+   */
+  autoConditionAnalysis?: boolean;
 }) {
   const router = useRouter();
   const [deal, setDeal] = useState(initialDeal);
@@ -525,7 +532,7 @@ export function DealDetailClient({
     setBusy("export");
     try {
       exportProFormaCsv({
-        address: deal.address ?? "deal",
+        address: dealStreetAddress(deal) ?? "deal",
         price: Number(deal.price ?? 0),
         beds: deal.beds,
         baths: deal.baths,
@@ -557,7 +564,7 @@ export function DealDetailClient({
 
     const priceLabel = deal.price ? "list" : "est. value";
     const priceValue = formatMoney(deal.price ?? deal.est_value);
-    const title = `${deal.address ?? "Property"} · ${priceLabel} ${priceValue}`;
+    const title = `${dealStreetAddress(deal) ?? "Property"} · ${priceLabel} ${priceValue}`;
     const lines = [
       title,
       `${deal.beds ?? "?"} bd · ${deal.baths ?? "?"} ba · ${
@@ -875,7 +882,7 @@ export function DealDetailClient({
 
         <div>
           <h1 className="text-2xl font-bold">
-            {deal.address ?? "Address pending"}
+            {dealStreetAddress(deal) ?? "Address pending"}
           </h1>
           <p className="text-textMuted text-sm mt-1">
             {[
@@ -1273,6 +1280,7 @@ export function DealDetailClient({
           onEstimateChange={setLiveConditionEstimate}
           focusFindingId={focusFindingId}
           focusNonce={focusFindingNonce}
+          autoRun={autoConditionAnalysis}
           onSelectPhoto={(i) => {
             setPhotoIndex(i);
             if (typeof document !== "undefined") {

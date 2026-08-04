@@ -478,21 +478,56 @@ export function normalizeZillowListing(item: unknown): ZillowListingSummary {
 /**
  * Street address across HasData response variants. The `address` object's
  * street key has already changed once in the wild (`streetAddress` →
- * `street`, observed 2026-07-29, which nulled every scouted address), so
- * try every known spelling and finish with `addressRaw` — the full
- * "street, city, ST zip" string — which is a wordier but correct fallback.
+ * `street`, observed 2026-07-29, which nulled every scouted address).
+ * Property-detail payloads also nest `addressRaw` inside `address`.
+ * Finish with a Zillow URL slug parse so we never persist a blank street
+ * when the listing URL still encodes one.
  */
 export function extractZillowAddress(o: Record<string, any>): string | undefined {
-  if (typeof o.address === "string" && o.address) return o.address;
+  if (typeof o.address === "string" && o.address.trim()) {
+    return o.address.trim();
+  }
   const addr =
     typeof o.address === "object" && o.address !== null
       ? (o.address as Record<string, any>)
       : {};
   const candidate =
-    addr.streetAddress ?? addr.street ?? addr.address ?? o.streetAddress;
-  if (typeof candidate === "string" && candidate) return candidate;
-  if (typeof o.addressRaw === "string" && o.addressRaw) return o.addressRaw;
-  return undefined;
+    addr.streetAddress ??
+    addr.street ??
+    addr.line1 ??
+    addr.address1 ??
+    addr.address ??
+    addr.addressRaw ??
+    o.streetAddress ??
+    o.street;
+  if (typeof candidate === "string" && candidate.trim()) {
+    return candidate.trim();
+  }
+  if (typeof o.addressRaw === "string" && o.addressRaw.trim()) {
+    return o.addressRaw.trim();
+  }
+  return streetFromZillowUrl(
+    typeof o.url === "string"
+      ? o.url
+      : typeof o.detailUrl === "string"
+        ? o.detailUrl
+        : undefined,
+  );
+}
+
+/**
+ * Recover a display address from a Zillow homedetails URL slug, e.g.
+ * `/homedetails/302-El-Paso-St-Austin-TX-78704/63838278_zpid/` →
+ * `"302 El Paso St Austin TX 78704"`. Better than "Address pending".
+ */
+export function streetFromZillowUrl(
+  url: string | null | undefined,
+): string | undefined {
+  if (!url || typeof url !== "string") return undefined;
+  const m = url.match(/\/homedetails\/([^/?#]+)\/\d+_zpid\/?/i);
+  if (!m?.[1]) return undefined;
+  const decoded = decodeURIComponent(m[1]).replace(/-/g, " ").trim();
+  return decoded || undefined;
 }
 
 /**

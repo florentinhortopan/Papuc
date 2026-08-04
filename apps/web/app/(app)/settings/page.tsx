@@ -16,6 +16,7 @@ export default async function SettingsPage() {
     <SettingsClient
       email={user?.email ?? null}
       tier={profile?.subscription_tier ?? "free"}
+      autoConditionAnalysis={profile?.auto_condition_analysis ?? true}
     />
   );
 }

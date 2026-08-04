@@ -20,6 +20,7 @@ export type ProfileRow = {
   subscription_tier: SubscriptionTier;
   subscription_renews_at: string | null;
   onboarded_at: string | null;
+  auto_condition_analysis: boolean;
   created_at: string;
   updated_at: string;
 };

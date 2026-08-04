@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { DealDetailClient } from "@/components/deal-detail-client";
 import { getDeal } from "@/lib/deals";
+import { getProfile } from "@/lib/profile";
 import { getProject } from "@/lib/projects";
 import { getCachedMarketStrIntel } from "@/lib/str-intel";
 import { createClient } from "@/lib/supabase/server";
@@ -47,6 +48,8 @@ export default async function DealDetailPage({
       }
     : null;
 
+  const profile = await getProfile(supabase);
+
   return (
     <div>
       <Link
@@ -59,6 +62,7 @@ export default async function DealDetailPage({
         deal={deal}
         project={project}
         marketAdrIntel={marketAdrIntel}
+        autoConditionAnalysis={profile?.auto_condition_analysis ?? true}
       />
     </div>
   );

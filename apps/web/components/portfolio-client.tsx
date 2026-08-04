@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { DscrBadge } from "@/components/dscr-badge";
 import { Button } from "@/components/ui/button";
+import { dealStreetAddress } from "@/lib/deal-address";
 import type { DealWithScore } from "@/lib/deals";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
 import { getDealSourceLink } from "@/lib/source-url";
@@ -89,7 +90,7 @@ export function PortfolioClient({
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="text-text font-semibold truncate">
-                    {deal.address ?? "Address pending"}
+                    {dealStreetAddress(deal) ?? "Address pending"}
                   </p>
                   <p className="text-textMuted text-xs mt-0.5">
                     {[
@@ -167,7 +168,7 @@ function ComparePane({
         {deals.map((d) => (
           <div key={d.id} className="bg-surface border border-border rounded-2xl p-4">
             <p className="text-text font-semibold line-clamp-2">
-              {d.address ?? "Address pending"}
+              {dealStreetAddress(d) ?? "Address pending"}
             </p>
             <p className="text-textMuted text-xs mb-3">
               {[

@@ -214,6 +214,26 @@ describe("normalizeZillowListing", () => {
     expect(out.city).toBe("Tampa");
   });
 
+  it("reads nested address.addressRaw (property-detail shape) and URL slug", () => {
+    const nested = normalizeZillowListing({
+      id: "63838278",
+      address: {
+        addressRaw: "302 El Paso St",
+        city: "Austin",
+        state: "TX",
+        zipcode: "78704",
+      },
+    });
+    expect(nested.address).toBe("302 El Paso St");
+
+    const fromUrl = normalizeZillowListing({
+      id: "63838278",
+      url: "https://www.zillow.com/homedetails/302-El-Paso-St-Austin-TX-78704/63838278_zpid/",
+      address: { city: "Austin", state: "TX", zipcode: "78704" },
+    });
+    expect(fromUrl.address).toBe("302 El Paso St Austin TX 78704");
+  });
+
   it("extracts price-cut, lot, photo and media signals", () => {
     const out = normalizeZillowListing({
       zpid: 555,

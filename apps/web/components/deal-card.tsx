@@ -5,6 +5,7 @@ import { CashflowBadge } from "@/components/cashflow-badge";
 import { DscrBadge } from "@/components/dscr-badge";
 import { MarketSignalBadges } from "@/components/market-signal-badges";
 import { Badge } from "@/components/ui/badge";
+import { dealStreetAddress } from "@/lib/deal-address";
 import type { DealWithScore } from "@/lib/deals";
 import { formatMoney } from "@/lib/format";
 import { getDealSourceLink } from "@/lib/source-url";
@@ -36,6 +37,7 @@ export function DealCard({
     deal.primary_image_url ??
     (Array.isArray(deal.photos) ? (deal.photos as string[])[0] : undefined);
   const sourceLink = getDealSourceLink(deal);
+  const street = dealStreetAddress(deal);
 
   return (
     <Link
@@ -47,7 +49,7 @@ export function DealCard({
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={photo}
-            alt={deal.address ?? "deal"}
+            alt={street ?? "deal"}
             className="w-full h-48 object-cover"
           />
         ) : (
@@ -67,7 +69,7 @@ export function DealCard({
       <div className="p-4">
         <div className="flex justify-between items-start gap-2 mb-1">
           <p className="text-text font-semibold truncate flex-1">
-            {deal.address ?? "Address pending"}
+            {street ?? "Address pending"}
           </p>
           <div className="text-right">
             <p className="text-text font-semibold">

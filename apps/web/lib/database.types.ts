@@ -17,6 +17,11 @@ export type ProfileRow = {
   subscription_tier: SubscriptionTier;
   subscription_renews_at: string | null;
   onboarded_at: string | null;
+  /**
+   * When true, opening a deal page auto-starts Catch the catch unless a
+   * complete estimate is already cached on the deal.
+   */
+  auto_condition_analysis: boolean;
   created_at: string;
   updated_at: string;
 };

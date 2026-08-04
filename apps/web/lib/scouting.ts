@@ -7,10 +7,12 @@ import {
   DEFAULT_CLOSING_COSTS_PCT,
   defaultStrSchedule,
   estimateInsuranceMonthly,
+  extractZillowAddress,
   HasDataClient,
   insuranceRateForState,
   propertyTaxRateForState,
   RealEstateAPIClient,
+  streetFromZillowUrl,
   strScheduleFromEstimate,
   type Market,
   type MLSListingSummary,
@@ -700,9 +702,16 @@ function mapPropertyTypeToZillow(t: string): string | null {
 }
 
 function zillowToMLSListing(row: ZillowListingSummary): MLSListingSummary {
+  // Prefer the normalized street; if a HasData rename ever slips past
+  // normalizeZillowListing again, recover from the raw payload / URL so
+  // we never upsert null addresses ("Address pending" on every card).
+  const address =
+    row.address ??
+    (row.raw ? extractZillowAddress(row.raw) : undefined) ??
+    streetFromZillowUrl(row.detailUrl);
   return {
     id: row.zpid,
-    address: row.address,
+    address,
     city: row.city,
     state: row.state,
     zip: row.zip,
@@ -732,9 +741,13 @@ function zillowToMLSListing(row: ZillowListingSummary): MLSListingSummary {
  * RealEstateAPI PAYG path — no second per-listing call needed).
  */
 function zillowToSyntheticDetail(row: ZillowListingSummary): PropertyDetail {
+  const address =
+    row.address ??
+    (row.raw ? extractZillowAddress(row.raw) : undefined) ??
+    streetFromZillowUrl(row.detailUrl);
   return {
     id: row.zpid,
-    address: row.address,
+    address,
     estimatedValue: row.zestimate,
     estimatedMortgagePayment: undefined,
     suggestedRent: row.rentZestimate,
