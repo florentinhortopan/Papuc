@@ -3,17 +3,20 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDate, formatMarket, formatMoney } from "@/lib/format";
-import { listProjects, type ProjectRow } from "@/lib/projects";
+import {
+  listProjectsWithPreviews,
+  type ProjectListItem,
+} from "@/lib/projects";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProjectsPage() {
   const supabase = await createClient();
-  let projects: ProjectRow[] = [];
+  let projects: ProjectListItem[] = [];
   let error: string | null = null;
   try {
-    projects = await listProjects(supabase);
+    projects = await listProjectsWithPreviews(supabase);
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
   }
@@ -48,7 +51,7 @@ export default async function ProjectsPage() {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map((project) => (
-            <ProjectListItem key={project.id} project={project} />
+            <ProjectListItemCard key={project.id} project={project} />
           ))}
         </div>
       )}
@@ -56,37 +59,73 @@ export default async function ProjectsPage() {
   );
 }
 
-function ProjectListItem({ project }: { project: ProjectRow }) {
+function ProjectListItemCard({ project }: { project: ProjectListItem }) {
   const market = formatMarket(project.constraints.markets[0]);
   const c = project.constraints;
   return (
     <Link
       href={`/projects/${project.id}`}
-      className="block bg-surface border border-border rounded-2xl p-4 hover:border-border/80 transition-colors"
+      className="block bg-surface border border-border rounded-2xl overflow-hidden hover:border-border/80 transition-colors"
     >
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <p className="text-text text-lg font-semibold truncate flex-1">
-          {project.name}
+      <ProjectPhotoMosaic photos={project.mosaicPhotos} />
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <p className="text-text text-lg font-semibold truncate flex-1">
+            {project.name}
+          </p>
+          <span className="text-textMuted text-xs capitalize shrink-0">
+            {project.status}
+          </span>
+        </div>
+        <p className="text-textMuted text-sm line-clamp-2 mb-3">
+          {project.raw_prompt}
         </p>
-        <span className="text-textMuted text-xs capitalize">{project.status}</span>
-      </div>
-      <p className="text-textMuted text-sm line-clamp-2 mb-3">
-        {project.raw_prompt}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <Badge>{market}</Badge>
-        <Badge>{c.strategy}</Badge>
-        {c.priceMax ? <Badge>≤ {formatMoney(c.priceMax)}</Badge> : null}
-        {c.targetMonthlyCashflow ? (
-          <Badge>{formatMoney(c.targetMonthlyCashflow)}/mo</Badge>
+        <div className="flex flex-wrap gap-2">
+          <Badge>
+            {project.dealCount === 1
+              ? "1 deal"
+              : `${project.dealCount} deals`}
+          </Badge>
+          <Badge>{market}</Badge>
+          <Badge>{c.strategy}</Badge>
+          {c.priceMax ? <Badge>≤ {formatMoney(c.priceMax)}</Badge> : null}
+          {c.targetMonthlyCashflow ? (
+            <Badge>{formatMoney(c.targetMonthlyCashflow)}/mo</Badge>
+          ) : null}
+          <Badge>DSCR ≥ {c.minDSCR.toFixed(2)}</Badge>
+        </div>
+        {project.last_scout_at ? (
+          <p className="text-textMuted text-xs mt-3">
+            Last scout {formatDate(project.last_scout_at)}
+          </p>
         ) : null}
-        <Badge>DSCR ≥ {c.minDSCR.toFixed(2)}</Badge>
       </div>
-      {project.last_scout_at ? (
-        <p className="text-textMuted text-xs mt-3">
-          Last scout {formatDate(project.last_scout_at)}
-        </p>
-      ) : null}
     </Link>
+  );
+}
+
+function ProjectPhotoMosaic({ photos }: { photos: (string | null)[] }) {
+  return (
+    <div className="grid grid-cols-3 grid-rows-2 aspect-[3/2] bg-surfaceAlt">
+      {photos.map((url, i) =>
+        url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={`${url}-${i}`}
+            src={url}
+            alt=""
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div
+            key={`empty-${i}`}
+            className="w-full h-full bg-surfaceAlt border border-border/40 flex items-center justify-center"
+            aria-hidden
+          >
+            <span className="block w-5 h-5 rounded-sm border border-dashed border-border/70" />
+          </div>
+        ),
+      )}
+    </div>
   );
 }

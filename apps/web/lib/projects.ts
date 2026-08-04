@@ -25,6 +25,67 @@ export async function listProjects(
   return ((data ?? []) as ProjectsRow[]).map(hydrate);
 }
 
+/** Mosaic slots on the projects grid card (3×2). */
+export const PROJECT_MOSAIC_SLOTS = 6;
+
+export type ProjectListItem = ProjectRow & {
+  dealCount: number;
+  /** Always length `PROJECT_MOSAIC_SLOTS`; null = empty placeholder slot. */
+  mosaicPhotos: (string | null)[];
+};
+
+/**
+ * Projects for the grid page, enriched with scouted deal counts and up to
+ * six distinct listing thumbnails for the card mosaic.
+ */
+export async function listProjectsWithPreviews(
+  supabase: SupabaseClient,
+): Promise<ProjectListItem[]> {
+  const projects = await listProjects(supabase);
+  if (projects.length === 0) return [];
+
+  const ids = projects.map((p) => p.id);
+  const { data: deals, error } = await supabase
+    .from("deals")
+    .select("project_id, primary_image_url, photos, last_refreshed_at")
+    .in("project_id", ids)
+    .order("last_refreshed_at", { ascending: false });
+  if (error) throw error;
+
+  const byProject = new Map<string, { count: number; photos: string[] }>();
+  for (const id of ids) byProject.set(id, { count: 0, photos: [] });
+
+  for (const deal of deals ?? []) {
+    const bucket = byProject.get(deal.project_id as string);
+    if (!bucket) continue;
+    bucket.count += 1;
+    if (bucket.photos.length >= PROJECT_MOSAIC_SLOTS) continue;
+    const fromPhotos = Array.isArray(deal.photos)
+      ? (deal.photos as unknown[]).find(
+          (p): p is string => typeof p === "string" && p.length > 0,
+        )
+      : undefined;
+    const url =
+      (typeof deal.primary_image_url === "string" && deal.primary_image_url
+        ? deal.primary_image_url
+        : null) ?? fromPhotos;
+    if (url && !bucket.photos.includes(url)) bucket.photos.push(url);
+  }
+
+  return projects.map((project) => {
+    const bucket = byProject.get(project.id) ?? { count: 0, photos: [] };
+    const mosaicPhotos: (string | null)[] = Array.from(
+      { length: PROJECT_MOSAIC_SLOTS },
+      (_, i) => bucket.photos[i] ?? null,
+    );
+    return {
+      ...project,
+      dealCount: bucket.count,
+      mosaicPhotos,
+    };
+  });
+}
+
 export async function getProject(
   supabase: SupabaseClient,
   id: string,

@@ -994,3 +994,464 @@ function round(n: number, digits: number): number {
   const f = Math.pow(10, digits);
   return Math.round(n * f) / f;
 }
+
+function haversineMiles(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number },
+): number {
+  const R = 3958.8;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+export interface CompScoutOptions {
+  /** Live scenario / editor price — preferred for the HasData price band. */
+  price?: number;
+  beds?: number;
+  baths?: number;
+  sqft?: number;
+  /** Max comps to return / upsert (default 12). */
+  maxComps?: number;
+}
+
+export interface ScoutedComparable {
+  dealId: string;
+  sourcePropertyId: string;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  price?: number | null;
+  beds?: number | null;
+  baths?: number | null;
+  sqft?: number | null;
+  primaryListingImageUrl?: string | null;
+  daysOnMarket?: number | null;
+  /** Already in this project before this scout run (upsert refreshed it). */
+  alreadyInProject: boolean;
+  distanceMiles?: number;
+  papucScore?: number | null;
+}
+
+export interface ScoutComparablesResult {
+  subjectDealId: string;
+  projectId: string;
+  comparables: ScoutedComparable[];
+  query: Record<string, unknown>;
+  added: number;
+  refreshed: number;
+  note?: string;
+}
+
+/** Map Zillow `homeType` enums onto HasData's `homeTypes[]` filter values. */
+function zillowHomeTypeToFilter(homeType: string | undefined): string | null {
+  if (!homeType) return null;
+  const t = homeType.trim();
+  const allowed = new Set([
+    "house",
+    "townhome",
+    "multiFamily",
+    "condo",
+    "lot",
+    "apartment",
+    "manufactured",
+  ]);
+  if (allowed.has(t)) return t;
+  switch (t.toUpperCase()) {
+    case "SINGLE_FAMILY":
+      return "house";
+    case "CONDO":
+      return "condo";
+    case "TOWNHOUSE":
+      return "townhome";
+    case "MULTI_FAMILY":
+      return "multiFamily";
+    case "APARTMENT":
+      return "apartment";
+    case "MANUFACTURED":
+      return "manufactured";
+    case "LOT":
+      return "lot";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Find nearby similar listings via HasData Zillow search (biased by the live
+ * scenario price / beds / baths / sqft), upsert them into the subject deal's
+ * project without duplicates (`project_id,source,source_property_id`), and
+ * return the scouted set for the Comparables panel.
+ *
+ * Unlike full project scout, comps skip DSCR/cashflow gates — every nearby
+ * match is added so the user can compare, not only underwriting winners.
+ */
+export async function scoutComparablesForDeal(
+  sb: SupabaseClient,
+  dealId: string,
+  options: CompScoutOptions = {},
+): Promise<ScoutComparablesResult> {
+  const hasdataKey = process.env.HASDATA_API_KEY?.trim();
+  if (!hasdataKey) {
+    throw new Error("HASDATA_API_KEY is not configured");
+  }
+
+  const { data: subject, error: subErr } = await sb
+    .from("deals")
+    .select(
+      "id, project_id, source, source_property_id, address, city, state, zip, price, beds, baths, sqft, lat, lng, mls_data",
+    )
+    .eq("id", dealId)
+    .single();
+  if (subErr || !subject) throw new Error("deal not found");
+
+  const projectId = subject.project_id as string;
+  const subjectZpid = String(subject.source_property_id ?? "").trim();
+
+  const { data: project, error: pErr } = await sb
+    .from("projects")
+    .select("*")
+    .eq("id", projectId)
+    .single();
+  if (pErr || !project) throw new Error("project not found");
+
+  const constraints = project.constraints as ProjectConstraints;
+  const price =
+    (typeof options.price === "number" && options.price > 0
+      ? options.price
+      : null) ??
+    (typeof subject.price === "number" && Number(subject.price) > 0
+      ? Number(subject.price)
+      : null);
+  const beds =
+    (typeof options.beds === "number" ? options.beds : null) ??
+    (subject.beds != null ? Number(subject.beds) : null);
+  const baths =
+    (typeof options.baths === "number" ? options.baths : null) ??
+    (subject.baths != null ? Number(subject.baths) : null);
+  const sqft =
+    (typeof options.sqft === "number" && options.sqft > 0
+      ? options.sqft
+      : null) ??
+    (subject.sqft != null && Number(subject.sqft) > 0
+      ? Number(subject.sqft)
+      : null);
+
+  if (!price) {
+    return {
+      subjectDealId: dealId,
+      projectId,
+      comparables: [],
+      query: {},
+      added: 0,
+      refreshed: 0,
+      note: "Set a purchase price (scenario or listing) to scout comps.",
+    };
+  }
+
+  const keyword = [subject.zip, subject.city, subject.state]
+    .filter(Boolean)
+    .join(", ")
+    .trim();
+  if (!keyword) {
+    return {
+      subjectDealId: dealId,
+      projectId,
+      comparables: [],
+      query: {},
+      added: 0,
+      refreshed: 0,
+      note: "Deal is missing city/state/zip — cannot search nearby comps.",
+    };
+  }
+
+  const priceMin = Math.max(1, Math.round(price * 0.8));
+  const priceMax = Math.round(price * 1.2);
+  const maxComps = Math.min(Math.max(options.maxComps ?? 12, 1), 24);
+
+  const mls = (subject.mls_data ?? {}) as Record<string, unknown>;
+  const rawHomeType =
+    typeof mls.homeType === "string"
+      ? mls.homeType
+      : typeof (mls as { home_type?: unknown }).home_type === "string"
+        ? ((mls as { home_type: string }).home_type)
+        : undefined;
+  const homeTypeFilter = zillowHomeTypeToFilter(rawHomeType);
+
+  const filters: ZillowSearchFilters = {
+    keyword,
+    type: "forSale",
+    priceMin,
+    priceMax,
+  };
+  if (typeof beds === "number" && beds >= 0) {
+    filters.bedsMin = Math.max(0, Math.floor(beds) - 1);
+    filters.bedsMax = Math.floor(beds) + 1;
+  }
+  if (typeof baths === "number" && baths >= 0) {
+    filters.bathsMin = Math.max(0, Math.floor(baths) - 1);
+    filters.bathsMax = Math.floor(baths) + 1;
+  }
+  if (typeof sqft === "number" && sqft > 0) {
+    filters.sqftMin = Math.max(1, Math.round(sqft * 0.75));
+    filters.sqftMax = Math.round(sqft * 1.25);
+  }
+  if (homeTypeFilter) filters.homeTypes = [homeTypeFilter];
+
+  const client = new HasDataClient({ apiKey: hasdataKey });
+  const search = await client.searchZillowAll(filters, {
+    targetCount: Math.max(maxComps * 3, 30),
+    maxPages: 3,
+  });
+
+  const subjectLat = typeof subject.lat === "number" ? subject.lat : null;
+  const subjectLng = typeof subject.lng === "number" ? subject.lng : null;
+
+  type Ranked = ZillowListingSummary & { distanceMiles?: number };
+  const ranked: Ranked[] = [];
+  for (const listing of search.data) {
+    if (!listing.zpid || listing.zpid === subjectZpid) continue;
+    if (!(listing.price && listing.price > 0)) continue;
+    const row: Ranked = { ...listing };
+    if (
+      subjectLat != null &&
+      subjectLng != null &&
+      typeof listing.lat === "number" &&
+      typeof listing.lng === "number"
+    ) {
+      row.distanceMiles = haversineMiles(
+        { lat: subjectLat, lng: subjectLng },
+        { lat: listing.lat, lng: listing.lng },
+      );
+    }
+    ranked.push(row);
+  }
+  ranked.sort((a, b) => {
+    const da = a.distanceMiles ?? Number.POSITIVE_INFINITY;
+    const db = b.distanceMiles ?? Number.POSITIVE_INFINITY;
+    if (da !== db) return da - db;
+    return (b.price ?? 0) - (a.price ?? 0);
+  });
+  const shortlist = ranked.slice(0, maxComps);
+
+  const { data: existingRows } = await sb
+    .from("deals")
+    .select("id, source_property_id")
+    .eq("project_id", projectId)
+    .eq("source", "hasdata");
+  const existingByZpid = new Map<string, string>();
+  for (const row of existingRows ?? []) {
+    if (row.source_property_id) {
+      existingByZpid.set(String(row.source_property_id), row.id as string);
+    }
+  }
+
+  const batchContext = computeBatchContext(
+    shortlist.map((listing) => ({
+      sqft: listing.sqft,
+      lotSizeSqft: listing.lotSizeSqft,
+      price: listing.price,
+    })),
+  );
+
+  const downPayment = constraints.downPayment ?? 0;
+  const targetCashflow = constraints.targetMonthlyCashflow ?? 0;
+  const landOnlyProject = isLandOnlyProject(constraints);
+
+  let added = 0;
+  let refreshed = 0;
+  const comparables: ScoutedComparable[] = [];
+
+  for (const zillow of shortlist) {
+    const already = existingByZpid.has(zillow.zpid);
+    try {
+      const listing = zillowToMLSListing(zillow);
+      const detail = zillowToSyntheticDetail(zillow);
+      const mlsPrice = listing.price;
+      const avm = listing.estimatedValue ?? detail.estimatedValue;
+      const effectivePrice = mlsPrice ?? avm;
+      if (!effectivePrice) continue;
+
+      const effectiveDown =
+        downPayment > 0
+          ? downPayment
+          : effectivePrice * (1 - constraints.mortgage.ltv);
+
+      const homeType =
+        typeof (listing.raw as Record<string, unknown> | undefined)?.homeType ===
+        "string"
+          ? ((listing.raw as Record<string, unknown>).homeType as string)
+          : zillow.homeType ?? null;
+      const isLand = homeType === "LOT" || (homeType === null && landOnlyProject);
+      const monthlyRent = isLand
+        ? 0
+        : (detail.suggestedRent ??
+          pickHudFmrRent(detail.hudFairMarketRent, listing.beds ?? 3) ??
+          estimateRentFromPrice(effectivePrice));
+
+      const hoaMonthly = listing.hoaMonthly ?? detail.hoaMonthly;
+      const underwritingHoa = hoaMonthly ?? assumeHoaMonthly(homeType);
+      const stateCode = listing.state ?? subject.state ?? undefined;
+      const propertyTaxRatePct = propertyTaxRateForState(stateCode);
+      const insuranceRatePct = insuranceRateForState(stateCode);
+
+      const proforma = computeProForma({
+        price: effectivePrice,
+        downPayment: effectiveDown,
+        rateAPR: constraints.mortgage.rateAPR,
+        termYears: constraints.mortgage.termYears,
+        interestOnly: constraints.mortgage.interestOnly ?? false,
+        strategy: isLand ? "LTR" : constraints.strategy === "STR" ? "LTR" : constraints.strategy,
+        // Comps underwrite as LTR so we don't invent STR seasonality without
+        // an AirROI estimate; users can open the deal and run STR later.
+        monthlyRentLTR: monthlyRent,
+        hoaMonthly: underwritingHoa,
+        propertyTaxRatePct,
+        insuranceMonthly: estimateInsuranceMonthly(effectivePrice, insuranceRatePct),
+        pmiRatePct: computeAutoPMIRateFromLoan(effectivePrice, effectiveDown),
+        closingCosts: effectivePrice * DEFAULT_CLOSING_COSTS_PCT,
+      });
+
+      const monthlyCashflow = proforma.annualPreTaxProfit / 12;
+      const { score: baseScore, components: scoreComponents } = computeBaseScore({
+        dscr: proforma.dscr,
+        monthlyCashflow,
+        targetCashflow,
+        cashOnCash: proforma.cashOnCashReturn,
+        assetClass: isLand ? "land" : "rental",
+        signals: {
+          price: effectivePrice,
+          priceChange: listing.priceChange,
+          priceChangedAt: listing.priceChangedAt,
+          daysOnMarket: listing.daysOnMarket,
+          sqft: listing.sqft ?? detail.sqft,
+          lotSizeSqft: listing.lotSizeSqft,
+          hoaMonthly,
+          photoCount: listing.photosCount,
+          hasVirtualTour: listing.hasVirtualTour,
+        },
+        batch: batchContext,
+      });
+
+      const photos =
+        listing.photosList?.map((p) => p.url) ?? (detail.photos ?? []);
+
+      const { data: dealRow, error: dealErr } = await sb
+        .from("deals")
+        .upsert(
+          {
+            project_id: projectId,
+            source: "hasdata",
+            source_property_id: listing.id,
+            address: listing.address ?? null,
+            city: listing.city ?? null,
+            state: listing.state ?? null,
+            zip: listing.zip ?? null,
+            lat: detail.lat ?? null,
+            lng: detail.lng ?? null,
+            price: mlsPrice ?? null,
+            beds: listing.beds ?? detail.beds ?? null,
+            baths: listing.baths ?? detail.baths ?? null,
+            sqft: listing.sqft ?? detail.sqft ?? null,
+            photos,
+            primary_image_url: listing.primaryListingImageUrl ?? null,
+            source_url: zillow.detailUrl ?? null,
+            mls_data: listing.raw ?? null,
+            est_value: avm ?? null,
+            est_rent: monthlyRent,
+            hoa_monthly: hoaMonthly ?? null,
+            property_tax_rate: propertyTaxRatePct,
+            days_on_market: listing.daysOnMarket ?? null,
+            price_change: listing.priceChange ?? null,
+            price_changed_at: listing.priceChangedAt ?? null,
+            lot_size: listing.lotSizeSqft ?? null,
+            hud_fmr: detail.hudFairMarketRent ?? null,
+            last_refreshed_at: new Date().toISOString(),
+          },
+          { onConflict: "project_id,source,source_property_id" },
+        )
+        .select("id")
+        .single();
+      if (dealErr || !dealRow) {
+        console.warn("[comps] upsert failed", listing.id, dealErr?.message);
+        continue;
+      }
+
+      await sb.from("deal_scores").upsert(
+        {
+          deal_id: dealRow.id,
+          project_id: projectId,
+          dscr: round(proforma.dscr, 3),
+          dscr_lender_haircut: round(proforma.dscrLenderHaircut, 3),
+          cash_on_cash: round(proforma.cashOnCashReturn, 4),
+          monthly_cashflow: round(monthlyCashflow, 2),
+          irr_5yr: proforma.irr5Yr !== null ? round(proforma.irr5Yr, 4) : null,
+          payout_years: round(proforma.payoutYears, 2),
+          score: Math.round(baseScore),
+          score_components: scoreComponents,
+          rationale: null,
+          computed_proforma: proforma,
+          computed_at: new Date().toISOString(),
+        },
+        { onConflict: "deal_id" },
+      );
+
+      if (already) refreshed += 1;
+      else {
+        added += 1;
+        existingByZpid.set(zillow.zpid, dealRow.id as string);
+      }
+
+      comparables.push({
+        dealId: dealRow.id as string,
+        sourcePropertyId: zillow.zpid,
+        address: listing.address ?? null,
+        city: listing.city ?? null,
+        state: listing.state ?? null,
+        zip: listing.zip ?? null,
+        price: mlsPrice ?? null,
+        beds: listing.beds ?? null,
+        baths: listing.baths ?? null,
+        sqft: listing.sqft ?? null,
+        primaryListingImageUrl: listing.primaryListingImageUrl ?? null,
+        daysOnMarket: listing.daysOnMarket ?? null,
+        alreadyInProject: already,
+        distanceMiles:
+          typeof zillow.distanceMiles === "number"
+            ? round(zillow.distanceMiles, 2)
+            : undefined,
+        papucScore: Math.round(baseScore),
+      });
+    } catch (err) {
+      console.warn(
+        "[comps] failed for",
+        zillow.zpid,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  return {
+    subjectDealId: dealId,
+    projectId,
+    comparables,
+    query: {
+      ...(filters as unknown as Record<string, unknown>),
+      scenarioPrice: price,
+      pagesFetched: search.pagesFetched,
+    },
+    added,
+    refreshed,
+    note:
+      comparables.length === 0
+        ? "No nearby for-sale comps matched this scenario. Try adjusting price or beds/baths."
+        : undefined,
+  };
+}

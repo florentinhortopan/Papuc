@@ -803,7 +803,16 @@ export function DealDetailClient({
           <CashflowChart monthlyPreTaxProfit={result.monthlyPreTaxProfit} />
         )}
 
-        <ComparablesPanel dealId={deal.id} />
+        <ComparablesPanel
+          dealId={deal.id}
+          projectId={deal.project_id}
+          scenario={{
+            price: derived.price > 0 ? derived.price : undefined,
+            beds: deal.beds != null ? Number(deal.beds) : undefined,
+            baths: deal.baths != null ? Number(deal.baths) : undefined,
+            sqft: deal.sqft != null ? Number(deal.sqft) : undefined,
+          }}
+        />
       </div>
 
       <div className="space-y-4 min-w-0">
