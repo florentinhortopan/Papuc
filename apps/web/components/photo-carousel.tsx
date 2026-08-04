@@ -1,9 +1,10 @@
 "use client";
 
 import useEmblaCarousel from "embla-carousel-react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Expand } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { PhotoLightbox } from "@/components/photo-lightbox";
 import { cn } from "@/lib/utils";
 
 export type PhotoAnalysisBadge = {
@@ -43,9 +44,12 @@ export function PhotoCarousel({
 }) {
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: false });
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const scrollPrev = useCallback(() => emblaApi?.scrollPrev(), [emblaApi]);
   const scrollNext = useCallback(() => emblaApi?.scrollNext(), [emblaApi]);
+
+  const openLightbox = useCallback(() => setLightboxOpen(true), []);
 
   useEffect(() => {
     if (!emblaApi) return;
@@ -97,18 +101,33 @@ export function PhotoCarousel({
                 src={url}
                 alt=""
                 loading={i === 0 ? "eager" : "lazy"}
-                className="w-full h-full object-cover"
+                onClick={() => {
+                  // Embla sets clickAllowed false after a drag so swipes
+                  // don't accidentally open the lightbox.
+                  if (emblaApi && !emblaApi.clickAllowed()) return;
+                  openLightbox();
+                }}
+                className="w-full h-full object-cover cursor-zoom-in"
               />
             </div>
           ))}
         </div>
       </div>
+      <button
+        type="button"
+        onClick={openLightbox}
+        className="absolute right-3 top-3 z-[1] bg-black/60 text-white rounded-full p-2 hover:bg-black/80 transition-colors"
+        aria-label="Expand photo"
+        title="Expand"
+      >
+        <Expand className="h-4 w-4" />
+      </button>
       {photos.length > 1 ? (
         <>
           <button
             type="button"
             onClick={scrollPrev}
-            className="absolute left-3 top-1/2 -translate-y-1/2 bg-black/60 text-white rounded-full p-2 hover:bg-black/80 transition-colors"
+            className="absolute left-3 top-1/2 z-[1] -translate-y-1/2 bg-black/60 text-white rounded-full p-2 hover:bg-black/80 transition-colors"
             aria-label="Previous photo"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -116,12 +135,12 @@ export function PhotoCarousel({
           <button
             type="button"
             onClick={scrollNext}
-            className="absolute right-3 top-1/2 -translate-y-1/2 bg-black/60 text-white rounded-full p-2 hover:bg-black/80 transition-colors"
+            className="absolute right-3 top-1/2 z-[1] -translate-y-1/2 bg-black/60 text-white rounded-full p-2 hover:bg-black/80 transition-colors"
             aria-label="Next photo"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
-          <div className="absolute right-3 bottom-3 bg-black/60 rounded-full px-2 py-1">
+          <div className="absolute right-3 bottom-3 z-[1] bg-black/60 rounded-full px-2 py-1">
             <span className="text-white text-xs">
               {selectedIndex + 1}/{photos.length}
             </span>
@@ -133,15 +152,26 @@ export function PhotoCarousel({
           type="button"
           onClick={analysisBadge.onClick}
           className={cn(
-            "absolute left-3 bottom-3 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-colors",
+            "absolute left-3 bottom-3 z-[1] rounded-full px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-colors",
             ANALYSIS_BADGE_TONE[analysisBadge.tone ?? "neutral"],
           )}
-          title="Jump to photo condition analysis"
-          aria-label={`${analysisBadge.label}. Jump to photo condition analysis`}
+          title="Jump to Catch the catch"
+          aria-label={`${analysisBadge.label}. Jump to Catch the catch`}
         >
           {analysisBadge.label}
         </button>
       ) : null}
+      <PhotoLightbox
+        photos={photos}
+        index={selectedIndex}
+        open={lightboxOpen}
+        onOpenChange={setLightboxOpen}
+        onIndexChange={(i) => {
+          setSelectedIndex(i);
+          onIndexChange?.(i);
+          emblaApi?.scrollTo(i);
+        }}
+      />
     </div>
   );
 }

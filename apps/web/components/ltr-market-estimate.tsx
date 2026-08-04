@@ -82,8 +82,8 @@ export function LtrMarketEstimate({
   return (
     <div className="bg-surfaceAlt border border-border rounded-xl p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-text text-xs font-semibold">
-          Comps-based rent estimate
+        <p className="text-text text-base font-semibold">
+          Comps rent estimate
         </p>
         {estimate ? (
           <Badge variant="success">Zillow rentals</Badge>

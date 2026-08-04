@@ -377,8 +377,8 @@ export function PhotoConditionEstimate({
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <p className="text-text text-xs font-semibold">
-          Photo condition analysis
+        <p className="text-text text-base font-semibold">
+          Catch the catch
         </p>
         {isComplete ? (
           <Badge variant="success">
