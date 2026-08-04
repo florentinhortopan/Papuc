@@ -72,6 +72,13 @@ export function ProjectDetailClient({
   const [filters, setFilters] = useState<DealFilters>(DEFAULT_DEAL_FILTERS);
   const [savingFilters, setSavingFilters] = useState(false);
   const [filterSavedNote, setFilterSavedNote] = useState<string | null>(null);
+  // Renaming is purely cosmetic: deals, scores, and share links all key on
+  // UUIDs / share tokens, never the name, so a rename can't break anything
+  // someone else has been sent.
+  const [name, setName] = useState(project.name);
+  const [nameDraft, setNameDraft] = useState(project.name);
+  const [editingName, setEditingName] = useState(false);
+  const [savingName, setSavingName] = useState(false);
   const projectIdRef = useRef(project.id);
 
   const visibleDeals = useMemo(
@@ -294,6 +301,27 @@ export function ProjectDetailClient({
     }
   }
 
+  async function saveName() {
+    const trimmed = nameDraft.trim();
+    if (!trimmed || trimmed === name) {
+      setEditingName(false);
+      setNameDraft(name);
+      return;
+    }
+    setSavingName(true);
+    try {
+      const supabase = createClient();
+      await updateProject(supabase, project.id, { name: trimmed });
+      setName(trimmed);
+      setEditingName(false);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingName(false);
+    }
+  }
+
   async function onDelete() {
     if (
       !window.confirm(
@@ -317,7 +345,60 @@ export function ProjectDetailClient({
 
   return (
     <div className="mt-2">
-      <h1 className="text-3xl font-bold">{project.name}</h1>
+      {editingName ? (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+          <input
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void saveName();
+              if (e.key === "Escape") {
+                setEditingName(false);
+                setNameDraft(name);
+              }
+            }}
+            autoFocus
+            maxLength={120}
+            aria-label="Project name"
+            className="bg-surface border border-border rounded-xl px-3 py-2 text-xl font-bold w-full sm:max-w-md focus:outline-none focus:border-primary"
+          />
+          <div className="flex gap-2">
+            <Button
+              onClick={saveName}
+              loading={savingName}
+              className="!text-xs !px-4 !py-2"
+            >
+              Save
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setEditingName(false);
+                setNameDraft(name);
+              }}
+              className="!text-xs !px-4 !py-2"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-start gap-1 min-w-0">
+          <h1 className="text-3xl font-bold min-w-0 break-words">{name}</h1>
+          <button
+            type="button"
+            onClick={() => {
+              setNameDraft(name);
+              setEditingName(true);
+            }}
+            title="Rename project"
+            aria-label="Rename project"
+            className="text-textMuted hover:text-text shrink-0 p-2.5 mt-0.5 rounded-lg hover:bg-surface transition-colors"
+          >
+            ✎
+          </button>
+        </div>
+      )}
       <p className="text-textMuted text-sm mt-1">{marketLabel}</p>
 
       <div className="bg-surface border border-border rounded-2xl p-4 mt-4 mb-4">
