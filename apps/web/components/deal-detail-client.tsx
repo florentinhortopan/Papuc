@@ -50,6 +50,7 @@ import {
 import { getDealSourceLink } from "@/lib/source-url";
 import { createClient } from "@/lib/supabase/client";
 import { underwriteSeeds } from "@/lib/underwrite";
+import { cn } from "@/lib/utils";
 
 interface ProFormaState {
   price: string;
@@ -812,10 +813,49 @@ export function DealDetailClient({
           </div>
         ) : null}
 
-        <div className="bg-surface border border-border rounded-2xl p-4">
-          <p className="text-text text-base font-semibold mb-3">
-            Pro-forma summary
-          </p>
+        <CollapsibleCard
+          title="Pro-forma summary"
+          stats={[
+            {
+              label: "Cashflow",
+              value: `${result.annualPreTaxProfit >= 0 ? "+" : ""}${formatMoney(
+                result.annualPreTaxProfit / 12,
+              )}/mo`,
+              tone:
+                result.annualPreTaxProfit / 12 >= 100
+                  ? "positive"
+                  : result.annualPreTaxProfit / 12 >= -100
+                    ? "neutral"
+                    : "negative",
+            },
+            {
+              label: "DSCR (lender)",
+              value: formatDscr(result.dscrLenderHaircut),
+              tone:
+                result.dscrLenderHaircut >= 1.25
+                  ? "positive"
+                  : result.dscrLenderHaircut >= 1
+                    ? "neutral"
+                    : "negative",
+            },
+            {
+              label: "PITIA",
+              value: `${formatMoney(result.pitiaMonthly.total)}/mo`,
+            },
+            state.strategy === "STR"
+              ? {
+                  label: "Break-even ADR",
+                  value:
+                    breakevenADR === null
+                      ? "—"
+                      : `${formatMoney(breakevenADR)}/night`,
+                }
+              : {
+                  label: "Cash-on-cash",
+                  value: formatPct(result.cashOnCashReturn),
+                },
+          ]}
+        >
           <SummaryRow
             label="Monthly cashflow"
             value={`${result.annualPreTaxProfit >= 0 ? "+" : ""}${formatMoney(
@@ -892,10 +932,27 @@ export function DealDetailClient({
               }
             />
           ) : null}
-        </div>
+        </CollapsibleCard>
 
-        <div className="bg-surface border border-border rounded-2xl p-4">
-          <p className="text-text text-base font-semibold mb-3">Inputs</p>
+        <CollapsibleCard
+          title="Inputs"
+          headerExtra={<Badge variant="primary">{state.strategy}</Badge>}
+          stats={[
+            { label: "Price", value: formatMoney(derived.price) },
+            {
+              label: "Down",
+              value: `${formatMoney(derived.downPayment)}`,
+            },
+            {
+              label: "Rate APR",
+              value: `${(toNum(state.rateAPR) * 100).toFixed(2)}%`,
+            },
+            {
+              label: "Term",
+              value: `${Math.round(toNum(state.termYears))} yrs`,
+            },
+          ]}
+        >
           <div className="grid grid-cols-2 gap-3">
             <Field label="Price ($)" type="number" value={state.price} onChange={(e) => patch("price", e.target.value)} />
             <Field label="Down ($)" type="number" value={state.downPayment} onChange={(e) => patch("downPayment", e.target.value)} />
@@ -1000,13 +1057,6 @@ export function DealDetailClient({
             </div>
             <Field label="Utilities ($/mo)" type="number" value={state.utilitiesMonthly} onChange={(e) => patch("utilitiesMonthly", e.target.value)} />
             <Field label="Maintenance ($/mo)" type="number" value={state.maintenanceMonthly} onChange={(e) => patch("maintenanceMonthly", e.target.value)} hint="Seeded at 1%/yr of price" />
-            <div className="col-span-full">
-              <PhotoConditionEstimate
-                dealId={deal.id}
-                cached={cachedConditionEstimate}
-                onApply={applyConditionEstimate}
-              />
-            </div>
             <Field label="Misc ($/mo)" type="number" value={state.miscMonthly} onChange={(e) => patch("miscMonthly", e.target.value)} />
             <Field
               label="Mgmt fee (of revenue)"
@@ -1044,21 +1094,6 @@ export function DealDetailClient({
                 : undefined
             }
           />
-          {state.strategy === "STR" ? (
-            <StrMarketEstimate
-              dealId={deal.id}
-              cached={cachedStrEstimate}
-              onApply={applyStrEstimate}
-              baselineSource={
-                marketAdrIntel &&
-                (marketAdrIntel.adrLow !== undefined ||
-                  marketAdrIntel.adrMedian !== undefined ||
-                  marketAdrIntel.adrHigh !== undefined)
-                  ? "market_checked"
-                  : "heuristic"
-              }
-            />
-          ) : null}
           <Field
             label="Strategy"
             value={state.strategy}
@@ -1070,7 +1105,29 @@ export function DealDetailClient({
             }
             hint="LTR or STR"
           />
-        </div>
+        </CollapsibleCard>
+
+        <PhotoConditionEstimate
+          dealId={deal.id}
+          cached={cachedConditionEstimate}
+          onApply={applyConditionEstimate}
+        />
+
+        {state.strategy === "STR" ? (
+          <StrMarketEstimate
+            dealId={deal.id}
+            cached={cachedStrEstimate}
+            onApply={applyStrEstimate}
+            baselineSource={
+              marketAdrIntel &&
+              (marketAdrIntel.adrLow !== undefined ||
+                marketAdrIntel.adrMedian !== undefined ||
+                marketAdrIntel.adrHigh !== undefined)
+                ? "market_checked"
+                : "heuristic"
+            }
+          />
+        ) : null}
 
         <ScenarioSimulator
           baseline={baseline}
@@ -1717,6 +1774,90 @@ function ScenarioSimulator({
       {error ? (
         <p className="text-danger text-xs mt-2">{error}</p>
       ) : null}
+    </div>
+  );
+}
+
+interface CoverStat {
+  label: string;
+  value: string;
+  tone?: "positive" | "negative" | "neutral";
+}
+
+/**
+ * Panel that collapses to a scannable stat card. The whole header is the
+ * toggle (large tap target for mobile); when collapsed, `stats` render in
+ * a 2-column grid with slightly bigger numbers so the key figures read at
+ * a glance. Expanded, the stats hide (the full content repeats them) and
+ * `children` show.
+ */
+function CollapsibleCard({
+  title,
+  headerExtra,
+  stats,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  /** Rendered next to the title (e.g. a strategy badge). */
+  headerExtra?: React.ReactNode;
+  stats: CoverStat[];
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="bg-surface border border-border rounded-2xl overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="w-full text-left p-4 select-none"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="text-text text-base font-semibold truncate">
+              {title}
+            </p>
+            {headerExtra}
+          </div>
+          <span
+            aria-hidden
+            className={cn(
+              "text-textMuted text-sm transition-transform duration-200 shrink-0",
+              open && "rotate-180",
+            )}
+          >
+            ▾
+          </span>
+        </div>
+        {!open ? (
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-3">
+            {stats.map((s) => (
+              <div key={s.label} className="min-w-0">
+                <p className="text-textMuted text-[10px] uppercase tracking-wide truncate">
+                  {s.label}
+                </p>
+                <p
+                  className={cn(
+                    "text-lg font-semibold tabular-nums leading-6 truncate",
+                    s.tone === "positive"
+                      ? "text-success"
+                      : s.tone === "negative"
+                        ? "text-danger"
+                        : s.tone === "neutral"
+                          ? "text-warning"
+                          : "text-text",
+                  )}
+                >
+                  {s.value}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </button>
+      {open ? <div className="px-4 pb-4">{children}</div> : null}
     </div>
   );
 }
