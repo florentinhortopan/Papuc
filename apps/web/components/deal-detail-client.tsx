@@ -27,6 +27,7 @@ import { PhotoCarousel } from "@/components/photo-carousel";
 import { StrCashflowMatrix, defaultStrMatrix, type StrMatrixValue } from "@/components/str-matrix";
 import {
   PhotoConditionEstimate,
+  findingsCitingPhoto,
   type ConditionEstimatePayload,
 } from "@/components/photo-condition-estimate";
 import {
@@ -86,6 +87,11 @@ interface ProFormaState {
   vacancyRateLTR: string;
   monthlyRentLTR: string;
   strategy: Strategy;
+}
+
+function capitalizeSeverity(severity: string): string {
+  if (!severity) return "Note";
+  return severity.charAt(0).toUpperCase() + severity.slice(1);
 }
 
 function toNum(s: string, fallback = 0): number {
@@ -585,8 +591,65 @@ export function DealDetailClient({
   const [photosLoading, setPhotosLoading] = useState(false);
   /** Driven by swipes and by taps on photo-condition findings. */
   const [photoIndex, setPhotoIndex] = useState(0);
+  /** Live condition estimate (cached + in-session analysis) for carousel badge. */
+  const [liveConditionEstimate, setLiveConditionEstimate] =
+    useState<ConditionEstimatePayload | null>(cachedConditionEstimate);
+  const [focusFindingId, setFocusFindingId] = useState<string | null>(null);
+  const [focusFindingNonce, setFocusFindingNonce] = useState(0);
+  /** Per-photo cursor when cycling findings from the carousel badge. */
+  const photoFindingCycleRef = useRef<Record<number, number>>({});
   const isSaved = deal.action === "saved";
   const sourceLink = getDealSourceLink(deal);
+
+  useEffect(() => {
+    setLiveConditionEstimate(cachedConditionEstimate);
+  }, [cachedConditionEstimate]);
+
+  const conditionAnalysisReady = Boolean(
+    liveConditionEstimate?.estimatedAt &&
+      liveConditionEstimate.done !== false &&
+      ((liveConditionEstimate.findings?.length ?? 0) > 0 ||
+        liveConditionEstimate.summary),
+  );
+  const findingsForCurrentPhoto = useMemo(
+    () =>
+      findingsCitingPhoto(
+        liveConditionEstimate?.findings ?? [],
+        photoIndex,
+      ),
+    [liveConditionEstimate?.findings, photoIndex],
+  );
+  const photoAnalysisBadge = useMemo(() => {
+    if (!conditionAnalysisReady) return null;
+    const worst = findingsForCurrentPhoto[0];
+    const label = worst
+      ? findingsForCurrentPhoto.length === 1
+        ? capitalizeSeverity(worst.severity)
+        : `${capitalizeSeverity(worst.severity)} · ${findingsForCurrentPhoto.length}`
+      : "Rehab notes";
+    return {
+      label,
+      tone: (worst?.severity ?? "neutral") as
+        | "critical"
+        | "major"
+        | "minor"
+        | "cosmetic"
+        | "neutral",
+      onClick: () => {
+        if (findingsForCurrentPhoto.length > 0) {
+          const cursor = photoFindingCycleRef.current[photoIndex] ?? 0;
+          const next =
+            findingsForCurrentPhoto[cursor % findingsForCurrentPhoto.length]!;
+          photoFindingCycleRef.current[photoIndex] =
+            (cursor + 1) % findingsForCurrentPhoto.length;
+          setFocusFindingId(next.id);
+        } else {
+          setFocusFindingId(null);
+        }
+        setFocusFindingNonce((n) => n + 1);
+      },
+    };
+  }, [conditionAnalysisReady, findingsForCurrentPhoto, photoIndex]);
 
   // Lazy-fetch the full Zillow photo gallery the first time this deal is
   // opened. The /photos route caches the result back into deals.photos so
@@ -781,6 +844,7 @@ export function DealDetailClient({
             photos={photos}
             index={photoIndex}
             onIndexChange={setPhotoIndex}
+            analysisBadge={photoAnalysisBadge}
           />
           {photosLoading ? (
             <div className="absolute left-3 top-3 bg-black/65 rounded-full px-2 py-1">
@@ -1186,6 +1250,9 @@ export function DealDetailClient({
           included={conditionCostsIncluded}
           onIncludedChange={setConditionCostsIncludedInScenario}
           photoCount={photos.length}
+          onEstimateChange={setLiveConditionEstimate}
+          focusFindingId={focusFindingId}
+          focusNonce={focusFindingNonce}
           onSelectPhoto={(i) => {
             setPhotoIndex(i);
             if (typeof document !== "undefined") {

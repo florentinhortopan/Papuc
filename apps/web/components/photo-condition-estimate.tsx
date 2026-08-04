@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatMoney } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export type ConditionSeverity = "critical" | "major" | "minor" | "cosmetic";
 export type ConditionOverall =
@@ -51,6 +52,18 @@ function sortFindingsClient(findings: ConditionFinding[]): ConditionFinding[] {
     };
     return mid(b) - mid(a);
   });
+}
+
+/** Findings that cite a gallery photo, most serious first. */
+export function findingsCitingPhoto(
+  findings: ConditionFinding[],
+  photoIndex: number,
+): ConditionFinding[] {
+  return sortFindingsClient(
+    findings.filter((f) =>
+      (f.photoIndexes ?? []).some((i) => i === photoIndex),
+    ),
+  );
 }
 
 export interface ConditionEstimatePayload {
@@ -187,6 +200,9 @@ export function PhotoConditionEstimate({
   onIncludedChange,
   photoCount = 0,
   onSelectPhoto,
+  onEstimateChange,
+  focusFindingId = null,
+  focusNonce = 0,
 }: {
   dealId: string;
   cached: ConditionEstimatePayload | null;
@@ -204,6 +220,14 @@ export function PhotoConditionEstimate({
   photoCount?: number;
   /** Jump the listing photo carousel to a 0-based gallery index. */
   onSelectPhoto?: (index: number) => void;
+  /** Notify parent when the live estimate changes (for carousel badge). */
+  onEstimateChange?: (estimate: ConditionEstimatePayload | null) => void;
+  /**
+   * Reverse entry from the carousel badge: highlight this finding and
+   * scroll it into view. Pair with `focusNonce` so repeat taps re-fire.
+   */
+  focusFindingId?: string | null;
+  focusNonce?: number;
 }) {
   const [estimate, setEstimate] = useState<ConditionEstimatePayload | null>(
     cached,
@@ -214,6 +238,41 @@ export function PhotoConditionEstimate({
   /** Per-finding cursor into photoIndexes for multi-tap cycling. */
   const photoCycleRef = useRef<Record<string, number>>({});
   const [activeFindingId, setActiveFindingId] = useState<string | null>(null);
+  const [panelPulse, setPanelPulse] = useState(false);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setEstimate(cached);
+  }, [cached]);
+
+  useEffect(() => {
+    onEstimateChange?.(estimate);
+  }, [estimate, onEstimateChange]);
+
+  useEffect(() => {
+    if (!focusNonce) return;
+    setPanelPulse(true);
+    const clearPulse = window.setTimeout(() => setPanelPulse(false), 1600);
+
+    panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+    if (focusFindingId) {
+      setActiveFindingId(focusFindingId);
+      // Defer so the active styles / DOM id exist before scrolling inside
+      // the findings list.
+      window.requestAnimationFrame(() => {
+        const el = document.getElementById(
+          `condition-finding-${focusFindingId}`,
+        );
+        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        if (el instanceof HTMLElement) {
+          el.focus({ preventScroll: true });
+        }
+      });
+    }
+
+    return () => window.clearTimeout(clearPulse);
+  }, [focusNonce, focusFindingId]);
 
   async function runAnalysis(refresh: boolean) {
     setLoading(true);
@@ -300,7 +359,16 @@ export function PhotoConditionEstimate({
   );
 
   return (
-    <div className="bg-surfaceAlt border border-border rounded-xl p-3 space-y-2">
+    <div
+      id="photo-condition-panel"
+      ref={panelRef}
+      className={cn(
+        "bg-surfaceAlt border rounded-xl p-3 space-y-2 transition-shadow duration-500",
+        panelPulse
+          ? "border-primary ring-2 ring-primary/40 shadow-md"
+          : "border-border",
+      )}
+    >
       <div className="flex items-center justify-between gap-2">
         <p className="text-text text-xs font-semibold">
           Photo condition analysis
@@ -367,6 +435,7 @@ export function PhotoConditionEstimate({
                   return (
                     <li key={f.id}>
                       <button
+                        id={`condition-finding-${f.id}`}
                         type="button"
                         disabled={!tappable}
                         onClick={() => showFindingPhotos(f)}
@@ -377,7 +446,7 @@ export function PhotoConditionEstimate({
                               : `Cycle photos ${photoIndexes.map((i) => i + 1).join(", ")}`
                             : undefined
                         }
-                        className={`w-full text-left border rounded-lg px-2 py-1.5 space-y-0.5 transition-colors ${
+                        className={`w-full text-left border rounded-lg px-2 py-1.5 space-y-0.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                           active
                             ? "border-primary bg-primary/5"
                             : "border-border"

@@ -6,17 +6,40 @@ import { useCallback, useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
+export type PhotoAnalysisBadge = {
+  label: string;
+  tone?: "critical" | "major" | "minor" | "cosmetic" | "neutral";
+  onClick: () => void;
+};
+
+const ANALYSIS_BADGE_TONE: Record<
+  NonNullable<PhotoAnalysisBadge["tone"]>,
+  string
+> = {
+  critical: "bg-danger text-white hover:bg-danger/90",
+  major: "bg-warning text-black hover:bg-warning/90",
+  minor: "bg-primary text-white hover:bg-primary/90",
+  cosmetic: "bg-black/70 text-white hover:bg-black/85",
+  neutral: "bg-black/70 text-white hover:bg-black/85",
+};
+
 export function PhotoCarousel({
   photos,
   className,
   index,
   onIndexChange,
+  analysisBadge,
 }: {
   photos: string[];
   className?: string;
   /** Controlled 0-based slide index (e.g. from a rehab finding tap). */
   index?: number;
   onIndexChange?: (index: number) => void;
+  /**
+   * When photo-condition analysis has results: badge that jumps to the
+   * matching finding in the Photo condition analysis panel.
+   */
+  analysisBadge?: PhotoAnalysisBadge | null;
 }) {
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: false });
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -104,6 +127,20 @@ export function PhotoCarousel({
             </span>
           </div>
         </>
+      ) : null}
+      {analysisBadge ? (
+        <button
+          type="button"
+          onClick={analysisBadge.onClick}
+          className={cn(
+            "absolute left-3 bottom-3 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow-sm transition-colors",
+            ANALYSIS_BADGE_TONE[analysisBadge.tone ?? "neutral"],
+          )}
+          title="Jump to photo condition analysis"
+          aria-label={`${analysisBadge.label}. Jump to photo condition analysis`}
+        >
+          {analysisBadge.label}
+        </button>
       ) : null}
     </div>
   );
