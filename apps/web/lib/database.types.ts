@@ -77,6 +77,13 @@ export type DealsRow = {
   str_monthly_distribution: unknown;
   str_estimate_source: string | null;
   str_estimated_at: string | null;
+  /** Median monthly rent from Zillow for-rent comps (HasData on-demand). */
+  ltr_rent_median: number | null;
+  ltr_rent_p25: number | null;
+  ltr_rent_p75: number | null;
+  ltr_comp_count: number | null;
+  ltr_estimate_source: string | null;
+  ltr_estimated_at: string | null;
   /** Structured photo-condition findings (Claude vision, on-demand). */
   condition_findings: unknown;
   condition_summary: string | null;

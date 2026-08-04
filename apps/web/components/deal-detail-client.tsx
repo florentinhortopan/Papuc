@@ -8,6 +8,7 @@ import {
   solveBreakevenDownPayment,
   solveBreakevenPrice,
   solveBreakevenRent,
+  solveMinDownPaymentForBreakeven,
   strScheduleFromEstimate,
   type ProFormaInputs,
   type Strategy,
@@ -27,6 +28,10 @@ import {
   PhotoConditionEstimate,
   type ConditionEstimatePayload,
 } from "@/components/photo-condition-estimate";
+import {
+  LtrMarketEstimate,
+  type LtrEstimatePayload,
+} from "@/components/ltr-market-estimate";
 import { StrMarketEstimate, type StrEstimatePayload } from "@/components/str-market-estimate";
 import { StrRegulationsCard } from "@/components/str-regulations-card";
 import { Badge } from "@/components/ui/badge";
@@ -120,6 +125,26 @@ export function DealDetailClient({
           estimatedAt: deal.str_estimated_at,
         }
       : null;
+
+  /** HasData for-rent comps estimate already cached on the deal, if any. */
+  const cachedLtrEstimate: LtrEstimatePayload | null =
+    deal.ltr_estimated_at && deal.ltr_rent_median != null
+      ? {
+          median: Number(deal.ltr_rent_median),
+          p25: deal.ltr_rent_p25 != null ? Number(deal.ltr_rent_p25) : null,
+          p75: deal.ltr_rent_p75 != null ? Number(deal.ltr_rent_p75) : null,
+          comparableCount: deal.ltr_comp_count ?? 0,
+          estimatedAt: deal.ltr_estimated_at,
+          source: deal.ltr_estimate_source ?? undefined,
+        }
+      : null;
+
+  const dealHomeType =
+    deal.mls_data &&
+    typeof (deal.mls_data as Record<string, unknown>).homeType === "string"
+      ? ((deal.mls_data as Record<string, unknown>).homeType as string)
+      : null;
+  const isLandDeal = Boolean(dealHomeType && /^(LOT|LAND)$/i.test(dealHomeType));
 
   /** Completed photo-condition estimate cached on the deal (full gallery). */
   const cachedConditionEstimate: ConditionEstimatePayload | null =
@@ -356,6 +381,10 @@ export function DealDetailClient({
       monthlyAvgStays: schedule.monthlyAvgStays,
     });
     patch("monthlyRentLTR", String(Math.round(est.adr)));
+  }
+
+  function applyLtrEstimate(est: LtrEstimatePayload) {
+    patch("monthlyRentLTR", String(Math.round(est.median)));
   }
 
   /** Seed Improvements + Maintenance from a photo-condition analysis. */
@@ -1136,7 +1165,29 @@ export function DealDetailClient({
                 : "heuristic"
             }
           />
-        ) : null}
+        ) : (
+          <LtrMarketEstimate
+            dealId={deal.id}
+            cached={cachedLtrEstimate}
+            onApply={applyLtrEstimate}
+            disabledReason={
+              isLandDeal
+                ? "Vacant land has no rental comps — LTR rent estimate is not available."
+                : null
+            }
+            projectRent={(monthlyRent) => {
+              const projected = computeProForma({
+                ...inputs,
+                strategy: "LTR",
+                monthlyRentLTR: monthlyRent,
+              });
+              return {
+                monthlyCashflow: projected.annualPreTaxProfit / 12,
+                annualAfterTax: projected.annualPostTaxProfit,
+              };
+            }}
+          />
+        )}
 
         <ScenarioSimulator
           baseline={baseline}
@@ -1599,22 +1650,37 @@ function ScenarioSimulator({
     }
   }
 
+  /**
+   * Keep the purchase price fixed and lower the down payment toward the
+   * cashflow break-even, floored at 20% of the original (baseline) price.
+   * Only meaningful for deals that already cash-flow — lowering down on a
+   * losing deal makes PITIA worse.
+   */
   function solveForPrice() {
     setError(null);
-    const bePrice = solveBreakevenPrice({
-      ...inputs,
-      price: currentPrice,
-      downPayment: currentDownPayment,
-    });
-    if (bePrice === null) {
+    if (monthlyCashflow < 0) {
       setError(
-        monthlyCashflow >= 0
-          ? "Already profitable — there's no lower price needed to break even."
-          : "Even at the lowest sensible price this deal still loses money. Try raising rent or lowering rate/insurance.",
+        "This deal isn't cash-flowing yet — lowering the down payment would make it worse. Use “↑ Break-even down” to raise cash at close instead.",
       );
       return;
     }
-    onChange({ price: bePrice, downPayment: currentDownPayment });
+    const minDown = baseline.price * 0.2;
+    const beDown = solveMinDownPaymentForBreakeven(
+      {
+        ...inputs,
+        // Hold the current offer price; do not solve by cutting it.
+        price: currentPrice,
+        downPayment: currentDownPayment,
+      },
+      { minDownPayment: minDown },
+    );
+    if (beDown === null) {
+      setError(
+        "Couldn't find a lower down payment that still breaks even. Try Reset, then retry.",
+      );
+      return;
+    }
+    onChange({ price: currentPrice, downPayment: beDown });
   }
 
   function solveForDown() {
@@ -1760,9 +1826,9 @@ function ScenarioSimulator({
         <Button
           variant="secondary"
           onClick={solveForPrice}
-          title="Find the highest price you could pay and still break even, holding the current down payment"
+          title="Keep the purchase price fixed and lower the down payment to break-even cashflow, floored at 20% of the original price (cash-flowing deals only)"
         >
-          ↓ Break-even price
+          ↓ Min down @ BE
         </Button>
         <Button
           variant="secondary"

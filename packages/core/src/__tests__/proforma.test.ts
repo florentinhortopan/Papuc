@@ -8,6 +8,7 @@ import {
   solveBreakevenDownPayment,
   solveBreakevenPrice,
   solveBreakevenRent,
+  solveMinDownPaymentForBreakeven,
 } from "../proforma";
 import {
   computeAutoPMIRate,
@@ -505,6 +506,70 @@ describe("solveBreakevenPrice / solveBreakevenDownPayment", () => {
     expect(
       solveBreakevenRent({ ...baseline, strategy: "STR" }),
     ).toBeNull();
+  });
+});
+
+describe("solveMinDownPaymentForBreakeven", () => {
+  // Cash-flows at high down, but loses money at 0% down — so a real
+  // break-even down sits somewhere in between.
+  const profitable = {
+    price: 400000,
+    downPayment: 200000, // 50% down
+    rateAPR: 0.075,
+    termYears: 30,
+    strategy: "LTR" as const,
+    monthlyRentLTR: 3200,
+    propertyTaxRatePct: 0.012,
+    insuranceMonthly: 150,
+    utilitiesMonthly: 0,
+    maintenanceMonthly: 150,
+    miscMonthly: 50,
+    managementFeePct: 0.08,
+  };
+
+  it("returns null for a cashflow-negative deal", () => {
+    const losing = {
+      ...profitable,
+      monthlyRentLTR: 1500,
+      downPayment: 40000,
+    };
+    expect(computeProForma(losing).annualPreTaxProfit).toBeLessThan(0);
+    expect(solveMinDownPaymentForBreakeven(losing)).toBeNull();
+  });
+
+  it("finds a lower down that zeros cashflow, holding price fixed", () => {
+    const atZeroDown = computeProForma({
+      ...profitable,
+      downPayment: 0,
+    }).annualPreTaxProfit;
+    const atCurrent = computeProForma(profitable).annualPreTaxProfit;
+    expect(atCurrent).toBeGreaterThan(0);
+    expect(atZeroDown).toBeLessThan(0);
+
+    const beDown = solveMinDownPaymentForBreakeven(profitable);
+    expect(beDown).not.toBeNull();
+    expect(beDown!).toBeLessThan(profitable.downPayment);
+    expect(beDown!).toBeGreaterThan(0);
+
+    const verify = computeProForma({
+      ...profitable,
+      downPayment: beDown!,
+    }).annualPreTaxProfit;
+    expect(Math.abs(verify)).toBeLessThan(50);
+  });
+
+  it("floors at minDownPayment when the deal still cash-flows there", () => {
+    // High rent so even 20% down is still positive — the floor wins.
+    const strong = { ...profitable, monthlyRentLTR: 5500 };
+    const floor = strong.price * 0.2;
+    expect(
+      computeProForma({ ...strong, downPayment: floor }).annualPreTaxProfit,
+    ).toBeGreaterThan(0);
+
+    const beDown = solveMinDownPaymentForBreakeven(strong, {
+      minDownPayment: floor,
+    });
+    expect(beDown).toBeCloseTo(floor, 0);
   });
 });
 

@@ -719,3 +719,46 @@ export function solveBreakevenDownPayment(
   }
   return (lo + hi) / 2;
 }
+
+/**
+ * For a deal that is already cash-flowing: find the *lowest* down payment
+ * that still breaks even (annual pre-tax ≈ 0), holding the purchase price
+ * fixed. Used when the buyer wants to put in less cash without going
+ * negative on monthly cashflow.
+ *
+ * `minDownPayment` is a hard floor (typically 20% of the original purchase
+ * price for DSCR loans). If the deal still cash-flows at that floor, the
+ * floor is returned — you can't hit exact $0 cashflow without dipping
+ * below the allowed minimum down.
+ *
+ * Returns null when the deal is not cash-flowing at the current down
+ * (lowering down would only make it worse — use
+ * {@link solveBreakevenDownPayment} to raise down instead).
+ */
+export function solveMinDownPaymentForBreakeven(
+  inputs: ProFormaInputs,
+  opts: { minDownPayment?: number } = {},
+): number | null {
+  const price = inputs.price;
+  if (!(price > 0)) return null;
+
+  const floor = Math.max(0, Math.min(price, opts.minDownPayment ?? 0));
+  const fCurrent = cashflowAt(inputs, { downPayment: inputs.downPayment });
+  if (fCurrent < 0) return null; // only applicable to cash-flowing deals
+
+  const fFloor = cashflowAt(inputs, { downPayment: floor });
+  if (fFloor >= 0) return floor; // still profitable at the minimum down
+
+  // Zero crossing sits between the floor (negative) and current down
+  // (non-negative). Bisect for annualPreTax ≈ 0.
+  let lo = floor;
+  let hi = Math.min(price, Math.max(floor, inputs.downPayment));
+  for (let i = 0; i < SOLVER_MAX_ITERATIONS; i++) {
+    const mid = (lo + hi) / 2;
+    const f = cashflowAt(inputs, { downPayment: mid });
+    if (Math.abs(f) < SOLVER_TOLERANCE) return mid;
+    if (f > 0) hi = mid;
+    else lo = mid;
+  }
+  return (lo + hi) / 2;
+}

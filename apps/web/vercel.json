@@ -12,6 +12,9 @@
     "app/api/deals/[id]/str-estimate/route.ts": {
       "maxDuration": 30
     },
+    "app/api/deals/[id]/ltr-estimate/route.ts": {
+      "maxDuration": 60
+    },
     "app/api/deals/rank/route.ts": {
       "maxDuration": 60
     },
