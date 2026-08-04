@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  ScenarioIncludeToggle,
+  ScenarioRefreshLink,
+} from "@/components/scenario-include-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatMoney } from "@/lib/format";
@@ -623,37 +627,18 @@ export function PhotoConditionEstimate({
                 {estimate.disclaimer}
               </p>
 
-              <div className="flex items-center justify-between gap-3 bg-surface border border-border rounded-xl px-3 py-2">
-                <div className="min-w-0">
-                  <p className="text-text text-xs font-semibold">
-                    Include rehab costs in scenario
-                  </p>
-                  <p className="text-textMuted text-[11px] leading-4">
-                    {included
-                      ? `Using ${formatMoney(estimate.rehabSuggested)} rehab + ${formatMoney(estimate.maintenanceMonthlySuggested)}/mo maintenance`
-                      : "Off — Improvements / Maintenance stay at your baseline"}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={toggleIncluded}
-                  aria-pressed={included}
-                  aria-label={
-                    included
-                      ? "Remove rehab costs from scenario"
-                      : "Include rehab costs in scenario"
-                  }
-                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-                    included ? "bg-primary" : "bg-border"
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
-                      included ? "translate-x-6" : "translate-x-1"
-                    }`}
-                  />
-                </button>
-              </div>
+              <ScenarioIncludeToggle
+                label="Include rehab costs in scenario"
+                description={
+                  included
+                    ? `Using ${formatMoney(estimate.rehabSuggested)} rehab + ${formatMoney(estimate.maintenanceMonthlySuggested)}/mo maintenance`
+                    : "Off — Improvements / Maintenance stay at your baseline"
+                }
+                included={included}
+                onToggle={toggleIncluded}
+                ariaLabelOn="Remove rehab costs from scenario"
+                ariaLabelOff="Include rehab costs in scenario"
+              />
 
               <div className="flex items-center justify-between gap-2">
                 <p className="text-textMuted text-[11px]">
@@ -666,15 +651,11 @@ export function PhotoConditionEstimate({
                     ? `Analyzed ${new Date(estimate.estimatedAt).toLocaleDateString()}.`
                     : ""}
                 </p>
-                <button
-                  type="button"
-                  className="text-xs text-textMuted hover:underline disabled:opacity-50 shrink-0"
-                  disabled={loading}
+                <ScenarioRefreshLink
+                  loading={loading}
                   onClick={() => runAnalysis(true)}
                   title="Re-run Claude vision on the full listing gallery"
-                >
-                  {loading ? "Refreshing…" : "Refresh"}
-                </button>
+                />
               </div>
             </>
           ) : null}

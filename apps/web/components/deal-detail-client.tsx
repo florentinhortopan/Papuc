@@ -397,39 +397,93 @@ export function DealDetailClient({
   }
 
   /**
-   * Push a comps-based estimate (AirROI) into the pro-forma: flat comps
-   * ADR across the matrix, occupancy curve derived from the comps'
-   * monthly revenue distribution, and the ADR field synced so all three
-   * (field, matrix, summary) agree at once.
-   */
-  function applyStrEstimate(est: StrEstimatePayload) {
-    const schedule = strScheduleFromEstimate({
-      adr: est.adr,
-      occupancy: est.occupancy,
-      monthlyRevenueDistribution: est.monthlyRevenueDistribution,
-    });
-    setStrMatrix({
-      monthlyNights: schedule.monthlyNights,
-      monthlyADR: schedule.monthlyADR,
-      monthlyOccupancy: schedule.monthlyOccupancy,
-      monthlyAvgStays: schedule.monthlyAvgStays,
-    });
-    patch("monthlyRentLTR", String(Math.round(est.adr)));
-  }
-
-  function applyLtrEstimate(est: LtrEstimatePayload) {
-    patch("monthlyRentLTR", String(Math.round(est.median)));
-  }
-
-  /**
-   * Snapshot of Improvements / Maintenance taken right before photo-
-   * condition costs are injected, so the toggle can reverse cleanly.
+   * Snapshot taken before an estimate toggle injects values, so turning
+   * the toggle off restores the prior baseline cleanly.
    */
   const conditionRestoreRef = useRef<{
     improvements: string;
     maintenanceMonthly: string;
   } | null>(null);
   const [conditionCostsIncluded, setConditionCostsIncluded] = useState(false);
+
+  const strEstimateRestoreRef = useRef<{
+    monthlyRentLTR: string;
+    strMatrix: StrMatrixValue;
+  } | null>(null);
+  const [strEstimateIncluded, setStrEstimateIncluded] = useState(false);
+
+  const ltrEstimateRestoreRef = useRef<string | null>(null);
+  const [ltrEstimateIncluded, setLtrEstimateIncluded] = useState(false);
+
+  function cloneStrMatrix(m: StrMatrixValue): StrMatrixValue {
+    return {
+      monthlyNights: [...m.monthlyNights],
+      monthlyADR: [...m.monthlyADR],
+      monthlyOccupancy: [...m.monthlyOccupancy],
+      monthlyAvgStays: [...m.monthlyAvgStays],
+    };
+  }
+
+  /** Toggle AirROI comps ADR/occupancy into (or out of) the scenario. */
+  function setStrEstimateIncludedInScenario(
+    include: boolean,
+    est?: StrEstimatePayload,
+  ) {
+    if (include && est) {
+      if (!strEstimateIncluded) {
+        strEstimateRestoreRef.current = {
+          monthlyRentLTR: state.monthlyRentLTR,
+          strMatrix: cloneStrMatrix(strMatrix),
+        };
+      }
+      const schedule = strScheduleFromEstimate({
+        adr: est.adr,
+        occupancy: est.occupancy,
+        monthlyRevenueDistribution: est.monthlyRevenueDistribution,
+      });
+      setStrMatrix({
+        monthlyNights: schedule.monthlyNights,
+        monthlyADR: schedule.monthlyADR,
+        monthlyOccupancy: schedule.monthlyOccupancy,
+        monthlyAvgStays: schedule.monthlyAvgStays,
+      });
+      setState((s) => ({
+        ...s,
+        monthlyRentLTR: String(Math.round(est.adr)),
+      }));
+      setStrEstimateIncluded(true);
+      return;
+    }
+    const restore = strEstimateRestoreRef.current;
+    if (restore) {
+      setStrMatrix(cloneStrMatrix(restore.strMatrix));
+      setState((s) => ({ ...s, monthlyRentLTR: restore.monthlyRentLTR }));
+    }
+    setStrEstimateIncluded(false);
+  }
+
+  /** Toggle Zillow rent comps into (or out of) the LTR scenario. */
+  function setLtrEstimateIncludedInScenario(
+    include: boolean,
+    est?: LtrEstimatePayload,
+  ) {
+    if (include && est) {
+      if (!ltrEstimateIncluded) {
+        ltrEstimateRestoreRef.current = state.monthlyRentLTR;
+      }
+      setState((s) => ({
+        ...s,
+        monthlyRentLTR: String(Math.round(est.median)),
+      }));
+      setLtrEstimateIncluded(true);
+      return;
+    }
+    const restore =
+      ltrEstimateRestoreRef.current ??
+      String(deal.est_rent ?? 2500);
+    setState((s) => ({ ...s, monthlyRentLTR: restore }));
+    setLtrEstimateIncluded(false);
+  }
 
   /** Toggle photo-condition rehab/maintenance into (or out of) the scenario. */
   function setConditionCostsIncludedInScenario(
@@ -1306,43 +1360,45 @@ export function DealDetailClient({
         </div>
 
         <div className="order-11 lg:order-none">
-          {state.strategy === "STR" ? (
-            <StrMarketEstimate
-              dealId={deal.id}
-              cached={cachedStrEstimate}
-              onApply={applyStrEstimate}
-              baselineSource={
-                marketAdrIntel &&
-                (marketAdrIntel.adrLow !== undefined ||
-                  marketAdrIntel.adrMedian !== undefined ||
-                  marketAdrIntel.adrHigh !== undefined)
-                  ? "market_checked"
-                  : "heuristic"
-              }
-            />
-          ) : (
-            <LtrMarketEstimate
-              dealId={deal.id}
-              cached={cachedLtrEstimate}
-              onApply={applyLtrEstimate}
-              disabledReason={
-                isLandDeal
-                  ? "Vacant land has no rental comps — LTR rent estimate is not available."
-                  : null
-              }
-              projectRent={(monthlyRent) => {
-                const projected = computeProForma({
-                  ...inputs,
-                  strategy: "LTR",
-                  monthlyRentLTR: monthlyRent,
-                });
-                return {
-                  monthlyCashflow: projected.annualPreTaxProfit / 12,
-                  annualAfterTax: projected.annualPostTaxProfit,
-                };
-              }}
-            />
-          )}
+        {state.strategy === "STR" ? (
+          <StrMarketEstimate
+            dealId={deal.id}
+            cached={cachedStrEstimate}
+            included={strEstimateIncluded}
+            onIncludedChange={setStrEstimateIncludedInScenario}
+            baselineSource={
+              marketAdrIntel &&
+              (marketAdrIntel.adrLow !== undefined ||
+                marketAdrIntel.adrMedian !== undefined ||
+                marketAdrIntel.adrHigh !== undefined)
+                ? "market_checked"
+                : "heuristic"
+            }
+          />
+        ) : (
+          <LtrMarketEstimate
+            dealId={deal.id}
+            cached={cachedLtrEstimate}
+            included={ltrEstimateIncluded}
+            onIncludedChange={setLtrEstimateIncludedInScenario}
+            disabledReason={
+              isLandDeal
+                ? "Vacant land has no rental comps — LTR rent estimate is not available."
+                : null
+            }
+            projectRent={(monthlyRent) => {
+              const projected = computeProForma({
+                ...inputs,
+                strategy: "LTR",
+                monthlyRentLTR: monthlyRent,
+              });
+              return {
+                monthlyCashflow: projected.annualPreTaxProfit / 12,
+                annualAfterTax: projected.annualPostTaxProfit,
+              };
+            }}
+          />
+        )}
         </div>
 
         <div className="order-9 lg:order-none">

@@ -1,7 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import {
+  ScenarioIncludeToggle,
+  ScenarioRefreshLink,
+} from "@/components/scenario-include-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatMoney } from "@/lib/format";
@@ -21,21 +25,23 @@ export interface LtrRentProjection {
 }
 
 /**
- * On-demand Zillow for-rent comps widget for LTR deals. First click runs a
- * HasData forRent search; the median rent is cached on the deal. Apply
- * (and auto-apply on fetch) pushes that rent into the pro-forma so the
- * summary cashflow matches.
+ * On-demand Zillow for-rent comps widget for LTR deals. Fetching caches
+ * the median on the deal; the include toggle pushes rent into the
+ * pro-forma (same pattern as Catch the catch / STR comps).
  */
 export function LtrMarketEstimate({
   dealId,
   cached,
-  onApply,
+  included,
+  onIncludedChange,
   projectRent,
   disabledReason,
 }: {
   dealId: string;
   cached: LtrEstimatePayload | null;
-  onApply: (est: LtrEstimatePayload) => void;
+  /** Whether comps rent is currently in the pro-forma. */
+  included: boolean;
+  onIncludedChange: (include: boolean, est?: LtrEstimatePayload) => void;
   /** Project cashflow / after-tax with the given monthly rent using the
    *  same pro-forma inputs as the summary panel. */
   projectRent: (monthlyRent: number) => LtrRentProjection;
@@ -45,6 +51,10 @@ export function LtrMarketEstimate({
   const [estimate, setEstimate] = useState<LtrEstimatePayload | null>(cached);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const includedRef = useRef(included);
+  includedRef.current = included;
+  const onIncludedChangeRef = useRef(onIncludedChange);
+  onIncludedChangeRef.current = onIncludedChange;
 
   async function fetchEstimate(refresh: boolean) {
     setLoading(true);
@@ -66,11 +76,22 @@ export function LtrMarketEstimate({
         source: body.source,
       };
       setEstimate(est);
-      onApply(est);
+      if (includedRef.current) {
+        onIncludedChangeRef.current(true, est);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  function toggleIncluded() {
+    if (!estimate) return;
+    if (included) {
+      onIncludedChange(false);
+    } else {
+      onIncludedChange(true, estimate);
     }
   }
 
@@ -137,6 +158,19 @@ export function LtrMarketEstimate({
             </p>
           ) : null}
 
+          <ScenarioIncludeToggle
+            label="Include rent comps in scenario"
+            description={
+              included
+                ? `Using ${formatMoney(estimate.median)}/mo rent`
+                : "Off — Monthly rent stays at your baseline"
+            }
+            included={included}
+            onToggle={toggleIncluded}
+            ariaLabelOn="Remove rent comps from scenario"
+            ariaLabelOff="Include rent comps in scenario"
+          />
+
           <div className="flex items-center justify-between gap-2">
             <p className="text-textMuted text-[11px]">
               {estimate.comparableCount
@@ -146,24 +180,12 @@ export function LtrMarketEstimate({
                 ? `Estimated ${new Date(estimate.estimatedAt).toLocaleDateString()}.`
                 : ""}
             </p>
-            <div className="flex gap-2 shrink-0">
-              <button
-                type="button"
-                className="text-xs text-accent hover:underline"
-                onClick={() => onApply(estimate)}
-              >
-                Apply
-              </button>
-              <button
-                type="button"
-                className="text-xs text-textMuted hover:underline disabled:opacity-50"
-                disabled={loading}
-                onClick={() => fetchEstimate(true)}
-                title="Fetch a fresh for-rent comps search via HasData"
-              >
-                {loading ? "Refreshing…" : "Refresh comps"}
-              </button>
-            </div>
+            <ScenarioRefreshLink
+              loading={loading}
+              onClick={() => fetchEstimate(true)}
+              label="Refresh"
+              title="Fetch a fresh for-rent comps search via HasData"
+            />
           </div>
         </>
       ) : (
@@ -171,7 +193,7 @@ export function LtrMarketEstimate({
           <p className="text-textMuted text-xs leading-5">
             The rent above is a Zillow rentZestimate or price-based guess.
             Pull active for-rent listings in this area (similar beds / type),
-            take the median ask, and apply it to the pro-forma.
+            then use the toggle to include the median ask in the pro-forma.
           </p>
           <Button
             size="sm"

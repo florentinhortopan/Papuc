@@ -1,7 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import {
+  ScenarioIncludeToggle,
+  ScenarioRefreshLink,
+} from "@/components/scenario-include-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatMoney } from "@/lib/format";
@@ -29,31 +33,35 @@ export interface StrEstimatePayload {
 }
 
 /**
- * On-demand comps-based STR estimate widget, rendered next to the ADR
- * field in STR mode. First click costs $0.20 (AirROI, real Airbnb comps);
- * the result is cached on the deal, so subsequent visits show it free
- * with an explicit paid "Refresh" action.
- *
- * "Apply" pushes the comps ADR/occupancy/seasonality into the pro-forma
- * matrix via the parent callback — fetching alone never mutates the
- * user's inputs.
+ * On-demand comps-based STR estimate widget. First click costs $0.20
+ * (AirROI); the result is cached on the deal. Fetching alone never
+ * mutates the pro-forma — the include toggle pushes ADR/occupancy/
+ * seasonality in, and Refresh re-fetches with the same opt-in pattern
+ * as Catch the catch.
  */
 export function StrMarketEstimate({
   dealId,
   cached,
-  onApply,
+  included,
+  onIncludedChange,
   baselineSource = "heuristic",
 }: {
   dealId: string;
   /** Estimate already stored on the deal row, if any. */
   cached: StrEstimatePayload | null;
-  onApply: (est: StrEstimatePayload) => void;
+  /** Whether comps ADR/occupancy are currently in the pro-forma. */
+  included: boolean;
+  onIncludedChange: (include: boolean, est?: StrEstimatePayload) => void;
   /** What the current ADR baseline is when no comps estimate exists. */
   baselineSource?: "market_checked" | "heuristic";
 }) {
   const [estimate, setEstimate] = useState<StrEstimatePayload | null>(cached);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const includedRef = useRef(included);
+  includedRef.current = included;
+  const onIncludedChangeRef = useRef(onIncludedChange);
+  onIncludedChangeRef.current = onIncludedChange;
 
   async function fetchEstimate(refresh: boolean) {
     setLoading(true);
@@ -76,11 +84,23 @@ export function StrMarketEstimate({
         comparableCount: body.comparableCount,
       };
       setEstimate(est);
-      onApply(est);
+      // Leave toggle off on first fetch; re-apply if already included.
+      if (includedRef.current) {
+        onIncludedChangeRef.current(true, est);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+    }
+  }
+
+  function toggleIncluded() {
+    if (!estimate) return;
+    if (included) {
+      onIncludedChange(false);
+    } else {
+      onIncludedChange(true, estimate);
     }
   }
 
@@ -89,7 +109,7 @@ export function StrMarketEstimate({
   return (
     <div className="bg-surfaceAlt border border-border rounded-xl p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-text text-xs font-semibold">
+        <p className="text-text text-base font-semibold">
           Comps-based market estimate
         </p>
         {estimate ? (
@@ -142,6 +162,19 @@ export function StrMarketEstimate({
             </p>
           ) : null}
 
+          <ScenarioIncludeToggle
+            label="Include comps in scenario"
+            description={
+              included
+                ? `Using ${formatMoney(estimate.adr)}/n ADR · ${Math.round(estimate.occupancy * 100)}% occ`
+                : "Off — ADR / occupancy stay at your baseline"
+            }
+            included={included}
+            onToggle={toggleIncluded}
+            ariaLabelOn="Remove comps from scenario"
+            ariaLabelOff="Include comps in scenario"
+          />
+
           <div className="flex items-center justify-between gap-2">
             <p className="text-textMuted text-[11px]">
               {estimate.comparableCount
@@ -151,32 +184,20 @@ export function StrMarketEstimate({
                 ? `Estimated ${new Date(estimate.estimatedAt).toLocaleDateString()}.`
                 : ""}
             </p>
-            <div className="flex gap-2 shrink-0">
-              <button
-                type="button"
-                className="text-xs text-accent hover:underline"
-                onClick={() => onApply(estimate)}
-              >
-                Apply
-              </button>
-              <button
-                type="button"
-                className="text-xs text-textMuted hover:underline disabled:opacity-50"
-                disabled={loading}
-                onClick={() => fetchEstimate(true)}
-                title="Fetch a fresh estimate from AirROI ($0.20)"
-              >
-                {loading ? "Refreshing…" : "Refresh ($0.20)"}
-              </button>
-            </div>
+            <ScenarioRefreshLink
+              loading={loading}
+              onClick={() => fetchEstimate(true)}
+              label="Refresh ($0.20)"
+              title="Fetch a fresh estimate from AirROI ($0.20)"
+            />
           </div>
         </>
       ) : (
         <>
           <p className="text-textMuted text-xs leading-5">
             {baselineSource === "market_checked"
-              ? "The ADR above is derived from the rent estimate and clamped to researched market rates for this city. Pull real Airbnb comps for this exact address (nightly rate, occupancy, seasonality) for the most accurate number."
-              : "The ADR above is a rent-based guess. Pull real Airbnb comps for this address (expected nightly rate, occupancy, and seasonality) and apply them to the pro-forma."}
+              ? "The ADR above is derived from the rent estimate and clamped to researched market rates for this city. Pull real Airbnb comps for this exact address (nightly rate, occupancy, seasonality), then use the toggle to include them in the pro-forma."
+              : "The ADR above is a rent-based guess. Pull real Airbnb comps for this address (expected nightly rate, occupancy, and seasonality), then use the toggle to include them in the pro-forma."}
           </p>
           <Button
             size="sm"

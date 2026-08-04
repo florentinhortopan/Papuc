@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { ScenarioRefreshLink } from "@/components/scenario-include-toggle";
 import { Button } from "@/components/ui/button";
 import {
   scoutComparables,
@@ -89,13 +90,7 @@ export function ComparablesPanel({
     <div className="bg-surface border border-border rounded-2xl p-4">
       <div className="flex items-center justify-between mb-1">
         <p className="text-text text-base font-semibold">Comparables</p>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="text-primary text-xs hover:underline disabled:opacity-60"
-        >
-          {loading ? "…" : "Refresh"}
-        </button>
+        <ScenarioRefreshLink loading={loading} onClick={load} />
       </div>
       {meta ? (
         <p className="text-textMuted text-[11px] mb-3">
