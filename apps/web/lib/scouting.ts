@@ -232,8 +232,11 @@ export async function scoutProjectInternal(
       candidates.map(({ listing }) => ({
         sqft: listing.sqft,
         lotSizeSqft: listing.lotSizeSqft,
+        price: listing.price,
       })),
     );
+
+    const landOnlyProject = isLandOnlyProject(constraints);
 
     for (const { listing, detail, source, sourceUrl } of candidates) {
       if (!listing.id) {
@@ -252,10 +255,22 @@ export async function scoutProjectInternal(
         downPayment > 0
           ? downPayment
           : effectivePrice * (1 - constraints.mortgage.ltv);
-      const monthlyRent =
-        detail?.suggestedRent ??
-        pickHudFmrRent(detail?.hudFairMarketRent, listing.beds ?? 3) ??
-        estimateRentFromPrice(effectivePrice);
+
+      const homeType =
+        typeof (listing.raw as Record<string, unknown> | undefined)?.homeType ===
+        "string"
+          ? ((listing.raw as Record<string, unknown>).homeType as string)
+          : null;
+      // Vacant land: no rent, no rent estimates. Underwriting a fabricated
+      // 0.7%-of-price rent made every mid-priced parcel "cashflow negative"
+      // and silently die at the gates below, so land carries $0 income and
+      // its cashflow is simply the (negative) monthly carrying cost.
+      const isLand = homeType === "LOT" || (homeType === null && landOnlyProject);
+      const monthlyRent = isLand
+        ? 0
+        : (detail?.suggestedRent ??
+          pickHudFmrRent(detail?.hudFairMarketRent, listing.beds ?? 3) ??
+          estimateRentFromPrice(effectivePrice));
 
       // HOA: prefer listing-level value (free, came back on the search call)
       // and fall back to detail (paid call, only when we already had to make
@@ -263,11 +278,6 @@ export async function scoutProjectInternal(
       // for condos/townhouses that almost always means an unreported fee,
       // not a free ride, so underwrite with a typical fee instead of $0.
       const hoaMonthly = listing.hoaMonthly ?? detail?.hoaMonthly;
-      const homeType =
-        typeof (listing.raw as Record<string, unknown> | undefined)?.homeType ===
-        "string"
-          ? ((listing.raw as Record<string, unknown>).homeType as string)
-          : null;
       const underwritingHoa = hoaMonthly ?? assumeHoaMonthly(homeType);
 
       // Location-aware carrying costs: effective property tax rate and
@@ -290,7 +300,7 @@ export async function scoutProjectInternal(
       //   3. plain rent heuristic.
       const storedEstimate = strEstimates.get(listing.id);
       const strSchedule =
-        constraints.strategy === "STR"
+        constraints.strategy === "STR" && !isLand
           ? storedEstimate
             ? strScheduleFromEstimate(storedEstimate)
             : defaultStrSchedule(monthlyRent, marketAdrIntel)
@@ -321,7 +331,10 @@ export async function scoutProjectInternal(
         rateAPR: constraints.mortgage.rateAPR,
         termYears: constraints.mortgage.termYears,
         interestOnly: constraints.mortgage.interestOnly ?? false,
-        strategy: constraints.strategy,
+        // Land always underwrites as a $0-rent LTR: passing "STR" without a
+        // schedule would fall back to the proforma's $200/night default and
+        // invent revenue for a vacant parcel.
+        strategy: isLand ? "LTR" : constraints.strategy,
         monthlyRentLTR: constraints.strategy === "LTR" ? monthlyRent : 0,
         monthlyNights: strSchedule?.monthlyNights,
         monthlyADR: strSchedule?.monthlyADR,
@@ -338,20 +351,25 @@ export async function scoutProjectInternal(
       });
 
       const monthlyCashflow = proforma.annualPreTaxProfit / 12;
-      const matchesDSCR = proforma.dscr >= constraints.minDSCR;
-      // If the user set a target, require at least 80% of it.
-      // Otherwise apply the default floor so we don't surface deals that
-      // bleed several thousand a month.
-      const cashflowMin =
-        targetCashflow > 0 ? targetCashflow * 0.8 : DEFAULT_MIN_CASHFLOW;
-      const matchesCashflow = monthlyCashflow >= cashflowMin;
-      if (!matchesDSCR) {
-        dropped.dscrTooLow += 1;
-        continue;
-      }
-      if (!matchesCashflow) {
-        dropped.cashflowTooLow += 1;
-        continue;
+      // Land skips both rent-based gates: with $0 income its DSCR is 0 and
+      // its cashflow is the carrying cost, so the gates would drop every
+      // parcel. Value ranking happens in the land finance score instead.
+      if (!isLand) {
+        const matchesDSCR = proforma.dscr >= constraints.minDSCR;
+        // If the user set a target, require at least 80% of it.
+        // Otherwise apply the default floor so we don't surface deals that
+        // bleed several thousand a month.
+        const cashflowMin =
+          targetCashflow > 0 ? targetCashflow * 0.8 : DEFAULT_MIN_CASHFLOW;
+        const matchesCashflow = monthlyCashflow >= cashflowMin;
+        if (!matchesDSCR) {
+          dropped.dscrTooLow += 1;
+          continue;
+        }
+        if (!matchesCashflow) {
+          dropped.cashflowTooLow += 1;
+          continue;
+        }
       }
 
       const { score: baseScore, components: scoreComponents } =
@@ -360,6 +378,7 @@ export async function scoutProjectInternal(
           monthlyCashflow,
           targetCashflow,
           cashOnCash: proforma.cashOnCashReturn,
+          assetClass: isLand ? "land" : "rental",
           signals: {
             price: effectivePrice,
             priceChange: listing.priceChange,
@@ -606,6 +625,18 @@ function buildHasDataFilters(
 }
 
 /**
+ * True when every requested property type is land. Land-only searches get
+ * dwelling filters (beds/baths/interior sqft) suppressed and skip the
+ * rent-based DSCR/cashflow gates — vacant dirt has neither rooms nor rent.
+ */
+function isLandOnlyProject(constraints: ProjectConstraints): boolean {
+  return (
+    constraints.propertyTypes.length > 0 &&
+    constraints.propertyTypes.every((t) => t === "land")
+  );
+}
+
+/**
  * Property categories that Zillow / HasData doesn't list. Surfaced to
  * the scout diagnostics so the UI can warn the user to route via
  * RealEstateAPI for these.
@@ -765,7 +796,7 @@ function buildPropertyFilters(
     filters.state = market.state;
   } else if (market.kind === "zip") {
     filters.zip = market.zip;
-  } else if (market.kind === "county") {
+  } else if (market.kind === "county" || market.kind === "state") {
     filters.state = market.state;
   } else if (market.kind === "polygon") {
     filters.polygon = market.polygon;
@@ -774,10 +805,15 @@ function buildPropertyFilters(
     filters.value_min = constraints.priceMin;
   if (constraints.priceMax !== undefined)
     filters.value_max = constraints.priceMax;
-  if (constraints.bedsMin !== undefined) filters.beds_min = constraints.bedsMin;
-  if (constraints.bathsMin !== undefined) filters.baths_min = constraints.bathsMin;
-  if (constraints.sqftMin !== undefined)
-    filters.building_size_min = constraints.sqftMin;
+  // Same land rule as the HasData path: dwelling filters don't apply to
+  // vacant lots and would zero out the search.
+  if (!isLandOnlyProject(constraints)) {
+    if (constraints.bedsMin !== undefined) filters.beds_min = constraints.bedsMin;
+    if (constraints.bathsMin !== undefined)
+      filters.baths_min = constraints.bathsMin;
+    if (constraints.sqftMin !== undefined)
+      filters.building_size_min = constraints.sqftMin;
+  }
   if (constraints.yearBuiltMin !== undefined)
     filters.year_built_min = constraints.yearBuiltMin;
   if (
@@ -936,6 +972,9 @@ function sanitizeSample(raw: Record<string, unknown>): Record<string, unknown> {
     "baths",
     "livingArea",
     "sqft",
+    "lotAreaValue",
+    "lotAreaUnits",
+    "lotSize",
     "homeType",
     "homeStatus",
     "daysOnZillow",

@@ -293,7 +293,12 @@ export function DealDetailClient({
       monthlyAvgStays:
         state.strategy === "STR" ? strMatrix.monthlyAvgStays : undefined,
     };
-  }, [state, strMatrix, derived]);
+  }, [
+    state,
+    strMatrix,
+    derived,
+    project.constraints.mortgage?.interestOnly,
+  ]);
 
   const result = useMemo(() => computeProForma(inputs), [inputs]);
   const breakevenADR = useMemo(

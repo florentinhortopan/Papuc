@@ -39,5 +39,6 @@ export function formatMarket(m: Market | undefined): string {
   if (m.kind === "city") return `${m.city}, ${m.state}`;
   if (m.kind === "zip") return `ZIP ${m.zip}`;
   if (m.kind === "county") return `${m.county}, ${m.state}`;
+  if (m.kind === "state") return `${m.state} (statewide)`;
   return "Custom area";
 }

@@ -61,7 +61,7 @@ export async function POST(req: Request) {
   const { data: scores, error: sErr } = await sb
     .from("deal_scores")
     .select(
-      "deal_id, dscr, cash_on_cash, monthly_cashflow, irr_5yr, computed_proforma, score_components, deals!inner(address, city, state, price, beds, baths, sqft, est_rent, days_on_market, price_change, price_changed_at, hoa_monthly, lot_size, str_adr, str_occupancy, str_estimated_at)",
+      "deal_id, dscr, cash_on_cash, monthly_cashflow, irr_5yr, computed_proforma, score_components, deals!inner(address, city, state, price, beds, baths, sqft, est_rent, days_on_market, price_change, price_changed_at, hoa_monthly, lot_size, home_type:mls_data->>homeType, str_adr, str_occupancy, str_estimated_at)",
     )
     .eq("project_id", body.projectId)
     .is("rationale", null)
@@ -104,6 +104,12 @@ export async function POST(req: Request) {
         typeof priceChange === "number" && priceChange < 0 && price > 0
           ? Math.round((Math.abs(priceChange) / price) * 1000) / 10
           : undefined;
+      const isLand = deal.home_type === "LOT";
+      const lotSqft = Number(deal.lot_size ?? 0);
+      const pricePerAcre =
+        isLand && price > 0 && lotSqft > 0
+          ? Math.round(price / (lotSqft / 43_560))
+          : undefined;
       return {
         dealId: row.deal_id as string,
         address: (deal.address as string) ?? "",
@@ -122,6 +128,7 @@ export async function POST(req: Request) {
         priceChangedAt: deal.price_changed_at ?? undefined,
         hoaMonthly: deal.hoa_monthly ?? undefined,
         lotSizeSqft: deal.lot_size ?? undefined,
+        ...(isLand ? { isLand, pricePerAcre } : {}),
         ...(isSTR
           ? {
               // The exact nightly rate this score's cashflow was

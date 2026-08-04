@@ -23,6 +23,10 @@ export interface DealScoreInput {
   hoaMonthly?: number;
   /** Lot size in sqft. */
   lotSizeSqft?: number;
+  /** Vacant land: no rent, so DSCR/cashflow are carrying-cost figures. */
+  isLand?: boolean;
+  /** Land only: asking price divided by acreage, for value comparison. */
+  pricePerAcre?: number;
   /** STR only: assumed nightly rate underlying the cashflow figures. */
   adr?: number;
   /** STR only: assumed annual occupancy 0..1. */

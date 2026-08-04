@@ -200,21 +200,23 @@ function ConstraintReview({
   const cityState =
     market?.kind === "city"
       ? { city: market.city, state: market.state }
-      : market?.kind === "county"
+      : market?.kind === "county" || market?.kind === "state"
         ? { city: "", state: market.state }
         : { city: "", state: "" };
 
-  function setMarketCity(city: string) {
-    setConstraints({
-      ...constraints,
-      markets: [{ kind: "city", city, state: cityState.state || "" }],
-    });
-  }
-  function setMarketState(state: string) {
+  /**
+   * City + state → city market; state alone → statewide market. This is
+   * how the form preserves a parsed { kind: "state" } market instead of
+   * silently downgrading it to a bogus city on first keystroke.
+   */
+  function setMarket(city: string, state: string) {
+    const st = state.toUpperCase();
     setConstraints({
       ...constraints,
       markets: [
-        { kind: "city", city: cityState.city || "", state: state.toUpperCase() },
+        city.trim()
+          ? { kind: "city", city, state: st }
+          : { kind: "state", state: st },
       ],
     });
   }
@@ -273,14 +275,15 @@ function ConstraintReview({
             label="City"
             placeholder="Austin"
             value={cityState.city ?? ""}
-            onChange={(e) => setMarketCity(e.target.value)}
+            onChange={(e) => setMarket(e.target.value, cityState.state || "")}
             className="col-span-2"
+            hint="Leave blank to search the whole state"
           />
           <Field
             label="State"
             placeholder="TX"
             value={cityState.state ?? ""}
-            onChange={(e) => setMarketState(e.target.value)}
+            onChange={(e) => setMarket(cityState.city || "", e.target.value)}
           />
         </div>
       </Section>
@@ -366,6 +369,27 @@ function ConstraintReview({
             onChange={(e) =>
               patch("sqftMax", e.target.value ? Number(e.target.value) : undefined)
             }
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field
+            label="Min lot size (acres)"
+            type="number"
+            inputMode="decimal"
+            value={
+              constraints.lotSizeMinSqft
+                ? String(Math.round((constraints.lotSizeMinSqft / 43_560) * 100) / 100)
+                : ""
+            }
+            onChange={(e) =>
+              patch(
+                "lotSizeMinSqft",
+                e.target.value
+                  ? Math.round(Number(e.target.value) * 43_560)
+                  : undefined,
+              )
+            }
+            hint="Mostly for land searches"
           />
         </div>
         <div className="grid grid-cols-2 gap-3">
