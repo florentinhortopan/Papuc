@@ -14,6 +14,7 @@ import {
   type Strategy,
   type StrMarketAdrIntel,
 } from "@papuc/core";
+import { ChevronDown } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -852,7 +853,6 @@ export function DealDetailClient({
         ) : null}
 
         <CollapsibleCard
-          title="Pro-forma summary"
           stats={[
             {
               label: "Cashflow",
@@ -973,7 +973,6 @@ export function DealDetailClient({
         </CollapsibleCard>
 
         <CollapsibleCard
-          title="Inputs"
           headerExtra={<Badge variant="primary">{state.strategy}</Badge>}
           stats={[
             { label: "Price", value: formatMoney(derived.price) },
@@ -1860,54 +1859,64 @@ interface CoverStat {
 }
 
 /**
- * Panel that collapses to a scannable stat card. The whole header is the
- * toggle (large tap target for mobile); when collapsed, `stats` render in
- * a 2-column grid with slightly bigger numbers so the key figures read at
- * a glance. Expanded, the stats hide (the full content repeats them) and
- * `children` show.
+ * Panel that collapses to a scannable stat card. No title row — collapsed
+ * view is just the stats grid. Strategy badge (optional) and chevron sit in
+ * the top-right corner on the card's 45° bisector so they don't add height.
+ * Expanded, stats hide and `children` show.
  */
 function CollapsibleCard({
-  title,
   headerExtra,
   stats,
   defaultOpen = false,
   children,
 }: {
-  title: string;
-  /** Rendered next to the title (e.g. a strategy badge). */
+  /** Floated top-right beside the chevron (e.g. strategy badge). */
   headerExtra?: React.ReactNode;
   stats: CoverStat[];
   defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  // rounded-2xl = 16px. Equal top/right inset keeps the control cluster on
+  // the corner's 45° bisector; 10px nests a 32px control inside the curve.
+  const contentPad = headerExtra ? "pr-28" : "pr-14";
+
   return (
-    <div className="bg-surface border border-border rounded-2xl overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="w-full text-left p-4 select-none"
-      >
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <p className="text-text text-base font-semibold truncate">
-              {title}
-            </p>
-            {headerExtra}
-          </div>
-          <span
-            aria-hidden
+    <div className="relative bg-surface border border-border rounded-2xl overflow-hidden">
+      <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-1.5">
+        {headerExtra}
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-label={open ? "Collapse" : "Expand"}
+          className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-full",
+            "border border-border bg-surfaceAlt text-text shadow-sm",
+            "hover:bg-border/50 hover:border-textMuted/40",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+            "transition-colors",
+          )}
+        >
+          <ChevronDown
             className={cn(
-              "text-textMuted text-sm transition-transform duration-200 shrink-0",
+              "h-4 w-4 transition-transform duration-200",
               open && "rotate-180",
             )}
-          >
-            ▾
-          </span>
-        </div>
-        {!open ? (
-          <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-3">
+            strokeWidth={2.5}
+            aria-hidden
+          />
+        </button>
+      </div>
+
+      {!open ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-expanded={false}
+          className={cn("w-full text-left p-4 select-none", contentPad)}
+        >
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3">
             {stats.map((s) => (
               <div key={s.label} className="min-w-0">
                 <p className="text-textMuted text-[10px] uppercase tracking-wide truncate">
@@ -1930,9 +1939,10 @@ function CollapsibleCard({
               </div>
             ))}
           </div>
-        ) : null}
-      </button>
-      {open ? <div className="px-4 pb-4">{children}</div> : null}
+        </button>
+      ) : (
+        <div className={cn("p-4", contentPad)}>{children}</div>
+      )}
     </div>
   );
 }
