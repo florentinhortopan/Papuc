@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 
+import {
+  sendScoutDigest,
+  type DigestDeal,
+  type DigestProject,
+} from "@/lib/email/scout-digest";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { scoutProjectInternal } from "@/lib/scouting";
 
@@ -7,15 +12,18 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+type OwnerDigestBucket = {
+  projects: DigestProject[];
+};
+
 /**
  * Triggered by Vercel Cron (vercel.json -> 0 8 * * *) and authenticated by
  * the CRON_SECRET shared secret. For each active project with nightly scout
- * enabled, runs a scheduled scout for Pro owners.
+ * enabled, runs a scheduled scout for Pro owners, then emails one Resend
+ * digest per owner when new high-score deals appeared.
  *
  * Pro-only (see scout-rules.json). Free owners and projects with
  * nightly_scout_enabled=false are skipped.
- * NOTE: web push / email notifications are not yet wired up on the web port;
- * for now we just persist the new deals so they show up on next page load.
  */
 export async function GET(req: Request) {
   // Vercel Cron also passes a Vercel-specific header `x-vercel-cron`, but the
@@ -37,16 +45,24 @@ export async function GET(req: Request) {
     ...new Set((projects ?? []).map((p: { owner_id: string }) => p.owner_id)),
   ];
   const tierByOwner = new Map<string, "free" | "pro">();
+  const profileByOwner = new Map<
+    string,
+    { email: string | null; display_name: string | null }
+  >();
   if (ownerIds.length > 0) {
     const { data: profiles } = await sb
       .from("profiles")
-      .select("id, subscription_tier")
+      .select("id, subscription_tier, email, display_name")
       .in("id", ownerIds);
     for (const row of profiles ?? []) {
       tierByOwner.set(
         row.id as string,
         row.subscription_tier === "pro" ? "pro" : "free",
       );
+      profileByOwner.set(row.id as string, {
+        email: (row.email as string | null) ?? null,
+        display_name: (row.display_name as string | null) ?? null,
+      });
     }
   }
 
@@ -57,6 +73,9 @@ export async function GET(req: Request) {
     skipped?: boolean;
     error?: string;
   }> = [];
+
+  /** Accumulate high-score new deals per owner for a single digest email. */
+  const digestsByOwner = new Map<string, OwnerDigestBucket>();
 
   for (const proj of projects ?? []) {
     if (!proj.nightly_scout_enabled) {
@@ -86,7 +105,7 @@ export async function GET(req: Request) {
         .from("deals")
         .select("id")
         .eq("project_id", proj.id);
-      const preIds = new Set((pre ?? []).map((r: any) => r.id));
+      const preIds = new Set((pre ?? []).map((r: { id: string }) => r.id));
 
       await scoutProjectInternal(sb, proj.id, {
         triggerKind: "scheduled",
@@ -96,17 +115,49 @@ export async function GET(req: Request) {
 
       const { data: post } = await sb
         .from("deals")
-        .select("id, address, deal_scores!inner(score)")
+        .select(
+          "id, address, city, state, deal_scores!inner(score, dscr, monthly_cashflow)",
+        )
         .eq("project_id", proj.id);
-      const newOnes = (post ?? [])
-        .filter((d: any) => !preIds.has(d.id))
-        .map((d: any) => ({
-          id: d.id,
-          score: Number(
-            d.deal_scores?.[0]?.score ?? d.deal_scores?.score ?? 0,
-          ),
-        }))
-        .filter((d: any) => d.score >= 70);
+
+      const newOnes: DigestDeal[] = (post ?? [])
+        .filter((d: { id: string }) => !preIds.has(d.id))
+        .map((d: any) => {
+          const scores = Array.isArray(d.deal_scores)
+            ? d.deal_scores[0]
+            : d.deal_scores;
+          return {
+            id: d.id as string,
+            address: (d.address as string | null) ?? null,
+            city: (d.city as string | null) ?? null,
+            state: (d.state as string | null) ?? null,
+            score: Number(scores?.score ?? 0),
+            dscr:
+              scores?.dscr != null && Number.isFinite(Number(scores.dscr))
+                ? Number(scores.dscr)
+                : null,
+            monthlyCashflow:
+              scores?.monthly_cashflow != null &&
+              Number.isFinite(Number(scores.monthly_cashflow))
+                ? Number(scores.monthly_cashflow)
+                : null,
+          };
+        })
+        .filter((d) => d.score >= 70)
+        .sort((a, b) => b.score - a.score);
+
+      if (newOnes.length > 0) {
+        let bucket = digestsByOwner.get(proj.owner_id);
+        if (!bucket) {
+          bucket = { projects: [] };
+          digestsByOwner.set(proj.owner_id, bucket);
+        }
+        bucket.projects.push({
+          projectId: proj.id,
+          projectName: proj.name,
+          deals: newOnes,
+        });
+      }
 
       summary.push({
         projectId: proj.id,
@@ -123,5 +174,50 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ summary });
+  const emails: Array<{
+    ownerId: string;
+    ok: boolean;
+    messageId?: string;
+    skipped?: boolean;
+    error?: string;
+  }> = [];
+
+  for (const [ownerId, bucket] of digestsByOwner) {
+    const profile = profileByOwner.get(ownerId);
+    const to = profile?.email?.trim();
+    if (!to) {
+      emails.push({
+        ownerId,
+        ok: true,
+        skipped: true,
+        error: "no profile email",
+      });
+      continue;
+    }
+    try {
+      const result = await sendScoutDigest({
+        to,
+        displayName: profile?.display_name,
+        projects: bucket.projects,
+      });
+      if (!result) {
+        emails.push({
+          ownerId,
+          ok: true,
+          skipped: true,
+          error: "resend not configured",
+        });
+        continue;
+      }
+      emails.push({ ownerId, ok: true, messageId: result.id });
+    } catch (err) {
+      emails.push({
+        ownerId,
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return NextResponse.json({ summary, emails });
 }

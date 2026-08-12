@@ -107,6 +107,8 @@ Berkeley.xlsx               Source-of-truth pro-forma model
    cron automatically. Nightly runs only for **Pro** owners
    (`profiles.subscription_tier`) on projects with
    `nightly_scout_enabled` (default on; toggle on project cards / detail).
+   After each run, owners with new deals (score ≥ 70) get one **Resend**
+   digest (`RESEND_API_KEY` + `EMAIL_FROM`; domain verified in Resend).
 6. Supabase Auth → URL Configuration: Site URL = primary host, and Redirect
    URLs for both apex and www `/auth/callback` (Google Console only needs
    the Supabase callback `https://<project>.supabase.co/auth/v1/callback`).
