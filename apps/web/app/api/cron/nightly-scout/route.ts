@@ -9,10 +9,11 @@ export const maxDuration = 300;
 
 /**
  * Triggered by Vercel Cron (vercel.json -> 0 8 * * *) and authenticated by
- * the CRON_SECRET shared secret. For each active project, runs a full scout
- * and surfaces any new high-score deals back to the project owner.
+ * the CRON_SECRET shared secret. For each active project with nightly scout
+ * enabled, runs a scheduled scout for Pro owners.
  *
- * Pro-only (see scout-rules.json). Free owners are skipped.
+ * Pro-only (see scout-rules.json). Free owners and projects with
+ * nightly_scout_enabled=false are skipped.
  * NOTE: web push / email notifications are not yet wired up on the web port;
  * for now we just persist the new deals so they show up on next page load.
  */
@@ -28,7 +29,7 @@ export async function GET(req: Request) {
   const sb = createAdminClient();
   const { data: projects, error: pErr } = await sb
     .from("projects")
-    .select("id, owner_id, name")
+    .select("id, owner_id, name, nightly_scout_enabled")
     .eq("status", "active");
   if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
 
@@ -58,6 +59,16 @@ export async function GET(req: Request) {
   }> = [];
 
   for (const proj of projects ?? []) {
+    if (!proj.nightly_scout_enabled) {
+      summary.push({
+        projectId: proj.id,
+        ok: true,
+        newDeals: 0,
+        skipped: true,
+      });
+      continue;
+    }
+
     const subscriptionTier = tierByOwner.get(proj.owner_id) ?? "free";
     // Free tier: scheduled scout disabled in scout-rules.json (Pro wedge).
     if (subscriptionTier !== "pro") {

@@ -10,6 +10,8 @@ export type ProjectRow = ProjectsRow & {
 function hydrate(row: ProjectsRow): ProjectRow {
   return {
     ...row,
+    is_public: row.is_public ?? false,
+    nightly_scout_enabled: row.nightly_scout_enabled ?? true,
     constraints: ProjectConstraintsSchema.parse(row.constraints),
   };
 }
@@ -17,9 +19,14 @@ function hydrate(row: ProjectsRow): ProjectRow {
 export async function listProjects(
   supabase: SupabaseClient,
 ): Promise<ProjectRow[]> {
+  const userId = (await supabase.auth.getUser()).data.user?.id;
+  if (!userId) return [];
+  // Explicit owner filter — RLS also allows reading public projects, which
+  // must not leak into the user's own project grid.
   const { data, error } = await supabase
     .from("projects")
     .select("*")
+    .eq("owner_id", userId)
     .order("updated_at", { ascending: false });
   if (error) throw error;
   return ((data ?? []) as ProjectsRow[]).map(hydrate);
@@ -133,12 +140,20 @@ export async function updateProject(
     name: string;
     constraints: ProjectConstraints;
     status: ProjectStatus;
+    nightly_scout_enabled: boolean;
+    is_public: boolean;
   }>,
 ): Promise<void> {
   const update: Record<string, unknown> = {};
   if (patch.name !== undefined) update.name = patch.name;
   if (patch.status !== undefined) update.status = patch.status;
   if (patch.constraints !== undefined) update.constraints = patch.constraints;
+  if (patch.nightly_scout_enabled !== undefined) {
+    update.nightly_scout_enabled = patch.nightly_scout_enabled;
+  }
+  if (patch.is_public !== undefined) {
+    update.is_public = patch.is_public;
+  }
   const { error } = await supabase.from("projects").update(update).eq("id", id);
   if (error) throw error;
 }

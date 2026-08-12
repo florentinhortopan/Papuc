@@ -18,11 +18,18 @@ import {
   isAnyFilterActive,
   type DealFilters,
 } from "@/components/deal-filters-bar";
+import { NightlyScoutToggle } from "@/components/nightly-scout-toggle";
+import { PublicFeedToggle } from "@/components/public-feed-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import type { SubscriptionTier } from "@/lib/database.types";
 import { listDeals, type DealWithScore } from "@/lib/deals";
 import { deleteProject, updateProject, type ProjectRow } from "@/lib/projects";
 import { formatDate, formatMarket, formatMoney } from "@/lib/format";
+import {
+  formatScoutedAgo,
+  isScoutWithinCooldown,
+} from "@/lib/scout-freshness";
 import { createClient } from "@/lib/supabase/client";
 
 function rankByScore(deals: DealWithScore[]): DealWithScore[] {
@@ -57,11 +64,16 @@ export function ProjectDetailClient({
   project,
   initialDeals,
   initialLoadFailed = false,
+  subscriptionTier = "free",
+  isOwner = true,
 }: {
   project: ProjectRow;
   initialDeals: DealWithScore[];
   /** True when the server-side deals read errored (deploy/transient). */
   initialLoadFailed?: boolean;
+  subscriptionTier?: SubscriptionTier;
+  /** False when viewing someone else's public project (browse mode). */
+  isOwner?: boolean;
 }) {
   const router = useRouter();
   const [deals, setDeals] = useState<DealWithScore[]>(rankByScore(initialDeals));
@@ -79,7 +91,16 @@ export function ProjectDetailClient({
   const [nameDraft, setNameDraft] = useState(project.name);
   const [editingName, setEditingName] = useState(false);
   const [savingName, setSavingName] = useState(false);
+  const [nightlyEnabled, setNightlyEnabled] = useState(
+    project.nightly_scout_enabled ?? true,
+  );
+  const [isPublic, setIsPublic] = useState(project.is_public ?? false);
+  const [lastScoutAt, setLastScoutAt] = useState<string | null>(
+    project.last_scout_at,
+  );
   const projectIdRef = useRef(project.id);
+  const scoutFresh = isScoutWithinCooldown(lastScoutAt);
+  const scoutedAgo = formatScoutedAgo(lastScoutAt);
 
   const visibleDeals = useMemo(
     () => applyDealFilters(deals, filters),
@@ -131,7 +152,7 @@ export function ProjectDetailClient({
     let cancelled = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
     void refreshDeals().then((count) => {
-      if (cancelled || count === null || count > 0 || !project.last_scout_at) {
+      if (cancelled || count === null || count > 0 || !lastScoutAt) {
         return;
       }
       for (const delayMs of [1500, 5000]) {
@@ -211,6 +232,7 @@ export function ProjectDetailClient({
           ? `${baseMessage} · ${formatUnsupportedHint(unsupported)}`
           : baseMessage,
       );
+      setLastScoutAt(new Date().toISOString());
       await refreshDeals();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -345,7 +367,7 @@ export function ProjectDetailClient({
 
   return (
     <div className="mt-2">
-      {editingName ? (
+      {editingName && isOwner ? (
         <div className="flex flex-col sm:flex-row sm:items-center gap-2">
           <input
             value={nameDraft}
@@ -385,18 +407,22 @@ export function ProjectDetailClient({
       ) : (
         <div className="flex items-start gap-1 min-w-0">
           <h1 className="text-3xl font-bold min-w-0 break-words">{name}</h1>
-          <button
-            type="button"
-            onClick={() => {
-              setNameDraft(name);
-              setEditingName(true);
-            }}
-            title="Rename project"
-            aria-label="Rename project"
-            className="text-textMuted hover:text-text shrink-0 p-2.5 mt-0.5 rounded-lg hover:bg-surface transition-colors"
-          >
-            ✎
-          </button>
+          {isOwner ? (
+            <button
+              type="button"
+              onClick={() => {
+                setNameDraft(name);
+                setEditingName(true);
+              }}
+              title="Rename project"
+              aria-label="Rename project"
+              className="text-textMuted hover:text-text shrink-0 p-2.5 mt-0.5 rounded-lg hover:bg-surface transition-colors"
+            >
+              ✎
+            </button>
+          ) : (
+            <Badge className="mt-2 shrink-0">Public project</Badge>
+          )}
         </div>
       )}
       <p className="text-textMuted text-sm mt-1">{marketLabel}</p>
@@ -429,26 +455,82 @@ export function ProjectDetailClient({
           <Badge>DSCR ≥ {c.minDSCR.toFixed(2)}</Badge>
           <Badge>{(c.mortgage.rateAPR * 100).toFixed(2)}% APR</Badge>
         </div>
-        {project.last_scout_at ? (
+        {lastScoutAt ? (
           <p className="text-textMuted text-xs mt-3">
-            Last scout {formatDate(project.last_scout_at)}
+            Last scout {formatDate(lastScoutAt)}
+            {scoutedAgo ? ` · ${scoutedAgo}` : ""}
           </p>
         ) : null}
       </div>
 
-      <div className="flex gap-2">
-        <Button onClick={runScout} loading={scouting} className="flex-1 sm:flex-none">
-          {scouting ? "Scouting…" : "Scout deals"}
-        </Button>
-      </div>
-      {scoutStatus ? (
-        <p className="text-textMuted text-xs mt-2">{scoutStatus}</p>
-      ) : null}
-      {error ? (
-        <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 mt-3">
-          <p className="text-danger text-xs">{error}</p>
-        </div>
-      ) : null}
+      {isOwner ? (
+        <>
+          <div className="mb-3 space-y-2">
+            <NightlyScoutToggle
+              projectId={project.id}
+              enabled={nightlyEnabled}
+              onEnabledChange={setNightlyEnabled}
+              subscriptionTier={subscriptionTier}
+            />
+            <PublicFeedToggle
+              projectId={project.id}
+              enabled={isPublic}
+              onEnabledChange={setIsPublic}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              onClick={runScout}
+              loading={scouting}
+              disabled={scoutFresh && !scouting}
+              className="flex-1 sm:flex-none"
+              title={
+                scoutFresh
+                  ? "Scouted in the last 24 hours — use Scout anyway if you changed filters"
+                  : undefined
+              }
+            >
+              {scouting
+                ? "Scouting…"
+                : scoutFresh
+                  ? "Scouted recently"
+                  : "Scout deals"}
+            </Button>
+            {scoutFresh && !scouting ? (
+              <button
+                type="button"
+                className="text-xs text-textMuted hover:underline"
+                onClick={() => void runScout()}
+              >
+                Scout anyway
+              </button>
+            ) : null}
+          </div>
+          {scoutFresh && !scouting ? (
+            <p className="text-textMuted text-xs mt-2 leading-5">
+              Scouted recently — the search already prefers listings from the
+              last day. Nightly Pro catch-up runs overnight
+              {nightlyEnabled && subscriptionTier === "pro"
+                ? " for this project"
+                : ""}
+              , or use Scout anyway if you changed filters.
+            </p>
+          ) : null}
+          {scoutStatus ? (
+            <p className="text-textMuted text-xs mt-2">{scoutStatus}</p>
+          ) : null}
+          {error ? (
+            <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 mt-3">
+              <p className="text-danger text-xs">{error}</p>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-textMuted text-xs mb-2">
+          Browse mode — you can open deals from this public project.
+        </p>
+      )}
 
       <h2 className="text-lg font-semibold mt-8 mb-3">
         Deals{" "}
@@ -467,7 +549,9 @@ export function ProjectDetailClient({
             setFilterSavedNote(null);
           }}
           shownCount={visibleDeals.length}
-          onSaveToProject={() => void saveFiltersToProject()}
+          onSaveToProject={
+            isOwner ? () => void saveFiltersToProject() : undefined
+          }
           saving={savingFilters}
           savedNote={filterSavedNote}
         />
@@ -485,7 +569,7 @@ export function ProjectDetailClient({
       ) : null}
       {deals.length === 0 ? (
         <div className="bg-surface border border-border rounded-2xl p-6 text-center">
-          {loadFailed || project.last_scout_at ? (
+          {loadFailed || lastScoutAt ? (
             <>
               <p className="text-textMuted text-sm">
                 {loadFailed
@@ -532,15 +616,17 @@ export function ProjectDetailClient({
         </div>
       )}
 
-      <div className="mt-12">
-        <button
-          type="button"
-          onClick={onDelete}
-          className="text-danger text-sm font-semibold hover:underline"
-        >
-          Delete project
-        </button>
-      </div>
+      {isOwner ? (
+        <div className="mt-12">
+          <button
+            type="button"
+            onClick={onDelete}
+            className="text-danger text-sm font-semibold hover:underline"
+          >
+            Delete project
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

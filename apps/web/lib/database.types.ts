@@ -34,6 +34,10 @@ export type ProjectsRow = {
   status: ProjectStatus;
   constraints: unknown;
   last_scout_at: string | null;
+  /** When true and owner is Pro, nightly cron scouts this project. */
+  nightly_scout_enabled: boolean;
+  /** When true, deals appear on the shared Papuc home feed for all users. */
+  is_public: boolean;
   created_at: string;
   updated_at: string;
 };

@@ -49,6 +49,10 @@ export default async function DealDetailPage({
     : null;
 
   const profile = await getProfile(supabase);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const isOwner = Boolean(user && user.id === project.owner_id);
 
   return (
     <div>
@@ -62,7 +66,10 @@ export default async function DealDetailPage({
         deal={deal}
         project={project}
         marketAdrIntel={marketAdrIntel}
-        autoConditionAnalysis={profile?.auto_condition_analysis ?? true}
+        autoConditionAnalysis={
+          isOwner ? (profile?.auto_condition_analysis ?? true) : false
+        }
+        isOwner={isOwner}
       />
     </div>
   );

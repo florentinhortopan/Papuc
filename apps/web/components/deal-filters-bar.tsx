@@ -176,7 +176,7 @@ export function DealFiltersBar({
   onChange: (next: DealFilters) => void;
   shownCount: number;
   /** Persist active filters into the project constraints for future scouts. */
-  onSaveToProject: () => void;
+  onSaveToProject?: () => void;
   saving: boolean;
   savedNote: string | null;
 }) {
@@ -323,9 +323,14 @@ export function DealFiltersBar({
         ) : null}
       </div>
 
-      {active ? (
+      {active && onSaveToProject ? (
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border">
-          <Button size="sm" variant="secondary" onClick={onSaveToProject} loading={saving}>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onSaveToProject}
+            loading={saving}
+          >
             Save filters to project
           </Button>
           <p className="text-textMuted text-[11px] flex-1 min-w-[12rem]">

@@ -105,6 +105,7 @@ export function DealDetailClient({
   project,
   marketAdrIntel,
   autoConditionAnalysis = true,
+  isOwner = true,
 }: {
   deal: DealWithScore;
   project: ProjectRow;
@@ -115,6 +116,8 @@ export function DealDetailClient({
    * (skipped when a complete estimate is already cached).
    */
   autoConditionAnalysis?: boolean;
+  /** False when viewing a deal from someone else's public project. */
+  isOwner?: boolean;
 }) {
   const router = useRouter();
   const [deal, setDeal] = useState(initialDeal);
@@ -1020,18 +1023,20 @@ export function DealDetailClient({
           )}
         </div>
 
-        <div className="order-[13] lg:order-none">
-          <ComparablesPanel
-            dealId={deal.id}
-            projectId={deal.project_id}
-            scenario={{
-              price: derived.price > 0 ? derived.price : undefined,
-              beds: deal.beds != null ? Number(deal.beds) : undefined,
-              baths: deal.baths != null ? Number(deal.baths) : undefined,
-              sqft: deal.sqft != null ? Number(deal.sqft) : undefined,
-            }}
-          />
-        </div>
+        {isOwner ? (
+          <div className="order-[13] lg:order-none">
+            <ComparablesPanel
+              dealId={deal.id}
+              projectId={deal.project_id}
+              scenario={{
+                price: derived.price > 0 ? derived.price : undefined,
+                beds: deal.beds != null ? Number(deal.beds) : undefined,
+                baths: deal.baths != null ? Number(deal.baths) : undefined,
+                sqft: deal.sqft != null ? Number(deal.sqft) : undefined,
+              }}
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className="contents lg:flex lg:flex-col lg:gap-4 lg:min-w-0">
@@ -1337,69 +1342,73 @@ export function DealDetailClient({
           </CollapsibleCard>
         </div>
 
-        <div className="order-12 lg:order-none">
-          <PhotoConditionEstimate
-            dealId={deal.id}
-            cached={cachedConditionEstimate}
-            included={conditionCostsIncluded}
-            onIncludedChange={setConditionCostsIncludedInScenario}
-            photoCount={photos.length}
-            onEstimateChange={setLiveConditionEstimate}
-            focusFindingId={focusFindingId}
-            focusNonce={focusFindingNonce}
-            autoRun={autoConditionAnalysis}
-            onSelectPhoto={(i) => {
-              setPhotoIndex(i);
-              if (typeof document !== "undefined") {
-                document
-                  .getElementById("deal-photos")
-                  ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-              }
-            }}
-          />
-        </div>
+        {isOwner ? (
+          <div className="order-12 lg:order-none">
+            <PhotoConditionEstimate
+              dealId={deal.id}
+              cached={cachedConditionEstimate}
+              included={conditionCostsIncluded}
+              onIncludedChange={setConditionCostsIncludedInScenario}
+              photoCount={photos.length}
+              onEstimateChange={setLiveConditionEstimate}
+              focusFindingId={focusFindingId}
+              focusNonce={focusFindingNonce}
+              autoRun={autoConditionAnalysis}
+              onSelectPhoto={(i) => {
+                setPhotoIndex(i);
+                if (typeof document !== "undefined") {
+                  document
+                    .getElementById("deal-photos")
+                    ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                }
+              }}
+            />
+          </div>
+        ) : null}
 
-        <div className="order-11 lg:order-none">
-        {state.strategy === "STR" ? (
-          <StrMarketEstimate
-            dealId={deal.id}
-            cached={cachedStrEstimate}
-            included={strEstimateIncluded}
-            onIncludedChange={setStrEstimateIncludedInScenario}
-            baselineSource={
-              marketAdrIntel &&
-              (marketAdrIntel.adrLow !== undefined ||
-                marketAdrIntel.adrMedian !== undefined ||
-                marketAdrIntel.adrHigh !== undefined)
-                ? "market_checked"
-                : "heuristic"
-            }
-          />
-        ) : (
-          <LtrMarketEstimate
-            dealId={deal.id}
-            cached={cachedLtrEstimate}
-            included={ltrEstimateIncluded}
-            onIncludedChange={setLtrEstimateIncludedInScenario}
-            disabledReason={
-              isLandDeal
-                ? "Vacant land has no rental comps — LTR rent estimate is not available."
-                : null
-            }
-            projectRent={(monthlyRent) => {
-              const projected = computeProForma({
-                ...inputs,
-                strategy: "LTR",
-                monthlyRentLTR: monthlyRent,
-              });
-              return {
-                monthlyCashflow: projected.annualPreTaxProfit / 12,
-                annualAfterTax: projected.annualPostTaxProfit,
-              };
-            }}
-          />
-        )}
-        </div>
+        {isOwner ? (
+          <div className="order-11 lg:order-none">
+            {state.strategy === "STR" ? (
+              <StrMarketEstimate
+                dealId={deal.id}
+                cached={cachedStrEstimate}
+                included={strEstimateIncluded}
+                onIncludedChange={setStrEstimateIncludedInScenario}
+                baselineSource={
+                  marketAdrIntel &&
+                  (marketAdrIntel.adrLow !== undefined ||
+                    marketAdrIntel.adrMedian !== undefined ||
+                    marketAdrIntel.adrHigh !== undefined)
+                    ? "market_checked"
+                    : "heuristic"
+                }
+              />
+            ) : (
+              <LtrMarketEstimate
+                dealId={deal.id}
+                cached={cachedLtrEstimate}
+                included={ltrEstimateIncluded}
+                onIncludedChange={setLtrEstimateIncludedInScenario}
+                disabledReason={
+                  isLandDeal
+                    ? "Vacant land has no rental comps — LTR rent estimate is not available."
+                    : null
+                }
+                projectRent={(monthlyRent) => {
+                  const projected = computeProForma({
+                    ...inputs,
+                    strategy: "LTR",
+                    monthlyRentLTR: monthlyRent,
+                  });
+                  return {
+                    monthlyCashflow: projected.annualPreTaxProfit / 12,
+                    annualAfterTax: projected.annualPostTaxProfit,
+                  };
+                }}
+              />
+            )}
+          </div>
+        ) : null}
 
         <div className="order-9 lg:order-none">
           <ScenarioSimulator
@@ -1434,42 +1443,69 @@ export function DealDetailClient({
           />
         </div>
 
-        <div className="order-[14] lg:order-none">
-          <ScenariosPanel
-            scenarios={scenarios}
-            loading={scenariosLoading}
-            activeId={activeScenarioId}
-            onSave={saveScenario}
-            onLoad={loadScenario}
-            onDelete={removeScenario}
-            saving={busy === "save-scenario"}
-            deleting={busy === "delete-scenario"}
-          />
-        </div>
+        {isOwner ? (
+          <div className="order-[14] lg:order-none">
+            <ScenariosPanel
+              scenarios={scenarios}
+              loading={scenariosLoading}
+              activeId={activeScenarioId}
+              onSave={saveScenario}
+              onLoad={loadScenario}
+              onDelete={removeScenario}
+              saving={busy === "save-scenario"}
+              deleting={busy === "delete-scenario"}
+            />
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-2 gap-2 order-[15] lg:order-none">
-          {isSaved ? (
-            <Button variant="secondary" onClick={unsave}>
-              Unsave
-            </Button>
+          {isOwner ? (
+            <>
+              {isSaved ? (
+                <Button variant="secondary" onClick={unsave}>
+                  Unsave
+                </Button>
+              ) : (
+                <Button onClick={save} loading={busy === "save"}>
+                  Save
+                </Button>
+              )}
+              <Button
+                variant="secondary"
+                onClick={shareDeal}
+                loading={busy === "share"}
+              >
+                Share
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={exportCsv}
+                loading={busy === "export"}
+              >
+                Export CSV
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={dismiss}
+                loading={busy === "dismiss"}
+              >
+                Dismiss
+              </Button>
+            </>
           ) : (
-            <Button onClick={save} loading={busy === "save"}>
-              Save
-            </Button>
+            <>
+              <p className="col-span-2 text-textMuted text-xs">
+                Public listing — underwriting is view-only.
+              </p>
+              <Button
+                variant="secondary"
+                onClick={exportCsv}
+                loading={busy === "export"}
+              >
+                Export CSV
+              </Button>
+            </>
           )}
-          <Button
-            variant="secondary"
-            onClick={shareDeal}
-            loading={busy === "share"}
-          >
-            Share
-          </Button>
-          <Button variant="secondary" onClick={exportCsv} loading={busy === "export"}>
-            Export CSV
-          </Button>
-          <Button variant="ghost" onClick={dismiss} loading={busy === "dismiss"}>
-            Dismiss
-          </Button>
         </div>
       </div>
     </div>

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { ProjectDetailClient } from "@/components/project-detail-client";
 import { listDeals } from "@/lib/deals";
+import { getProfile } from "@/lib/profile";
 import { getProject } from "@/lib/projects";
 import { createClient } from "@/lib/supabase/server";
 
@@ -34,16 +35,26 @@ export default async function ProjectDetailPage({
   } catch {
     initialLoadFailed = true;
   }
+  const profile = await getProfile(supabase);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const isOwner = Boolean(user && user.id === project.owner_id);
 
   return (
     <div>
-      <Link href="/projects" className="text-textMuted text-sm hover:text-text">
-        ← Projects
+      <Link
+        href={isOwner ? "/projects" : "/home"}
+        className="text-textMuted text-sm hover:text-text"
+      >
+        ← {isOwner ? "Projects" : "Home"}
       </Link>
       <ProjectDetailClient
         project={project}
         initialDeals={initialDeals}
         initialLoadFailed={initialLoadFailed}
+        subscriptionTier={profile?.subscription_tier ?? "free"}
+        isOwner={isOwner}
       />
     </div>
   );

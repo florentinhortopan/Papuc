@@ -52,11 +52,11 @@ export async function updateSession(request: NextRequest) {
 
   if (user && (path === "/sign-in" || path === "/")) {
     // Honor ?next= (e.g. a shared deal page) so already-signed-in users
-    // clicking "unlock" land where they intended, not on /projects.
+    // clicking "unlock" land where they intended, not on /home.
     // Same-origin relative paths only — never redirect off-site.
     const next = request.nextUrl.searchParams.get("next");
     const target =
-      next && next.startsWith("/") && !next.startsWith("//") ? next : "/projects";
+      next && next.startsWith("/") && !next.startsWith("//") ? next : "/home";
     return NextResponse.redirect(new URL(target, request.url));
   }
 

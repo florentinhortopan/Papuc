@@ -30,9 +30,13 @@ const GoogleLogo = () => (
 export function SignInForm() {
   const params = useSearchParams();
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() =>
+    params.get("error") === "auth_callback_failed"
+      ? "Google sign-in could not finish. Ask an admin to allow this site’s /auth/callback URL in Supabase Auth (www and non-www are different)."
+      : null,
+  );
 
-  const next = params.get("next") ?? "/projects";
+  const next = params.get("next") ?? "/home";
 
   async function signInWithGoogle() {
     setError(null);
