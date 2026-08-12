@@ -7,19 +7,26 @@ import {
   DEFAULT_CLOSING_COSTS_PCT,
   defaultStrSchedule,
   estimateInsuranceMonthly,
+  estimateScoutCredits,
   extractZillowAddress,
   HasDataClient,
   insuranceRateForState,
   propertyTaxRateForState,
   RealEstateAPIClient,
+  resolveEffectiveDaysOnZillow,
+  resolveScoutRule,
   streetFromZillowUrl,
   strScheduleFromEstimate,
+  type ListingRecency,
   type Market,
   type MLSListingSummary,
   type ProjectConstraints,
   type PropertyDetail,
   type PropertySearchFilters,
+  type ResolvedScoutRule,
+  type ScoutCreditEstimate,
   type StrMarketAdrIntel,
+  type SubscriptionTier,
   type ZillowListingSummary,
   type ZillowSearchFilters,
 } from "@papuc/core";
@@ -65,6 +72,7 @@ export interface ScoutDiagnostics {
     dscrTooLow: number;
     cashflowTooLow: number;
     upsertFailed: number;
+    alreadyKnown: number;
   };
   /** A redacted peek at the first raw provider record — useful when 0 results
    *  to verify the upstream is returning what we expect. */
@@ -79,6 +87,12 @@ export interface ScoutDiagnostics {
    * these to display a "rerun on RealEstateAPI for these" hint.
    */
   unsupportedPropertyTypes?: string[];
+  /** Tier × trigger policy from scout-rules.json. */
+  scoutRule?: ResolvedScoutRule;
+  /** Effective daysOnZillow after clamping project prefs to the rule ceiling. */
+  effectiveDaysOnZillow?: ListingRecency;
+  /** Planned HasData listing-page burn for this rule (detail calls excluded). */
+  creditEstimate?: ScoutCreditEstimate;
 }
 
 export interface ScoutResult {
@@ -112,6 +126,8 @@ export async function scoutProjectInternal(
     triggerKind?: "manual" | "scheduled";
     triggeredBy?: string | null;
     size?: number;
+    /** Owner's subscription tier; defaults to free when omitted. */
+    subscriptionTier?: SubscriptionTier;
   } = {},
 ): Promise<ScoutResult> {
   const hasDataKey = process.env.HASDATA_API_KEY;
@@ -119,6 +135,16 @@ export async function scoutProjectInternal(
   if (!hasDataKey && !reaKey) {
     throw new Error("No real-estate provider configured: set HASDATA_API_KEY or REALESTATEAPI_KEY");
   }
+
+  const triggerKind = options.triggerKind ?? "manual";
+  const subscriptionTier: SubscriptionTier = options.subscriptionTier ?? "free";
+  const scoutRule = resolveScoutRule(subscriptionTier, triggerKind);
+  if (!scoutRule.enabled) {
+    throw new Error(
+      `Scout "${triggerKind}" is not enabled for tier "${subscriptionTier}" (see scout-rules.json)`,
+    );
+  }
+  const creditEstimate = estimateScoutCredits(scoutRule);
 
   const { data: project, error: pErr } = await sb
     .from("projects")
@@ -128,13 +154,17 @@ export async function scoutProjectInternal(
   if (pErr || !project) throw new Error("project not found");
 
   const constraints = project.constraints as ProjectConstraints;
+  const effectiveDaysOnZillow = resolveEffectiveDaysOnZillow(
+    constraints.daysOnMarketMax,
+    scoutRule.daysOnZillow,
+  );
 
   const { data: runRow, error: runErr } = await sb
     .from("scout_runs")
     .insert({
       project_id: project.id,
       triggered_by: options.triggeredBy ?? null,
-      trigger_kind: options.triggerKind ?? "manual",
+      trigger_kind: triggerKind,
     })
     .select("id")
     .single();
@@ -151,6 +181,7 @@ export async function scoutProjectInternal(
     dscrTooLow: 0,
     cashflowTooLow: 0,
     upsertFailed: 0,
+    alreadyKnown: 0,
   };
   let lastUpsertError: string | null = null;
   let providerQuery: Record<string, unknown> = {};
@@ -161,17 +192,46 @@ export async function scoutProjectInternal(
     const market = constraints.markets[0];
     if (!market) throw new Error("project has no market");
 
-    // 100 candidates ≈ 3 HasData pages. The old default of 25 fit inside
-    // a single page, which combined with newest-first sorting meant the
-    // scout only ever saw the last ~2 weeks of listings in busy markets.
-    const size = options.size ?? 100;
+    // Caps come from scout-rules.json (tier × trigger). Override size only
+    // when the caller passes an explicit value (tests / ops).
+    const size = options.size ?? scoutRule.targetCount;
     const search: ProviderSearchResult = hasDataKey
-      ? await searchHasData(hasDataKey, constraints, market, size)
+      ? await searchHasData(hasDataKey, constraints, market, size, {
+          maxPages: scoutRule.maxPages,
+          daysOnZillow: effectiveDaysOnZillow,
+        })
       : await searchRealEstateAPI(reaKey!, constraints, market, size);
-    const candidates = search.candidates;
+    let candidates = search.candidates;
     providerQuery = search.query;
     firstSample = search.firstSample;
     candidatesSeen = candidates.length;
+
+    if (scoutRule.skipKnownProperties && candidates.length > 0) {
+      const { data: existing } = await sb
+        .from("deals")
+        .select("source_property_id")
+        .eq("project_id", project.id)
+        .eq("source", provider);
+      const known = new Set(
+        (existing ?? [])
+          .map((r: { source_property_id?: string | null }) =>
+            String(r.source_property_id ?? "").trim(),
+          )
+          .filter(Boolean),
+      );
+      if (known.size > 0) {
+        const fresh: typeof candidates = [];
+        for (const c of candidates) {
+          const id = String(c.listing.id ?? "").trim();
+          if (id && known.has(id)) {
+            dropped.alreadyKnown += 1;
+            continue;
+          }
+          fresh.push(c);
+        }
+        candidates = fresh;
+      }
+    }
 
     console.log("[scout] provider=%s query=%j candidates=%d", provider, search.query, candidates.length);
 
@@ -496,6 +556,9 @@ export async function scoutProjectInternal(
       dealsScored,
       elapsedMs: Date.now() - startedAt,
       diagnostics: {
+        scoutRule,
+        effectiveDaysOnZillow,
+        creditEstimate,
         provider,
         dropped,
         firstSample,
@@ -534,15 +597,13 @@ async function searchHasData(
   constraints: ProjectConstraints,
   market: Market,
   size: number,
+  policy: { maxPages: number; daysOnZillow: ListingRecency },
 ): Promise<ProviderSearchResult> {
   const client = new HasDataClient({ apiKey });
-  const filters = buildHasDataFilters(constraints, market);
-  // HasData returns ~41 listings per page sorted newest-first. Fetch as
-  // many pages as `size` needs (capped at 5 = 25 credits) so older active
-  // listings aren't systematically invisible to the scout. A user-reported
-  // Clearlake Oaks listing at 57 days on market sat on page 2 and never
-  // surfaced while we fetched only page 1.
-  const maxPages = Math.min(5, Math.max(1, Math.ceil(size / 40)));
+  const filters = buildHasDataFilters(constraints, market, policy.daysOnZillow);
+  // Page budget comes from scout-rules.json (tier × trigger), not a hard
+  // coded 5. Manual Pro can go deeper; nightly stays at 1 page of fresh.
+  const maxPages = Math.max(0, Math.min(policy.maxPages, Math.ceil(size / 40) || 1));
   console.log("[scout/hasdata] filters=%j maxPages=%d", filters, maxPages);
   const result = await client.searchZillowAll(filters, {
     maxPages,
@@ -579,6 +640,7 @@ async function searchHasData(
       ...(filters as unknown as Record<string, unknown>),
       pagesFetched: result.pagesFetched,
       totalPages: result.totalPages,
+      maxPages,
     },
     firstSample,
   };
@@ -587,10 +649,13 @@ async function searchHasData(
 function buildHasDataFilters(
   constraints: ProjectConstraints,
   market: Market,
+  daysOnZillow: ListingRecency,
 ): ZillowSearchFilters {
   const filters: ZillowSearchFilters = {
     keyword: marketToZillowKeyword(market),
     type: "forSale",
+    // Always set — scout-rules ceiling (possibly tightened by project prefs).
+    daysOnZillow,
   };
   if (constraints.priceMin !== undefined) filters.priceMin = constraints.priceMin;
   if (constraints.priceMax !== undefined) filters.priceMax = constraints.priceMax;
@@ -611,8 +676,6 @@ function buildHasDataFilters(
   if (constraints.yearBuiltMin !== undefined)
     filters.yearBuiltMin = constraints.yearBuiltMin;
   if (constraints.hoaMax !== undefined) filters.hoaMax = constraints.hoaMax;
-  if (constraints.daysOnMarketMax !== undefined)
-    filters.daysOnZillow = constraints.daysOnMarketMax;
 
   if (
     constraints.propertyTypes.length &&

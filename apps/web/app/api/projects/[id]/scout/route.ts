@@ -31,11 +31,20 @@ export async function POST(
     return NextResponse.json({ error: "project not found" }, { status: 404 });
   }
 
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("subscription_tier")
+    .eq("id", user.id)
+    .maybeSingle();
+  const subscriptionTier =
+    profile?.subscription_tier === "pro" ? "pro" : "free";
+
   try {
     const admin = createAdminClient();
     const result = await scoutProjectInternal(admin, id, {
       triggerKind: "manual",
       triggeredBy: user.id,
+      subscriptionTier,
     });
 
     // Fire-and-forget rank pass so rationales populate after the response returns.

@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "description": "Scout search policy by subscription tier and trigger. Edit this file to align product packaging with HasData credit burn. Code loads it via scout-rules.ts.",
+  "providerCredits": {
+    "hasdata": {
+      "zillowListingPage": 5,
+      "zillowPropertyDetail": 5,
+      "listingsPerPageApprox": 41,
+      "note": "Credits charged per successful /scrape/zillow/listing or /property call (HasData docs, 2026)."
+    },
+    "realestateapi": {
+      "propertySearch": 1,
+      "propertyDetail": 1,
+      "note": "Approximate wallet units; confirm against current RealEstateAPI plan."
+    }
+  },
+  "costModel": {
+    "usdPerHasDataCredit": 0.01,
+    "proMonthlyUsd": 39,
+    "notes": "usdPerHasDataCredit is a planning estimate — replace with your real blended $/credit from the HasData invoice. Used only for overhead / margin math, not billing customers in credits."
+  },
+  "tiers": {
+    "free": {
+      "manual": {
+        "enabled": true,
+        "targetCount": 40,
+        "maxPages": 1,
+        "daysOnZillow": "7d",
+        "skipKnownProperties": true,
+        "rationale": "Cheap backfill of recent actives only. One listing page = 5 credits."
+      },
+      "scheduled": {
+        "enabled": false,
+        "targetCount": 0,
+        "maxPages": 0,
+        "daysOnZillow": "24h",
+        "skipKnownProperties": true,
+        "rationale": "Nightly scout is a Pro feature (business model Stage 1)."
+      }
+    },
+    "pro": {
+      "manual": {
+        "enabled": true,
+        "targetCount": 100,
+        "maxPages": 3,
+        "daysOnZillow": "7d",
+        "skipKnownProperties": true,
+        "rationale": "Same recency safety as discovery; deeper page budget for first fill / re-scout. Still refuses stale inventory beyond 7d."
+      },
+      "scheduled": {
+        "enabled": true,
+        "targetCount": 40,
+        "maxPages": 1,
+        "daysOnZillow": "24h",
+        "skipKnownProperties": true,
+        "rationale": "Catch new listings since yesterday. Skip known zpids so credits aren't spent re-underwriting."
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@ export const maxDuration = 300;
  * the CRON_SECRET shared secret. For each active project, runs a full scout
  * and surfaces any new high-score deals back to the project owner.
  *
+ * Pro-only (see scout-rules.json). Free owners are skipped.
  * NOTE: web push / email notifications are not yet wired up on the web port;
  * for now we just persist the new deals so they show up on next page load.
  */
@@ -31,14 +32,44 @@ export async function GET(req: Request) {
     .eq("status", "active");
   if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
 
+  const ownerIds = [
+    ...new Set((projects ?? []).map((p: { owner_id: string }) => p.owner_id)),
+  ];
+  const tierByOwner = new Map<string, "free" | "pro">();
+  if (ownerIds.length > 0) {
+    const { data: profiles } = await sb
+      .from("profiles")
+      .select("id, subscription_tier")
+      .in("id", ownerIds);
+    for (const row of profiles ?? []) {
+      tierByOwner.set(
+        row.id as string,
+        row.subscription_tier === "pro" ? "pro" : "free",
+      );
+    }
+  }
+
   const summary: Array<{
     projectId: string;
     ok: boolean;
     newDeals: number;
+    skipped?: boolean;
     error?: string;
   }> = [];
 
   for (const proj of projects ?? []) {
+    const subscriptionTier = tierByOwner.get(proj.owner_id) ?? "free";
+    // Free tier: scheduled scout disabled in scout-rules.json (Pro wedge).
+    if (subscriptionTier !== "pro") {
+      summary.push({
+        projectId: proj.id,
+        ok: true,
+        newDeals: 0,
+        skipped: true,
+      });
+      continue;
+    }
+
     try {
       const { data: pre } = await sb
         .from("deals")
@@ -49,6 +80,7 @@ export async function GET(req: Request) {
       await scoutProjectInternal(sb, proj.id, {
         triggerKind: "scheduled",
         triggeredBy: null,
+        subscriptionTier,
       });
 
       const { data: post } = await sb
