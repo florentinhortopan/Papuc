@@ -33,6 +33,8 @@ export type ProjectsRow = {
   status: ProjectStatus;
   constraints: unknown;
   last_scout_at: string | null;
+  /** When true and owner is Pro, nightly cron scouts this project. */
+  nightly_scout_enabled: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -115,10 +117,16 @@ export type Database = {
         Row: ProjectsRow;
         Insert: Omit<
           ProjectsRow,
-          "id" | "created_at" | "updated_at" | "last_scout_at" | "status"
+          | "id"
+          | "created_at"
+          | "updated_at"
+          | "last_scout_at"
+          | "status"
+          | "nightly_scout_enabled"
         > & {
           id?: string;
           status?: ProjectStatus;
+          nightly_scout_enabled?: boolean;
         };
         Update: Partial<ProjectsRow>;
         Relationships: Rel;

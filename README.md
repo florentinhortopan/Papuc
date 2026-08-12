@@ -67,11 +67,13 @@ Berkeley.xlsx               Source-of-truth pro-forma model
        `https://<your-project>.supabase.co/auth/v1/callback`
    - Paste the Google client id + secret into the Supabase provider config.
 4. **Auth → URL Configuration**:
-   - **Site URL**: `https://papuc.app` (production)
-   - **Redirect URLs**: add
+   - **Site URL**: your primary production host exactly
+     (if Vercel redirects to `www`, use `https://www.papuc.app`)
+   - **Redirect URLs**: add all hosts users can hit, e.g.
      `http://localhost:3000/auth/callback`,
-     `https://papuc.app/auth/callback`
-     (and preview URLs if you use them).
+     `https://papuc.app/auth/callback`,
+     `https://www.papuc.app/auth/callback`
+     (apex and `www` are different; missing either breaks Google return).
 5. **Copy env vars**:
    ```bash
    cp apps/web/.env.example apps/web/.env.local
@@ -97,15 +99,19 @@ Berkeley.xlsx               Source-of-truth pro-forma model
 2. In Vercel → New Project, import the repo. Set the **Root Directory** to
    `apps/web`. Vercel auto-detects Next.js.
 3. Paste the same env vars from `.env.example` into Project → Settings →
-   Environment Variables. Set `NEXT_PUBLIC_SITE_URL=https://papuc.app`
-   (used for share links and server-side absolute URLs — not OAuth).
-4. Domains → add `papuc.app`, set it as the **primary** domain, and enable
-   redirect from `*.vercel.app` → `papuc.app` so users never stay on the
-   deployment URL.
+   Environment Variables. Set `NEXT_PUBLIC_SITE_URL` to the **primary**
+   host (e.g. `https://www.papuc.app` if that is what Vercel redirects to).
+4. Domains → add `papuc.app` / `www.papuc.app`, pick one **primary**, redirect
+   the other + `*.vercel.app` to that primary.
 5. Deploy. Vercel reads `apps/web/vercel.json` and registers the nightly-scout
-   cron automatically.
-6. Supabase Auth → URL Configuration: Site URL `https://papuc.app`, and
-   Redirect URLs including `https://papuc.app/auth/callback`.
+   cron automatically. Nightly runs only for **Pro** owners
+   (`profiles.subscription_tier`) on projects with
+   `nightly_scout_enabled` (default on; toggle on project cards / detail).
+6. Supabase Auth → URL Configuration: Site URL = primary host, and Redirect
+   URLs for both apex and www `/auth/callback` (Google Console only needs
+   the Supabase callback `https://<project>.supabase.co/auth/v1/callback`).
+7. Apply new SQL migrations under `supabase/migrations/` (including
+   `20260812000001_project_nightly_scout.sql`).
 
 That's it — no Docker, no Supabase CLI, no `supabase functions deploy`.
 
@@ -124,7 +130,7 @@ Snapshot tests assert parity with `Berkeley.xlsx` for `Template`, `2701 Grant`,
 User prompt
   -> /api/projects/parse (Claude tool-call -> ProjectConstraints)
   -> projects.constraints (Postgres)
-  -> [user clicks Scout | Vercel Cron nightly]
+  -> [user clicks Scout | Vercel Cron nightly for Pro + nightly_scout_enabled]
   -> /api/projects/:id/scout
        -> RealEstateAPI MLS Search (filters)
        -> Property Detail per top-N (rent + AVM + photos)
