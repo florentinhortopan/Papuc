@@ -8,7 +8,24 @@ import {
   HasDataClient,
   HasDataError,
   normalizeZillowListing,
+  toHasDataDaysOnZillow,
 } from "../hasdata";
+
+describe("toHasDataDaysOnZillow", () => {
+  it("converts UX tokens to the HasData enum", () => {
+    expect(toHasDataDaysOnZillow("24h")).toBe("1");
+    expect(toHasDataDaysOnZillow("7d")).toBe("7");
+    expect(toHasDataDaysOnZillow("14d")).toBe("14");
+    expect(toHasDataDaysOnZillow("30d")).toBe("30");
+    expect(toHasDataDaysOnZillow("90d")).toBe("90");
+    expect(toHasDataDaysOnZillow("6m")).toBe("6m");
+    expect(toHasDataDaysOnZillow("12m")).toBe("12m");
+  });
+
+  it("falls back to 7 for unknown tokens", () => {
+    expect(toHasDataDaysOnZillow("weird")).toBe("7");
+  });
+});
 
 function mockFetch(handler: (url: string, init: RequestInit) => Response | Promise<Response>) {
   return vi.fn(async (input: any, init?: any) => {
@@ -18,6 +35,18 @@ function mockFetch(handler: (url: string, init: RequestInit) => Response | Promi
 }
 
 describe("buildZillowParams", () => {
+  it("maps Papuc recency tokens to HasData daysOnZillow enums", () => {
+    expect(buildZillowParams({ keyword: "CA", daysOnZillow: "24h" }).get("daysOnZillow")).toBe(
+      "1",
+    );
+    expect(buildZillowParams({ keyword: "CA", daysOnZillow: "7d" }).get("daysOnZillow")).toBe(
+      "7",
+    );
+    expect(buildZillowParams({ keyword: "CA", daysOnZillow: "6m" }).get("daysOnZillow")).toBe(
+      "6m",
+    );
+  });
+
   it("uses bracketed keys for range filters", () => {
     const p = buildZillowParams({
       keyword: "Brooklyn, NY",

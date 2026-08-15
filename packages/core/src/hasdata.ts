@@ -67,7 +67,11 @@ export interface ZillowSearchFilters {
    * results with hoa=0, so the filter bites hard.
    */
   hoaMax?: number;
-  /** "24h" | "7d" | "14d" | "30d" | "90d" | "6m" | "12m" */
+  /**
+   * Listing age filter. Papuc uses human tokens (`24h`, `7d`, …); they are
+   * mapped to HasData's enum via {@link toHasDataDaysOnZillow} before the
+   * request is sent.
+   */
   daysOnZillow?: string;
   /** SINGLE_FAMILY, CONDO, TOWNHOUSE, MULTI_FAMILY, APARTMENT, MANUFACTURED, LOT */
   homeTypes?: string[];
@@ -388,6 +392,39 @@ export class HasDataClient {
 }
 
 /**
+ * Map Papuc listing-recency tokens onto HasData's `daysOnZillow` enum.
+ * HasData accepts only: 1 | 7 | 14 | 30 | 90 (or string forms) and
+ * "6m" | "12m" | "24m" | "36m". Our UX tokens like "24h" / "7d" must be
+ * converted or the listing API returns 422.
+ */
+export function toHasDataDaysOnZillow(value: string): string {
+  const v = value.trim();
+  const map: Record<string, string> = {
+    "24h": "1",
+    "1d": "1",
+    "1": "1",
+    "7d": "7",
+    "7": "7",
+    "14d": "14",
+    "14": "14",
+    "30d": "30",
+    "30": "30",
+    "90d": "90",
+    "90": "90",
+    "6m": "6m",
+    "12m": "12m",
+    "24m": "24m",
+    "36m": "36m",
+  };
+  if (map[v]) return map[v]!;
+  // Numeric days already valid for HasData.
+  if (/^(1|7|14|30|90)$/.test(v)) return v;
+  if (/^(6|12|24|36)m$/.test(v)) return v;
+  // Safer than omitting: 7 days matches our default manual scout ceiling.
+  return "7";
+}
+
+/**
  * Build the URLSearchParams for /scrape/zillow/listing.
  * Bracketed keys (`price[min]`, etc.) are required by HasData and are
  * appended as literal `key[min]` strings.
@@ -415,7 +452,9 @@ export function buildZillowParams(filters: ZillowSearchFilters): URLSearchParams
   if (filters.lotSizeMin !== undefined)
     p.set("lotSize[min]", String(filters.lotSizeMin));
   if (filters.hoaMax !== undefined) p.set("hoa", String(filters.hoaMax));
-  if (filters.daysOnZillow) p.set("daysOnZillow", filters.daysOnZillow);
+  if (filters.daysOnZillow) {
+    p.set("daysOnZillow", toHasDataDaysOnZillow(filters.daysOnZillow));
+  }
   if (filters.page !== undefined) p.set("page", String(filters.page));
 
   if (filters.homeTypes && filters.homeTypes.length) {
