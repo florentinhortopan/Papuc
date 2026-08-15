@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { NightlyScoutToggle } from "@/components/nightly-scout-toggle";
+import { ProjectShareButton } from "@/components/project-share-button";
+import { PublicFeedToggle } from "@/components/public-feed-toggle";
 import { Badge } from "@/components/ui/badge";
 import type { SubscriptionTier } from "@/lib/database.types";
 import { formatDate, formatMarket, formatMoney } from "@/lib/format";
@@ -21,6 +23,7 @@ export function ProjectListItemCard({
   const [nightlyEnabled, setNightlyEnabled] = useState(
     project.nightly_scout_enabled ?? true,
   );
+  const [isPublic, setIsPublic] = useState(project.is_public ?? false);
 
   return (
     <div className="h-full flex flex-col bg-surface border border-border rounded-2xl overflow-hidden hover:border-border/80 transition-colors">
@@ -57,19 +60,31 @@ export function ProjectListItemCard({
           </div>
         </div>
       </Link>
-      <div className="mt-auto px-4 pb-4 pt-1 flex items-center justify-between gap-3 min-h-10">
+      <div className="mt-auto px-4 pb-4 pt-1 flex items-center justify-between gap-2 min-h-10">
         <p className="text-textMuted text-xs truncate min-w-0">
           {project.last_scout_at
             ? `Last scout ${formatDate(project.last_scout_at)}`
             : "Not scouted yet"}
         </p>
-        <NightlyScoutToggle
-          projectId={project.id}
-          enabled={nightlyEnabled}
-          onEnabledChange={setNightlyEnabled}
-          subscriptionTier={subscriptionTier}
-          compact
-        />
+        <div className="flex items-center gap-1.5 shrink-0">
+          <ProjectShareButton
+            project={{ ...project, is_public: isPublic }}
+            compact
+          />
+          <PublicFeedToggle
+            projectId={project.id}
+            enabled={isPublic}
+            onEnabledChange={setIsPublic}
+            compact
+          />
+          <NightlyScoutToggle
+            projectId={project.id}
+            enabled={nightlyEnabled}
+            onEnabledChange={setNightlyEnabled}
+            subscriptionTier={subscriptionTier}
+            compact
+          />
+        </div>
       </div>
     </div>
   );
