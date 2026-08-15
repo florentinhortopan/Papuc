@@ -1,6 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ProjectConstraintsSchema, type ProjectConstraints } from "../schemas";
 import {
+  ADVISE_FINANCING_FIT_SYSTEM,
+  ADVISE_FINANCING_FIT_TOOL,
   ANALYZE_PROPERTY_CONDITION_SYSTEM,
   PARSE_PROJECT_SYSTEM,
   PARSE_PROJECT_TOOL,
@@ -244,6 +246,48 @@ export class ClaudeProvider implements LLMProvider {
       }
     }
     throw new Error("Claude did not return recordPropertyCondition tool call");
+  }
+
+  /**
+   * Advice layer on top of a deterministic lender shortlist. Does not invent
+   * lenders or rates — explains path fit and next steps for buying.
+   */
+  async adviseFinancingFit(args: {
+    profile: Record<string, unknown>;
+    matches: Array<Record<string, unknown>>;
+    flags: Record<string, unknown>;
+  }): Promise<FinancingFitAdvice> {
+    const userMessage = [
+      `Deal scenario profile:`,
+      JSON.stringify(args.profile, null, 2),
+      ``,
+      `Matched lenders (already filtered — do not add others):`,
+      JSON.stringify(args.matches, null, 2),
+      ``,
+      `Flags: ${JSON.stringify(args.flags)}`,
+    ].join("\n");
+
+    const res = await this.client.messages.create({
+      model: this.model,
+      max_tokens: Math.max(this.maxTokens, 2048),
+      system: ADVISE_FINANCING_FIT_SYSTEM,
+      tools: [ADVISE_FINANCING_FIT_TOOL as any],
+      tool_choice: {
+        type: "tool",
+        name: ADVISE_FINANCING_FIT_TOOL.name,
+      } as any,
+      messages: [{ role: "user", content: userMessage }],
+    });
+
+    for (const block of res.content) {
+      if (
+        block.type === "tool_use" &&
+        block.name === ADVISE_FINANCING_FIT_TOOL.name
+      ) {
+        return normalizeFinancingFitAdvice(block.input);
+      }
+    }
+    throw new Error("Claude did not return adviseFinancingFit tool call");
   }
 
   /** Model id used for calls (exposed so callers can cache provenance). */
@@ -490,4 +534,50 @@ function clamp(n: number, min: number, max: number): number {
   if (n < min) return min;
   if (n > max) return max;
   return n;
+}
+
+export interface FinancingFitAdvice {
+  headline: string;
+  pathSummary: string;
+  lenderNotes: Array<{ lenderId: string; note: string }>;
+  nextSteps: string[];
+  disclaimer: string;
+}
+
+function normalizeFinancingFitAdvice(raw: unknown): FinancingFitAdvice {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const lenderNotesRaw = Array.isArray(o.lenderNotes) ? o.lenderNotes : [];
+  const nextStepsRaw = Array.isArray(o.nextSteps) ? o.nextSteps : [];
+  return {
+    headline:
+      typeof o.headline === "string" && o.headline.trim()
+        ? o.headline.trim()
+        : "Financing fit",
+    pathSummary:
+      typeof o.pathSummary === "string" && o.pathSummary.trim()
+        ? o.pathSummary.trim()
+        : "Review the matched lenders and confirm terms directly.",
+    lenderNotes: lenderNotesRaw
+      .map((row) => {
+        if (!row || typeof row !== "object") return null;
+        const r = row as Record<string, unknown>;
+        const lenderId =
+          typeof r.lenderId === "string" ? r.lenderId.trim() : "";
+        const note = typeof r.note === "string" ? r.note.trim() : "";
+        if (!lenderId || !note) return null;
+        return { lenderId, note };
+      })
+      .filter((x): x is { lenderId: string; note: string } => x !== null),
+    nextSteps: nextStepsRaw
+      .map((s) => (typeof s === "string" ? s.trim() : ""))
+      .filter(Boolean)
+      .slice(0, 8),
+    disclaimer:
+      typeof o.disclaimer === "string" && o.disclaimer.trim()
+        ? o.disclaimer.trim()
+        : "Educational matching only — not a loan offer, commitment, or personalized investment advice. Confirm eligibility and pricing with each lender.",
+  };
 }

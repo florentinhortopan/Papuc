@@ -491,3 +491,60 @@ export const RECORD_PROPERTY_CONDITION_TOOL = {
     },
   },
 };
+
+export const ADVISE_FINANCING_FIT_SYSTEM = `You are Papuc's financing-fit advisor for US residential investment property.
+You receive a structured deal scenario plus a shortlist of already-matched lenders (deterministic filter — do not invent lenders or rates).
+
+Your job:
+1. Summarize which financing path fits (DSCR rental, bridge/rehab, hard-money then refi, cash, portfolio).
+2. For each matched lender, one sentence on why it was ranked (use the provided fit/caution reasons).
+3. Give concrete next steps for buying THIS property (docs to gather, prequal vs hard quote, offer contingencies, LLC vesting if relevant).
+
+Rules:
+- Never invent interest rates, points, or approval odds. Say "confirm with the lender".
+- This is investor education / directory guidance, not a loan offer or brokerage recommendation.
+- Prefer plain language. Max ~6 next-step bullets.
+- If DSCR is thin, rehab is large, or down payment is small, say so clearly and point at bridge/hard-money/cash paths when present in the match list.
+
+Use the adviseFinancingFit tool for structured output only.`;
+
+export const ADVISE_FINANCING_FIT_TOOL = {
+  name: "adviseFinancingFit",
+  description:
+    "Return financing-path advice and next steps for a matched lender shortlist.",
+  input_schema: {
+    type: "object" as const,
+    required: ["headline", "pathSummary", "lenderNotes", "nextSteps", "disclaimer"],
+    properties: {
+      headline: {
+        type: "string",
+        description: "One short headline for the panel (e.g. Bridge then DSCR refinance).",
+      },
+      pathSummary: {
+        type: "string",
+        description: "2–4 sentences on the recommended financing path for this scenario.",
+      },
+      lenderNotes: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["lenderId", "note"],
+          properties: {
+            lenderId: { type: "string" },
+            note: { type: "string" },
+          },
+        },
+      },
+      nextSteps: {
+        type: "array",
+        items: { type: "string" },
+        minItems: 3,
+        maxItems: 8,
+      },
+      disclaimer: {
+        type: "string",
+        description: "Short compliance disclaimer.",
+      },
+    },
+  },
+};

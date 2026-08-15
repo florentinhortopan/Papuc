@@ -22,6 +22,7 @@ import { CashflowBadge } from "@/components/cashflow-badge";
 import { CashflowChart } from "@/components/cashflow-chart";
 import { ComparablesPanel } from "@/components/comparables-panel";
 import { DscrBadge } from "@/components/dscr-badge";
+import { FinancingFitPanel } from "@/components/financing-fit-panel";
 import { MarketSignalBadges } from "@/components/market-signal-badges";
 import { PhotoCarousel } from "@/components/photo-carousel";
 import { StrCashflowMatrix, defaultStrMatrix, type StrMatrixValue } from "@/components/str-matrix";
@@ -1440,6 +1441,33 @@ export function DealDetailClient({
             onApplyRent={(rent) =>
               setState((s) => ({ ...s, monthlyRentLTR: String(Math.round(rent)) }))
             }
+          />
+        </div>
+
+        <div className="order-[16] lg:order-none">
+          <FinancingFitPanel
+            dealId={deal.id}
+            profile={{
+              strategy: state.strategy,
+              price: derived.price,
+              downPayment: derived.downPayment,
+              ltv: derived.ltv,
+              dscr: result.dscr,
+              dscrLenderHaircut: result.dscrLenderHaircut,
+              monthlyCashflow: result.annualPreTaxProfit / 12,
+              rehabBudget: Math.max(
+                toNum(state.improvements),
+                liveConditionEstimate?.rehabSuggested ??
+                  deal.condition_rehab_suggested ??
+                  0,
+              ),
+              isLand: isLandDeal,
+              state: deal.state,
+              city: deal.city,
+              zip: deal.zip,
+              propertyType: dealHomeType,
+              interestOnly: project.constraints.mortgage?.interestOnly ?? false,
+            }}
           />
         </div>
 

@@ -18,11 +18,11 @@ export default function LendersScreen() {
 
         <View className="gap-3">
           {LENDERS.map((l) => (
-            <Card key={l.name}>
+            <Card key={l.id}>
               <View className="flex-row items-center justify-between mb-1">
                 <Text className="text-text text-lg font-semibold">{l.name}</Text>
                 <Text className="text-textMuted text-xs">
-                  Min DSCR {l.minDscr.toFixed(2)}
+                  Min DSCR {l.minDscr.toFixed(2)} · LTV {(l.maxLtv * 100).toFixed(0)}%
                 </Text>
               </View>
               <Text className="text-textMuted text-sm leading-5 mb-3">{l.notes}</Text>
