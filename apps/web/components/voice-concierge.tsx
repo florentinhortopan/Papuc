@@ -16,6 +16,34 @@ import { cn } from "@/lib/utils";
 
 export const VOICE_TRANSCRIPT_KEY = "papuc.voiceTranscript";
 
+/** Shape the Concierge transcript so /api/projects/parse keeps user dollars. */
+export function formatVoiceTranscriptForParse(
+  transcript: string,
+  opts?: {
+    summary?: string;
+    progress?: Partial<Record<VoiceProgressTopic, string>>;
+  },
+): string {
+  const parts: string[] = [
+    "Voice Concierge intake (dialogue labeled User / Papuc).",
+    "Extract ProjectConstraints from what the USER said.",
+    "Every user-stated dollar amount must map to downPayment, totalCash, and/or priceMax.",
+    'If role is unclear, put the amount in totalCash and explain in intent.capitalStory.',
+  ];
+  const chips = opts?.progress
+    ? (["place", "budget", "use"] as const)
+        .filter((t) => opts.progress?.[t])
+        .map((t) => `${t}: ${opts.progress![t]}`)
+        .join("; ")
+    : "";
+  if (chips) parts.push(`Progress chips from the call: ${chips}.`);
+  if (opts?.summary?.trim()) {
+    parts.push(`Concierge summary: ${opts.summary.trim()}`);
+  }
+  parts.push("", transcript.trim());
+  return parts.join("\n");
+}
+
 type Phase = "call" | "finishing" | "error";
 
 export function VoiceConcierge({
@@ -38,6 +66,7 @@ export function VoiceConcierge({
   const router = useRouter();
   const sessionRef = useRef<VoiceSessionHandle | null>(null);
   const completingRef = useRef(false);
+  const progressRef = useRef<Partial<Record<VoiceProgressTopic, string>>>({});
   const [phase, setPhase] = useState<Phase>("call");
   const [status, setStatus] = useState<VoiceSessionStatus>("connecting");
   const [caption, setCaption] = useState<{
@@ -61,6 +90,7 @@ export function VoiceConcierge({
 
     let cancelled = false;
     completingRef.current = false;
+    progressRef.current = {};
     setPhase("call");
     setStatus("connecting");
     setCaption(null);
@@ -77,17 +107,21 @@ export function VoiceConcierge({
             setCaption({ role: ev.role, text: ev.text });
           }
           if (ev.type === "progress") {
-            setProgress((p) => ({
-              ...p,
+            progressRef.current = {
+              ...progressRef.current,
               [ev.topic]: ev.label ?? ev.topic,
-            }));
+            };
+            setProgress(progressRef.current);
           }
           if (ev.type === "error") {
             setError(ev.message);
             setPhase("error");
           }
           if (ev.type === "finished") {
-            const text = handle.getTranscript();
+            const text = formatVoiceTranscriptForParse(handle.getTranscript(), {
+              summary: ev.summary,
+              progress: progressRef.current,
+            });
             sessionRef.current = null;
             void completeWithTranscript(text);
           }

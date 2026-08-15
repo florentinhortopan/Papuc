@@ -56,6 +56,12 @@ export async function POST() {
             audio: {
               output: { voice },
               input: {
+                // Required for User: lines in the hangup transcript → parse.
+                // Without this, only Papuc speech is captured and budget/etc. vanish.
+                transcription: {
+                  model: "gpt-4o-mini-transcribe",
+                  language: "en",
+                },
                 turn_detection: {
                   type: "semantic_vad",
                   eagerness: "medium",

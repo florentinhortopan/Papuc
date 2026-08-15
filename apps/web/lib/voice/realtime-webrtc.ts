@@ -30,8 +30,16 @@ const MAX_MS = 150_000;
 const REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 /** Let the farewell audio finish before tearing down WebRTC. */
 const FINISH_AUDIO_GRACE_MS = 2_500;
+/** Wait for the last user utterance to transcribe before hangup. */
+const TRANSCRIPT_WAIT_MS = 4_000;
 
 type TranscriptLine = { role: "user" | "assistant"; text: string };
+
+function budgetRoleClear(label?: string): boolean {
+  if (!label) return false;
+  const l = label.toLowerCase();
+  return /down|purchase|price|cash|savings|equity|close/.test(l);
+}
 
 export async function startVoiceSession(
   onEvent: (ev: VoiceSessionEvent) => void,
@@ -81,6 +89,9 @@ export async function startVoiceSession(
   let finishTimer: number | undefined;
   let awaitingAudioBeforeFinish = false;
   let pendingFinishSummary: string | undefined;
+  let finishRequested = false;
+  let pendingUserTranscript = false;
+  let transcriptWaitTimer: number | undefined;
 
   const pushLine = (role: "user" | "assistant", text: string) => {
     const t = text.trim();
@@ -94,10 +105,9 @@ export async function startVoiceSession(
     onEvent({ type: "caption", role, text: t });
   };
 
-  const userTurnCount = () => lines.filter((l) => l.role === "user").length;
-
   const cleanup = () => {
     if (finishTimer != null) window.clearTimeout(finishTimer);
+    if (transcriptWaitTimer != null) window.clearTimeout(transcriptWaitTimer);
     try {
       dc?.close();
     } catch {
@@ -112,9 +122,12 @@ export async function startVoiceSession(
   const finish = (summary?: string, discard = false) => {
     if (finished) return;
     finished = true;
+    finishRequested = false;
     awaitingAudioBeforeFinish = false;
+    pendingUserTranscript = false;
     window.clearTimeout(timeoutId);
     if (finishTimer != null) window.clearTimeout(finishTimer);
+    if (transcriptWaitTimer != null) window.clearTimeout(transcriptWaitTimer);
     if (!discard) {
       onEvent({ type: "status", status: "finishing" });
       onEvent({ type: "finished", summary });
@@ -126,6 +139,7 @@ export async function startVoiceSession(
   const scheduleFinish = (summary?: string) => {
     if (finished || awaitingAudioBeforeFinish) return;
     awaitingAudioBeforeFinish = true;
+    finishRequested = true;
     pendingFinishSummary = summary;
     onEvent({ type: "status", status: "finishing" });
     finishTimer = window.setTimeout(() => {
@@ -133,8 +147,28 @@ export async function startVoiceSession(
     }, FINISH_AUDIO_GRACE_MS);
   };
 
+  /**
+   * finish_intake often arrives before the last user turn is transcribed.
+   * Hold hangup briefly so "I have 200k max" makes it into the parse prompt.
+   */
+  const beginFinish = (summary?: string) => {
+    if (finished || awaitingAudioBeforeFinish || finishRequested) return;
+    finishRequested = true;
+    pendingFinishSummary = summary;
+    onEvent({ type: "status", status: "finishing" });
+    if (!pendingUserTranscript) {
+      scheduleFinish(summary);
+      return;
+    }
+    if (transcriptWaitTimer != null) window.clearTimeout(transcriptWaitTimer);
+    transcriptWaitTimer = window.setTimeout(() => {
+      pendingUserTranscript = false;
+      scheduleFinish(pendingFinishSummary);
+    }, TRANSCRIPT_WAIT_MS);
+  };
+
   const timeoutId = window.setTimeout(() => {
-    scheduleFinish("Time's up — drafting your project from what we heard.");
+    beginFinish("Time's up — drafting your project from what we heard.");
   }, MAX_MS);
 
   const flushPendingResponseCreate = () => {
@@ -189,12 +223,28 @@ export async function startVoiceSession(
 
     if (name === "note_progress") {
       const topic = args.topic as VoiceProgressTopic;
+      const label =
+        typeof args.label === "string" ? args.label : undefined;
+      if (topic === "budget" && !budgetRoleClear(label)) {
+        // Still show a soft chip, but do not count budget as settled.
+        onEvent({
+          type: "progress",
+          topic,
+          label: label ?? "budget?",
+        });
+        sendToolOutput(callId, {
+          ok: false,
+          reason:
+            "Budget role unclear. Ask whether that dollar amount is down payment, total cash, or max purchase price. Then note_progress(budget) with a role in the label (e.g. $200k down).",
+        });
+        return;
+      }
       if (topic === "place" || topic === "budget" || topic === "use") {
         notedTopics.add(topic);
         onEvent({
           type: "progress",
           topic,
-          label: typeof args.label === "string" ? args.label : undefined,
+          label,
         });
       }
       sendToolOutput(callId, { ok: true });
@@ -204,22 +254,19 @@ export async function startVoiceSession(
     if (name === "finish_intake") {
       const summary =
         typeof args.summary === "string" ? args.summary : undefined;
-      // Model often finishes after the 2nd answer while chips are still thin —
-      // reject and keep the WebRTC call alive instead of navigating away.
-      const richFirstRant =
-        userTurnCount() <= 1 && notedTopics.size >= 3;
-      const enoughTopics = notedTopics.size >= 2;
-      if (!enoughTopics && !richFirstRant) {
+      const missing: VoiceProgressTopic[] = (
+        ["place", "budget", "use"] as const
+      ).filter((t) => !notedTopics.has(t));
+      if (missing.length > 0) {
         sendToolOutput(callId, {
           ok: false,
-          reason:
-            "Too early. Ask one more missing question (place, budget, or use), then call finish_intake. Do not end the call yet.",
+          reason: `Too early — still missing: ${missing.join(", ")}. Ask one clarifying question (for budget: down vs cash vs max price), then finish_intake.`,
         });
         return;
       }
       // Never start another model turn while hanging up — that races teardown.
       sendToolOutput(callId, { ok: true }, { createResponse: false });
-      scheduleFinish(summary);
+      beginFinish(summary);
     }
   };
 
@@ -232,6 +279,7 @@ export async function startVoiceSession(
       onEvent({ type: "status", status: "listening" });
     }
     if (type === "input_audio_buffer.speech_started") {
+      pendingUserTranscript = true;
       if (!awaitingAudioBeforeFinish) {
         onEvent({ type: "status", status: "listening" });
       }
@@ -282,11 +330,23 @@ export async function startVoiceSession(
 
     // Transcriptions (GA event names + beta fallbacks)
     if (type === "conversation.item.input_audio_transcription.completed") {
+      pendingUserTranscript = false;
       const transcript = String(
         (ev.transcript as string) ??
           ((ev.item as { transcript?: string } | undefined)?.transcript ?? ""),
       );
       pushLine("user", transcript);
+      // If finish_intake / End is waiting on this utterance, proceed now.
+      if (finishRequested && !awaitingAudioBeforeFinish && !finished) {
+        if (transcriptWaitTimer != null) {
+          window.clearTimeout(transcriptWaitTimer);
+          transcriptWaitTimer = undefined;
+        }
+        scheduleFinish(pendingFinishSummary);
+      }
+    }
+    if (type === "conversation.item.input_audio_transcription.failed") {
+      pendingUserTranscript = false;
     }
     if (
       type === "response.output_audio_transcript.done" ||
@@ -363,7 +423,14 @@ export async function startVoiceSession(
   await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
   return {
-    stop: (opts) => finish(undefined, opts?.discard === true),
+    stop: (opts) => {
+      if (opts?.discard === true) {
+        finish(undefined, true);
+        return;
+      }
+      // Wait for any in-flight user transcription so budget answers aren't dropped.
+      beginFinish(pendingFinishSummary);
+    },
     setMuted: (muted: boolean) => {
       for (const t of localStream.getAudioTracks()) t.enabled = !muted;
     },
