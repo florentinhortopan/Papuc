@@ -38,7 +38,7 @@ export function ProjectListItemCard({
           <p className="text-textMuted text-sm line-clamp-2 mb-3">
             {project.raw_prompt}
           </p>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 mb-3">
             <Badge>
               {project.dealCount === 1
                 ? "1 deal"
@@ -52,14 +52,14 @@ export function ProjectListItemCard({
             ) : null}
             <Badge>DSCR ≥ {c.minDSCR.toFixed(2)}</Badge>
           </div>
-          {project.last_scout_at ? (
-            <p className="text-textMuted text-xs mt-3">
-              Last scout {formatDate(project.last_scout_at)}
-            </p>
-          ) : null}
         </div>
       </Link>
-      <div className="px-4 pb-4">
+      <div className="px-4 pb-4 flex items-center justify-between gap-3">
+        <p className="text-textMuted text-xs truncate min-w-0">
+          {project.last_scout_at
+            ? `Last scout ${formatDate(project.last_scout_at)}`
+            : "Not scouted yet"}
+        </p>
         <NightlyScoutToggle
           projectId={project.id}
           enabled={nightlyEnabled}
