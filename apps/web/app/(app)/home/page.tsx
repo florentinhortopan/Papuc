@@ -1,21 +1,36 @@
 import { FeedHomeClient } from "@/components/feed-home-client";
-import { listFeedSections, type FeedSections } from "@/lib/feed";
+import {
+  listPersonalizedFeed,
+  type PersonalizedFeed,
+} from "@/lib/feed";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+const EMPTY: PersonalizedFeed = {
+  forYou: [],
+  newForYou: [],
+  basedOnSearches: [],
+  bestRated: [],
+  mostProfitable: [],
+  saved: [],
+  friends: [],
+  taste: null,
+};
+
 export default async function HomeFeedPage() {
   const supabase = await createClient();
-  let sections: FeedSections = {
-    bestRated: [],
-    mostProfitable: [],
-    latest: [],
-  };
+  let feed: PersonalizedFeed = EMPTY;
   try {
-    sections = await listFeedSections(supabase);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) {
+      feed = await listPersonalizedFeed(supabase, user.id);
+    }
   } catch {
     /* client can refresh; avoid hard-failing the shell */
   }
 
-  return <FeedHomeClient initialSections={sections} />;
+  return <FeedHomeClient initialFeed={feed} />;
 }

@@ -1,13 +1,21 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Loader2, Search } from "lucide-react";
+import { Loader2, Search } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { FeedDealCard } from "@/components/feed-deal-card";
 import { Badge } from "@/components/ui/badge";
+import { actOnDeal, clearDealAction } from "@/lib/deals";
+import {
+  dealsForChip,
+  FEED_CHIPS,
+  type FeedChip,
+  type FeedDeal,
+  type PersonalizedFeed,
+} from "@/lib/feed";
 import { formatMarket } from "@/lib/format";
-import type { FeedDeal, FeedSections } from "@/lib/feed";
+import { createClient } from "@/lib/supabase/client";
 import type { ProjectConstraints } from "@papuc/core";
 
 type SearchResult = {
@@ -17,22 +25,24 @@ type SearchResult = {
 };
 
 export function FeedHomeClient({
-  initialSections,
+  initialFeed,
 }: {
-  initialSections: FeedSections;
+  initialFeed: PersonalizedFeed;
 }) {
-  const [sections, setSections] = useState(initialSections);
+  const [feed, setFeed] = useState(initialFeed);
+  const [chip, setChip] = useState<FeedChip>("for_you");
   const [prompt, setPrompt] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/feed", { cache: "no-store" });
       if (!res.ok) return;
-      const json = (await res.json()) as FeedSections;
-      setSections(json);
+      const json = (await res.json()) as PersonalizedFeed;
+      setFeed(json);
     } catch {
       /* keep initial */
     }
@@ -41,6 +51,66 @@ export function FeedHomeClient({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  function removeDealLocally(dealId: string) {
+    const drop = (list: FeedDeal[]) => list.filter((d) => d.id !== dealId);
+    setFeed((prev) => ({
+      ...prev,
+      forYou: drop(prev.forYou),
+      newForYou: drop(prev.newForYou),
+      basedOnSearches: drop(prev.basedOnSearches),
+      bestRated: drop(prev.bestRated),
+      mostProfitable: drop(prev.mostProfitable),
+      saved: drop(prev.saved),
+      friends: drop(prev.friends),
+    }));
+    setSearchResult((prev) =>
+      prev
+        ? { ...prev, deals: prev.deals.filter((d) => d.id !== dealId) }
+        : prev,
+    );
+  }
+
+  async function onSave(deal: FeedDeal) {
+    setBusyId(deal.id);
+    try {
+      const supabase = createClient();
+      await clearDealAction(supabase, {
+        dealId: deal.id,
+        action: "dismissed",
+      }).catch(() => undefined);
+      await actOnDeal(supabase, {
+        dealId: deal.id,
+        projectId: deal.project.id,
+        action: "saved",
+      });
+      setFeed((prev) => {
+        if (prev.saved.some((d) => d.id === deal.id)) return prev;
+        return { ...prev, saved: [deal, ...prev.saved] };
+      });
+    } catch (err) {
+      console.warn("[feed] save failed", err);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onSkip(deal: FeedDeal) {
+    setBusyId(deal.id);
+    try {
+      const supabase = createClient();
+      await actOnDeal(supabase, {
+        dealId: deal.id,
+        projectId: deal.project.id,
+        action: "dismissed",
+      });
+      removeDealLocally(deal.id);
+    } catch (err) {
+      console.warn("[feed] skip failed", err);
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   async function onSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -74,18 +144,24 @@ export function FeedHomeClient({
     setPrompt("");
   }
 
+  const chipDeals = dealsForChip(feed, chip);
   const poolEmpty =
-    sections.bestRated.length === 0 &&
-    sections.mostProfitable.length === 0 &&
-    sections.latest.length === 0;
+    feed.forYou.length === 0 &&
+    feed.bestRated.length === 0 &&
+    feed.saved.length === 0;
+
+  const tasteLine =
+    feed.taste && feed.taste.marketLabels.length
+      ? `Learning from ${feed.taste.projectCount} project${feed.taste.projectCount === 1 ? "" : "s"} · ${feed.taste.marketLabels.slice(0, 3).join(" · ")}`
+      : feed.taste
+        ? `Learning from ${feed.taste.projectCount} project${feed.taste.projectCount === 1 ? "" : "s"}`
+        : "Scout a project to personalize For you";
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Discover deals</h1>
-        <p className="text-textMuted text-sm mt-1">
-          Best-rated and most profitable listings from public Papuc projects.
-        </p>
+        <p className="text-textMuted text-sm mt-1">{tasteLine}</p>
       </div>
 
       <form onSubmit={onSearch} className="relative">
@@ -117,6 +193,34 @@ export function FeedHomeClient({
         ) : null}
       </form>
 
+      {!searchResult ? (
+        <div
+          className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-thin"
+          role="tablist"
+          aria-label="Feed filters"
+        >
+          {FEED_CHIPS.map((c) => {
+            const active = chip === c.id;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setChip(c.id)}
+                className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
+                  active
+                    ? "bg-primary text-primaryFg border-primary"
+                    : "bg-surface border-border text-textMuted hover:text-text hover:border-border/80"
+                }`}
+              >
+                {c.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       {searchResult ? (
         <div className="space-y-4">
           <div className="flex items-start justify-between gap-3">
@@ -137,49 +241,107 @@ export function FeedHomeClient({
           </div>
           {searchResult.deals.length === 0 ? (
             <p className="text-textMuted text-sm">
-              No public deals matched. Try a broader prompt, or make a project
-              public so its deals appear here.
+              No deals matched. Try a broader prompt, or scout a project in
+              that market.
             </p>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {searchResult.deals.map((deal) => (
-                <FeedDealCard
-                  key={deal.id}
-                  deal={deal}
-                  className="w-full min-w-0"
-                />
-              ))}
-            </div>
+            <DealGrid
+              deals={searchResult.deals}
+              busyId={busyId}
+              onSave={onSave}
+              onSkip={onSkip}
+            />
           )}
         </div>
-      ) : (
+      ) : chip === "for_you" ? (
         <>
           {poolEmpty ? (
-            <div className="bg-surface border border-border rounded-2xl p-8 text-center">
-              <p className="text-text font-semibold mb-1">No public deals yet</p>
-              <p className="text-textMuted text-sm mb-4">
-                Make a project public from its settings so scouted listings show
-                up on the home feed for everyone.
-              </p>
-              <Link
-                href="/projects"
-                className="text-primary text-sm hover:underline"
-              >
-                Go to projects →
-              </Link>
+            <EmptyFeed />
+          ) : (
+            <div className="space-y-8">
+              <FeedSection
+                title="New for you"
+                deals={feed.newForYou}
+                busyId={busyId}
+                onSave={onSave}
+                onSkip={onSkip}
+                empty="Nothing new in the last 48 hours — run Scout or Nightly to refill."
+              />
+              <FeedSection
+                title="Based on your searches"
+                deals={feed.basedOnSearches}
+                busyId={busyId}
+                onSave={onSave}
+                onSkip={onSkip}
+                empty="Scout a project so we can learn your markets and filters."
+              />
+              <FeedSection
+                title="Best rated"
+                deals={feed.bestRated}
+                busyId={busyId}
+                onSave={onSave}
+                onSkip={onSkip}
+              />
+              <FeedSection
+                title="Most profitable"
+                deals={feed.mostProfitable}
+                busyId={busyId}
+                onSave={onSave}
+                onSkip={onSkip}
+              />
+              <FeedSection
+                title="Friends' deals"
+                deals={feed.friends}
+                busyId={busyId}
+                onSave={onSave}
+                onSkip={onSkip}
+                empty="Coming soon — follow investors and see deals they make public."
+              />
             </div>
-          ) : null}
-
-          <FeedSection title="Best rated" deals={sections.bestRated} />
-          <FeedSection title="Most profitable" deals={sections.mostProfitable} />
-          <FeedSection title="Latest deals" deals={sections.latest} />
-          <FeedSection
-            title="Friends' deals"
-            deals={[]}
-            stub="Coming soon — follow investors and see deals they make public."
-          />
+          )}
         </>
+      ) : chip === "friends" ? (
+        <p className="text-textMuted text-sm py-6">
+          Coming soon — follow investors and see deals they make public.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          <h2 className="text-xl font-semibold">
+            {FEED_CHIPS.find((c) => c.id === chip)?.label}
+          </h2>
+          {chipDeals.length === 0 ? (
+            <p className="text-textMuted text-sm">
+              {chip === "saved"
+                ? "No saved deals yet — tap the heart on a card."
+                : chip === "new"
+                  ? "No fresh listings in the last 48 hours."
+                  : "Nothing here yet. Scout a project to fill the feed."}
+            </p>
+          ) : (
+            <DealGrid
+              deals={chipDeals}
+              busyId={busyId}
+              onSave={onSave}
+              onSkip={onSkip}
+            />
+          )}
+        </div>
       )}
+    </div>
+  );
+}
+
+function EmptyFeed() {
+  return (
+    <div className="bg-surface border border-border rounded-2xl p-8 text-center">
+      <p className="text-text font-semibold mb-1">Your feed is empty</p>
+      <p className="text-textMuted text-sm mb-4">
+        Scout a project to pull deals that match your goals — they show up here
+        automatically. Public projects from other investors expand the shelf.
+      </p>
+      <Link href="/projects" className="text-primary text-sm hover:underline">
+        Go to projects →
+      </Link>
     </div>
   );
 }
@@ -189,9 +351,11 @@ function ConstraintChips({ constraints }: { constraints: ProjectConstraints }) {
   const market = constraints.markets[0];
   if (market) chips.push(formatMarket(market));
   chips.push(constraints.strategy);
-  if (constraints.priceMax) chips.push(`≤ $${Math.round(constraints.priceMax).toLocaleString()}`);
+  if (constraints.priceMax)
+    chips.push(`≤ $${Math.round(constraints.priceMax).toLocaleString()}`);
   if (constraints.bedsMin != null) chips.push(`${constraints.bedsMin}+ bd`);
-  if (constraints.minDSCR) chips.push(`DSCR ≥ ${constraints.minDSCR.toFixed(2)}`);
+  if (constraints.minDSCR)
+    chips.push(`DSCR ≥ ${constraints.minDSCR.toFixed(2)}`);
   if (constraints.targetMonthlyCashflow) {
     chips.push(`~$${Math.round(constraints.targetMonthlyCashflow)}/mo`);
   }
@@ -205,62 +369,71 @@ function ConstraintChips({ constraints }: { constraints: ProjectConstraints }) {
   );
 }
 
+function DealGrid({
+  deals,
+  busyId,
+  onSave,
+  onSkip,
+}: {
+  deals: FeedDeal[];
+  busyId: string | null;
+  onSave: (d: FeedDeal) => void;
+  onSkip: (d: FeedDeal) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+      {deals.map((deal) => (
+        <FeedDealCard
+          key={deal.id}
+          deal={deal}
+          className="w-full min-w-0"
+          busy={busyId === deal.id}
+          onSave={() => onSave(deal)}
+          onSkip={() => onSkip(deal)}
+        />
+      ))}
+    </div>
+  );
+}
+
 function FeedSection({
   title,
   deals,
-  stub,
+  empty,
+  busyId,
+  onSave,
+  onSkip,
 }: {
   title: string;
   deals: FeedDeal[];
-  stub?: string;
+  empty?: string;
+  busyId: string | null;
+  onSave: (d: FeedDeal) => void;
+  onSkip: (d: FeedDeal) => void;
 }) {
-  const scrollerRef = useRef<HTMLDivElement>(null);
-
-  function scrollBy(dir: -1 | 1) {
-    const el = scrollerRef.current;
-    if (!el) return;
-    el.scrollBy({ left: dir * 280, behavior: "smooth" });
+  if (deals.length === 0) {
+    return (
+      <section>
+        <h2 className="text-xl font-semibold mb-2">{title}</h2>
+        <p className="text-textMuted text-sm">{empty ?? "Nothing here yet."}</p>
+      </section>
+    );
   }
 
   return (
     <section>
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <h2 className="text-xl font-semibold">{title}</h2>
-        {deals.length > 0 ? (
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => scrollBy(-1)}
-              aria-label={`Scroll ${title} left`}
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface text-text hover:bg-surfaceAlt"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => scrollBy(1)}
-              aria-label={`Scroll ${title} right`}
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface text-text hover:bg-surfaceAlt"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        ) : null}
+      <h2 className="text-xl font-semibold mb-3">{title}</h2>
+      <div className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory scrollbar-thin">
+        {deals.map((deal) => (
+          <FeedDealCard
+            key={`${title}-${deal.id}`}
+            deal={deal}
+            busy={busyId === deal.id}
+            onSave={() => onSave(deal)}
+            onSkip={() => onSkip(deal)}
+          />
+        ))}
       </div>
-      {deals.length === 0 ? (
-        <p className="text-textMuted text-sm">
-          {stub ?? "Nothing here yet."}
-        </p>
-      ) : (
-        <div
-          ref={scrollerRef}
-          className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory scrollbar-thin"
-        >
-          {deals.map((deal) => (
-            <FeedDealCard key={`${title}-${deal.id}`} deal={deal} />
-          ))}
-        </div>
-      )}
     </section>
   );
 }

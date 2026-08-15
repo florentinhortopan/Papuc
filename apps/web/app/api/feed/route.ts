@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { listFeedSections } from "@/lib/feed";
+import { listPersonalizedFeed } from "@/lib/feed";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -16,8 +16,8 @@ export async function GET() {
   }
 
   try {
-    const sections = await listFeedSections(supabase);
-    return NextResponse.json(sections);
+    const feed = await listPersonalizedFeed(supabase, user.id);
+    return NextResponse.json(feed);
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
