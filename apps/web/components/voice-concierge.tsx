@@ -37,6 +37,7 @@ export function VoiceConcierge({
 }) {
   const router = useRouter();
   const sessionRef = useRef<VoiceSessionHandle | null>(null);
+  const completingRef = useRef(false);
   const [phase, setPhase] = useState<Phase>("call");
   const [status, setStatus] = useState<VoiceSessionStatus>("connecting");
   const [caption, setCaption] = useState<{
@@ -51,12 +52,15 @@ export function VoiceConcierge({
 
   useEffect(() => {
     if (!open) {
-      sessionRef.current?.stop({ discard: true });
-      sessionRef.current = null;
+      if (!completingRef.current) {
+        sessionRef.current?.stop({ discard: true });
+        sessionRef.current = null;
+      }
       return;
     }
 
     let cancelled = false;
+    completingRef.current = false;
     setPhase("call");
     setStatus("connecting");
     setCaption(null);
@@ -102,15 +106,22 @@ export function VoiceConcierge({
 
     return () => {
       cancelled = true;
-      sessionRef.current?.stop({ discard: true });
-      sessionRef.current = null;
+      // Don't discard while navigating to the project form after a real finish.
+      if (!completingRef.current) {
+        sessionRef.current?.stop({ discard: true });
+        sessionRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   async function completeWithTranscript(text: string) {
+    if (completingRef.current) return;
+    completingRef.current = true;
+
     const trimmed = text.trim();
     if (!trimmed) {
+      completingRef.current = false;
       setError("No speech captured. Try again or type your goals.");
       setPhase("error");
       return;

@@ -670,15 +670,16 @@ STYLE
 - Priority gaps (skip what they already covered): place/market → capital/down or price band → use case (live / long-term rent / Airbnb / land / live-then-rent) → property type or beds when it matters.
 - Never invent dollar amounts, cities, or DSCR targets. If unclear, ask or leave it.
 - Keep answers short (1–3 sentences). No bullet lists out loud.
-- Cap the conversation: after ~3 follow-up questions OR when you have place + intent + some capital signal, call finish_intake.
-- If they give a rich first rant covering place + money + use, call finish_intake immediately after a brief confirmation — do not interrogate.
+- Do NOT call finish_intake in the same turn as a question. Ask, wait for their answer, then continue or finish.
+- Call finish_intake only after you have at least two of: place, capital/budget, use — or after a brief confirmation when their first rant already covered all three.
+- Cap at ~3 follow-up questions once those signals exist; then say a one-line wrap-up and call finish_intake.
 
 OPENING
 Greet in one short line and invite them to rant freely about what they're looking for. Then wait.
 
 TOOLS
-- note_progress: when you confidently hear place, budget/capital, or use-case — for UI chips only.
-- finish_intake: when enough to draft a project, or the user wants to stop, or you've asked enough. Include a one-sentence summary of what you heard.`;
+- note_progress: when you confidently hear place, budget/capital, or use-case — for UI chips only. Safe to call mid-conversation.
+- finish_intake: ONLY when intake is done (see rules above) or the user clearly wants to stop. Never call it right after asking a follow-up. Include a one-sentence summary.`;
 
 /** OpenAI Realtime function tools for the Concierge session. */
 export const VOICE_CONCIERGE_TOOLS = [
@@ -707,7 +708,7 @@ export const VOICE_CONCIERGE_TOOLS = [
     type: "function" as const,
     name: "finish_intake",
     description:
-      "End the call when enough was gathered or the turn budget is done.",
+      "End the call only after place + at least one of budget/use are known (or all three from a rich first rant). Never call this in the same turn as asking a question.",
     parameters: {
       type: "object",
       required: ["summary"],

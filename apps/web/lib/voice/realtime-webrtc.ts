@@ -28,6 +28,8 @@ export type VoiceSessionHandle = {
 
 const MAX_MS = 150_000;
 const REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
+/** Let the farewell audio finish before tearing down WebRTC. */
+const FINISH_AUDIO_GRACE_MS = 2_500;
 
 type TranscriptLine = { role: "user" | "assistant"; text: string };
 
@@ -70,8 +72,15 @@ export async function startVoiceSession(
   }
 
   const lines: TranscriptLine[] = [];
+  const notedTopics = new Set<VoiceProgressTopic>();
+  const processedCallIds = new Set<string>();
   let finished = false;
   let dc: RTCDataChannel | null = null;
+  let responseInFlight = false;
+  let pendingResponseCreate = false;
+  let finishTimer: number | undefined;
+  let awaitingAudioBeforeFinish = false;
+  let pendingFinishSummary: string | undefined;
 
   const pushLine = (role: "user" | "assistant", text: string) => {
     const t = text.trim();
@@ -85,7 +94,10 @@ export async function startVoiceSession(
     onEvent({ type: "caption", role, text: t });
   };
 
+  const userTurnCount = () => lines.filter((l) => l.role === "user").length;
+
   const cleanup = () => {
+    if (finishTimer != null) window.clearTimeout(finishTimer);
     try {
       dc?.close();
     } catch {
@@ -100,7 +112,9 @@ export async function startVoiceSession(
   const finish = (summary?: string, discard = false) => {
     if (finished) return;
     finished = true;
+    awaitingAudioBeforeFinish = false;
     window.clearTimeout(timeoutId);
+    if (finishTimer != null) window.clearTimeout(finishTimer);
     if (!discard) {
       onEvent({ type: "status", status: "finishing" });
       onEvent({ type: "finished", summary });
@@ -108,12 +122,109 @@ export async function startVoiceSession(
     cleanup();
   };
 
+  /** End after current TTS drains so we don't cut audio mid-sentence. */
+  const scheduleFinish = (summary?: string) => {
+    if (finished || awaitingAudioBeforeFinish) return;
+    awaitingAudioBeforeFinish = true;
+    pendingFinishSummary = summary;
+    onEvent({ type: "status", status: "finishing" });
+    finishTimer = window.setTimeout(() => {
+      finish(pendingFinishSummary);
+    }, FINISH_AUDIO_GRACE_MS);
+  };
+
   const timeoutId = window.setTimeout(() => {
-    finish("Time's up — drafting your project from what we heard.");
+    scheduleFinish("Time's up — drafting your project from what we heard.");
   }, MAX_MS);
 
+  const flushPendingResponseCreate = () => {
+    if (
+      !pendingResponseCreate ||
+      responseInFlight ||
+      finished ||
+      awaitingAudioBeforeFinish
+    ) {
+      return;
+    }
+    if (!dc || dc.readyState !== "open") return;
+    pendingResponseCreate = false;
+    responseInFlight = true;
+    dc.send(JSON.stringify({ type: "response.create" }));
+  };
+
+  const sendToolOutput = (
+    callId: string,
+    output: unknown,
+    opts?: { createResponse?: boolean },
+  ) => {
+    if (!dc || dc.readyState !== "open" || !callId || finished) return;
+    dc.send(
+      JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: callId,
+          output: JSON.stringify(output),
+        },
+      }),
+    );
+    if (opts?.createResponse === false) return;
+    if (responseInFlight) {
+      // Never start a second model turn while one is active — that surfaces as
+      // "another response/process in progress" and kills the call UX.
+      pendingResponseCreate = true;
+      return;
+    }
+    responseInFlight = true;
+    dc.send(JSON.stringify({ type: "response.create" }));
+  };
+
+  const handleFunctionCall = (
+    name: string,
+    args: Record<string, unknown>,
+    callId: string,
+  ) => {
+    if (!callId || processedCallIds.has(callId)) return;
+    processedCallIds.add(callId);
+
+    if (name === "note_progress") {
+      const topic = args.topic as VoiceProgressTopic;
+      if (topic === "place" || topic === "budget" || topic === "use") {
+        notedTopics.add(topic);
+        onEvent({
+          type: "progress",
+          topic,
+          label: typeof args.label === "string" ? args.label : undefined,
+        });
+      }
+      sendToolOutput(callId, { ok: true });
+      return;
+    }
+
+    if (name === "finish_intake") {
+      const summary =
+        typeof args.summary === "string" ? args.summary : undefined;
+      // Model often finishes after the 2nd answer while chips are still thin —
+      // reject and keep the WebRTC call alive instead of navigating away.
+      const richFirstRant =
+        userTurnCount() <= 1 && notedTopics.size >= 3;
+      const enoughTopics = notedTopics.size >= 2;
+      if (!enoughTopics && !richFirstRant) {
+        sendToolOutput(callId, {
+          ok: false,
+          reason:
+            "Too early. Ask one more missing question (place, budget, or use), then call finish_intake. Do not end the call yet.",
+        });
+        return;
+      }
+      // Never start another model turn while hanging up — that races teardown.
+      sendToolOutput(callId, { ok: true }, { createResponse: false });
+      scheduleFinish(summary);
+    }
+  };
+
   const handleServerEvent = (raw: unknown) => {
-    if (!raw || typeof raw !== "object") return;
+    if (!raw || typeof raw !== "object" || finished) return;
     const ev = raw as Record<string, unknown>;
     const type = String(ev.type ?? "");
 
@@ -121,77 +232,33 @@ export async function startVoiceSession(
       onEvent({ type: "status", status: "listening" });
     }
     if (type === "input_audio_buffer.speech_started") {
-      onEvent({ type: "status", status: "listening" });
+      if (!awaitingAudioBeforeFinish) {
+        onEvent({ type: "status", status: "listening" });
+      }
     }
     if (
       type === "response.created" ||
       type === "output_audio_buffer.started" ||
       type === "response.output_audio.delta"
     ) {
-      onEvent({ type: "status", status: "speaking" });
+      responseInFlight = true;
+      if (!awaitingAudioBeforeFinish) {
+        onEvent({ type: "status", status: "speaking" });
+      }
     }
-    if (
-      type === "response.done" ||
-      type === "output_audio_buffer.stopped"
-    ) {
+    if (type === "output_audio_buffer.stopped") {
+      if (awaitingAudioBeforeFinish) {
+        finish(pendingFinishSummary);
+        return;
+      }
       onEvent({ type: "status", status: "listening" });
     }
-
-    // Transcriptions (GA event names + beta fallbacks)
-    if (
-      type === "conversation.item.input_audio_transcription.completed"
-    ) {
-      const transcript = String(
-        (ev.transcript as string) ??
-          ((ev.item as { transcript?: string } | undefined)?.transcript ?? ""),
-      );
-      pushLine("user", transcript);
-    }
-    if (
-      type === "response.output_audio_transcript.done" ||
-      type === "response.audio_transcript.done"
-    ) {
-      pushLine("assistant", String(ev.transcript ?? ""));
-    }
-    if (type === "response.output_text.done" || type === "response.text.done") {
-      pushLine("assistant", String(ev.text ?? ev.transcript ?? ""));
-    }
-
-    // Function calls
-    if (type === "response.function_call_arguments.done") {
-      const name = String(ev.name ?? "");
-      let args: Record<string, unknown> = {};
-      try {
-        args = JSON.parse(String(ev.arguments ?? "{}")) as Record<
-          string,
-          unknown
-        >;
-      } catch {
-        args = {};
-      }
-      const callId = String(ev.call_id ?? ev.callId ?? "");
-
-      if (name === "note_progress") {
-        const topic = args.topic as VoiceProgressTopic;
-        if (topic === "place" || topic === "budget" || topic === "use") {
-          onEvent({
-            type: "progress",
-            topic,
-            label:
-              typeof args.label === "string" ? args.label : undefined,
-          });
-        }
-        sendToolOutput(dc, callId, { ok: true });
-      } else if (name === "finish_intake") {
-        sendToolOutput(dc, callId, { ok: true });
-        finish(
-          typeof args.summary === "string" ? args.summary : undefined,
-        );
-      }
-    }
-
-    // Nested function calls on response.done
     if (type === "response.done") {
+      responseInFlight = false;
+      if (!awaitingAudioBeforeFinish) {
+        onEvent({ type: "status", status: "listening" });
+      }
+      // Process function calls once here (not also on arguments.done).
       const response = ev.response as
         | { output?: Array<Record<string, unknown>> }
         | undefined;
@@ -208,30 +275,44 @@ export async function startVoiceSession(
           args = {};
         }
         const callId = String(item.call_id ?? "");
-        if (name === "note_progress") {
-          const topic = args.topic as VoiceProgressTopic;
-          if (topic === "place" || topic === "budget" || topic === "use") {
-            onEvent({
-              type: "progress",
-              topic,
-              label:
-                typeof args.label === "string" ? args.label : undefined,
-            });
-          }
-          sendToolOutput(dc, callId, { ok: true });
-        } else if (name === "finish_intake") {
-          sendToolOutput(dc, callId, { ok: true });
-          finish(
-            typeof args.summary === "string" ? args.summary : undefined,
-          );
-        }
+        handleFunctionCall(name, args, callId);
       }
+      flushPendingResponseCreate();
+    }
+
+    // Transcriptions (GA event names + beta fallbacks)
+    if (type === "conversation.item.input_audio_transcription.completed") {
+      const transcript = String(
+        (ev.transcript as string) ??
+          ((ev.item as { transcript?: string } | undefined)?.transcript ?? ""),
+      );
+      pushLine("user", transcript);
+    }
+    if (
+      type === "response.output_audio_transcript.done" ||
+      type === "response.audio_transcript.done"
+    ) {
+      pushLine("assistant", String(ev.transcript ?? ""));
+    }
+    if (type === "response.output_text.done" || type === "response.text.done") {
+      pushLine("assistant", String(ev.text ?? ev.transcript ?? ""));
     }
 
     if (type === "error") {
       const msg =
         (ev.error as { message?: string } | undefined)?.message ??
         "Realtime error";
+      // Concurrent-response errors are recoverable if we queued correctly;
+      // surface others to the UI.
+      const lower = msg.toLowerCase();
+      if (
+        lower.includes("active response") ||
+        lower.includes("already") ||
+        lower.includes("in progress")
+      ) {
+        responseInFlight = true;
+        return;
+      }
       onEvent({ type: "error", message: msg });
     }
   };
@@ -246,6 +327,7 @@ export async function startVoiceSession(
   });
   dc.addEventListener("open", () => {
     // Ask the model to greet and wait for the user.
+    responseInFlight = true;
     dc?.send(
       JSON.stringify({
         type: "response.create",
@@ -290,23 +372,4 @@ export async function startVoiceSession(
         .map((l) => `${l.role === "user" ? "User" : "Papuc"}: ${l.text}`)
         .join("\n"),
   };
-}
-
-function sendToolOutput(
-  dc: RTCDataChannel | null,
-  callId: string,
-  output: unknown,
-) {
-  if (!dc || dc.readyState !== "open" || !callId) return;
-  dc.send(
-    JSON.stringify({
-      type: "conversation.item.create",
-      item: {
-        type: "function_call_output",
-        call_id: callId,
-        output: JSON.stringify(output),
-      },
-    }),
-  );
-  dc.send(JSON.stringify({ type: "response.create" }));
 }
