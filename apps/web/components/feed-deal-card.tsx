@@ -1,6 +1,6 @@
 "use client";
 
-import { Heart, X } from "lucide-react";
+import { Heart, RotateCcw, X } from "lucide-react";
 import Link from "next/link";
 
 import { dealStreetAddress } from "@/lib/deal-address";
@@ -11,14 +11,19 @@ export function FeedDealCard({
   deal,
   className,
   busy = false,
+  saved = false,
   onSave,
   onSkip,
+  skipLabel,
 }: {
   deal: FeedDeal;
   className?: string;
   busy?: boolean;
+  saved?: boolean;
   onSave?: () => void;
   onSkip?: () => void;
+  /** When set (e.g. Restore on Skipped chip), replaces the X icon. */
+  skipLabel?: string;
 }) {
   const photo =
     deal.primary_image_url ??
@@ -46,14 +51,14 @@ export function FeedDealCard({
               </div>
             )}
             {deal.isNew ? (
-              <div className="absolute left-2 top-2 bg-primary rounded-full px-2 py-0.5">
+              <div className="absolute left-2 top-2 bg-primary rounded-full px-2 py-0.5 z-[1]">
                 <span className="text-primaryFg text-[10px] font-bold uppercase tracking-wide">
                   New
                 </span>
               </div>
             ) : null}
             {typeof score === "number" ? (
-              <div className="absolute right-2 top-2 bg-black/65 rounded-full px-2 py-0.5">
+              <div className="absolute right-2 top-2 bg-black/65 rounded-full px-2 py-0.5 z-[1]">
                 <span className="text-white text-xs font-semibold">{score}</span>
               </div>
             ) : null}
@@ -61,7 +66,7 @@ export function FeedDealCard({
         </Link>
 
         {onSave || onSkip ? (
-          <div className="absolute bottom-2 right-2 flex gap-1.5">
+          <div className="absolute bottom-2 right-2 z-10 flex gap-1.5">
             {onSkip ? (
               <button
                 type="button"
@@ -71,11 +76,15 @@ export function FeedDealCard({
                   e.stopPropagation();
                   onSkip();
                 }}
-                aria-label="Skip deal"
-                title="Skip — hide from For you"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black/85 disabled:opacity-50"
+                aria-label={skipLabel ?? "Skip deal"}
+                title={skipLabel ?? "Skip — hide from For you"}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black/85 disabled:opacity-50 shadow"
               >
-                <X className="h-3.5 w-3.5" />
+                {skipLabel ? (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                ) : (
+                  <X className="h-3.5 w-3.5" />
+                )}
               </button>
             ) : null}
             {onSave ? (
@@ -87,11 +96,18 @@ export function FeedDealCard({
                   e.stopPropagation();
                   onSave();
                 }}
-                aria-label="Save deal"
-                title="Save to portfolio"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-black/70 text-white hover:bg-primary disabled:opacity-50"
+                aria-label={saved ? "Unsave deal" : "Save deal"}
+                aria-pressed={saved}
+                title={saved ? "Remove from Saved" : "Save to Portfolio"}
+                className={`flex h-8 w-8 items-center justify-center rounded-full shadow disabled:opacity-50 ${
+                  saved
+                    ? "bg-primary text-primaryFg"
+                    : "bg-black/70 text-white hover:bg-primary"
+                }`}
               >
-                <Heart className="h-3.5 w-3.5" />
+                <Heart
+                  className={`h-3.5 w-3.5 ${saved ? "fill-current" : ""}`}
+                />
               </button>
             ) : null}
           </div>

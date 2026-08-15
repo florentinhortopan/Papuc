@@ -16,6 +16,7 @@ export type FeedChip =
   | "new"
   | "searches"
   | "saved"
+  | "skipped"
   | "friends"
   | "best"
   | "profitable";
@@ -25,6 +26,7 @@ export const FEED_CHIPS: Array<{ id: FeedChip; label: string }> = [
   { id: "new", label: "New" },
   { id: "searches", label: "Based on searches" },
   { id: "saved", label: "Saved" },
+  { id: "skipped", label: "Skipped" },
   { id: "friends", label: "Friends" },
   { id: "best", label: "Best rated" },
   { id: "profitable", label: "Most profitable" },
@@ -60,6 +62,7 @@ export type PersonalizedFeed = {
   bestRated: FeedDeal[];
   mostProfitable: FeedDeal[];
   saved: FeedDeal[];
+  skipped: FeedDeal[];
   friends: FeedDeal[];
   taste: FeedTasteSummary | null;
 };
@@ -472,9 +475,10 @@ async function listFeedPool(
   return merged.filter((d) => !dismissed.has(listingKey(d)));
 }
 
-async function listSavedFeedDeals(
+async function listActionFeedDeals(
   supabase: SupabaseClient,
   userId: string,
+  action: "saved" | "dismissed",
 ): Promise<FeedDeal[]> {
   const { data, error } = await supabase
     .from("deal_actions")
@@ -482,7 +486,7 @@ async function listSavedFeedDeals(
       "deal_id, deals!inner(*, deal_scores(*), projects!inner(id, name, owner_id))",
     )
     .eq("user_id", userId)
-    .eq("action", "saved")
+    .eq("action", action)
     .order("created_at", { ascending: false })
     .limit(48);
   if (error) throw error;
@@ -498,6 +502,20 @@ async function listSavedFeedDeals(
   return dedupeByListing(out, 48);
 }
 
+async function listSavedFeedDeals(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<FeedDeal[]> {
+  return listActionFeedDeals(supabase, userId, "saved");
+}
+
+async function listSkippedFeedDeals(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<FeedDeal[]> {
+  return listActionFeedDeals(supabase, userId, "dismissed");
+}
+
 /**
  * Personalized Discover payload: own + public inventory, dismissed hidden,
  * ranked with project-constraint taste for For you / New / Searches.
@@ -506,10 +524,11 @@ export async function listPersonalizedFeed(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<PersonalizedFeed> {
-  const [pool, taste, saved] = await Promise.all([
+  const [pool, taste, saved, skipped] = await Promise.all([
     listFeedPool(supabase, userId),
     loadTasteProfile(supabase, userId),
     listSavedFeedDeals(supabase, userId),
+    listSkippedFeedDeals(supabase, userId),
   ]);
 
   const ranked = pool
@@ -547,6 +566,7 @@ export async function listPersonalizedFeed(
     bestRated: byScore.slice(0, SECTION_LIMIT),
     mostProfitable: byCashflow.slice(0, SECTION_LIMIT),
     saved,
+    skipped,
     friends: [],
     taste: tasteSummary,
   };
@@ -613,6 +633,8 @@ export function dealsForChip(
       return feed.basedOnSearches;
     case "saved":
       return feed.saved;
+    case "skipped":
+      return feed.skipped;
     case "friends":
       return feed.friends;
     case "best":

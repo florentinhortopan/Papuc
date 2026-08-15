@@ -2,11 +2,10 @@
 
 import { Loader2, Search } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { FeedDealCard } from "@/components/feed-deal-card";
 import { Badge } from "@/components/ui/badge";
-import { actOnDeal, clearDealAction } from "@/lib/deals";
 import {
   dealsForChip,
   FEED_CHIPS,
@@ -15,7 +14,6 @@ import {
   type PersonalizedFeed,
 } from "@/lib/feed";
 import { formatMarket } from "@/lib/format";
-import { createClient } from "@/lib/supabase/client";
 import type { ProjectConstraints } from "@papuc/core";
 
 type SearchResult = {
@@ -23,6 +21,35 @@ type SearchResult = {
   constraints: ProjectConstraints;
   prompt: string;
 };
+
+async function postDealAction(
+  deal: FeedDeal,
+  action: "saved" | "dismissed",
+): Promise<void> {
+  const res = await fetch(`/api/deals/${deal.id}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, projectId: deal.project.id }),
+  });
+  const json = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) {
+    throw new Error(json.error || `action failed (${res.status})`);
+  }
+}
+
+async function deleteDealAction(
+  dealId: string,
+  action: "saved" | "dismissed",
+): Promise<void> {
+  const res = await fetch(
+    `/api/deals/${dealId}/action?action=${encodeURIComponent(action)}`,
+    { method: "DELETE" },
+  );
+  const json = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) {
+    throw new Error(json.error || `undo failed (${res.status})`);
+  }
+}
 
 export function FeedHomeClient({
   initialFeed,
@@ -36,6 +63,13 @@ export function FeedHomeClient({
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNote, setActionNote] = useState<string | null>(null);
+
+  const savedIds = useMemo(
+    () => new Set(feed.saved.map((d) => d.id)),
+    [feed.saved],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -73,23 +107,24 @@ export function FeedHomeClient({
 
   async function onSave(deal: FeedDeal) {
     setBusyId(deal.id);
+    setActionError(null);
+    setActionNote(null);
     try {
-      const supabase = createClient();
-      await clearDealAction(supabase, {
-        dealId: deal.id,
-        action: "dismissed",
-      }).catch(() => undefined);
-      await actOnDeal(supabase, {
-        dealId: deal.id,
-        projectId: deal.project.id,
-        action: "saved",
-      });
+      await postDealAction(deal, "saved");
       setFeed((prev) => {
-        if (prev.saved.some((d) => d.id === deal.id)) return prev;
-        return { ...prev, saved: [deal, ...prev.saved] };
+        const withoutSkip = prev.skipped.filter((d) => d.id !== deal.id);
+        if (prev.saved.some((d) => d.id === deal.id)) {
+          return { ...prev, skipped: withoutSkip };
+        }
+        return {
+          ...prev,
+          skipped: withoutSkip,
+          saved: [deal, ...prev.saved],
+        };
       });
+      setActionNote("Saved — find it under Saved or in Portfolio.");
     } catch (err) {
-      console.warn("[feed] save failed", err);
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusyId(null);
     }
@@ -97,16 +132,58 @@ export function FeedHomeClient({
 
   async function onSkip(deal: FeedDeal) {
     setBusyId(deal.id);
+    setActionError(null);
+    setActionNote(null);
     try {
-      const supabase = createClient();
-      await actOnDeal(supabase, {
-        dealId: deal.id,
-        projectId: deal.project.id,
-        action: "dismissed",
-      });
+      await postDealAction(deal, "dismissed");
+      setFeed((prev) => ({
+        ...prev,
+        saved: prev.saved.filter((d) => d.id !== deal.id),
+        skipped: prev.skipped.some((d) => d.id === deal.id)
+          ? prev.skipped
+          : [deal, ...prev.skipped],
+      }));
       removeDealLocally(deal.id);
+      setActionNote("Skipped — restore anytime from the Skipped chip.");
     } catch (err) {
-      console.warn("[feed] skip failed", err);
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onUnskip(deal: FeedDeal) {
+    setBusyId(deal.id);
+    setActionError(null);
+    setActionNote(null);
+    try {
+      await deleteDealAction(deal.id, "dismissed");
+      setFeed((prev) => ({
+        ...prev,
+        skipped: prev.skipped.filter((d) => d.id !== deal.id),
+      }));
+      setActionNote("Restored — it can show in For you again.");
+      void refresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onUnsave(deal: FeedDeal) {
+    setBusyId(deal.id);
+    setActionError(null);
+    setActionNote(null);
+    try {
+      await deleteDealAction(deal.id, "saved");
+      setFeed((prev) => ({
+        ...prev,
+        saved: prev.saved.filter((d) => d.id !== deal.id),
+      }));
+      setActionNote("Removed from Saved.");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusyId(null);
     }
@@ -162,6 +239,13 @@ export function FeedHomeClient({
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Discover deals</h1>
         <p className="text-textMuted text-sm mt-1">{tasteLine}</p>
+        <p className="text-textMuted text-[11px] mt-1">
+          Heart = Saved (also in{" "}
+          <Link href="/portfolio" className="text-primary hover:underline">
+            Portfolio
+          </Link>
+          ). X = Skipped (hidden from For you).
+        </p>
       </div>
 
       <form onSubmit={onSearch} className="relative">
@@ -192,6 +276,12 @@ export function FeedHomeClient({
           <p className="text-danger text-xs mt-2">{searchError}</p>
         ) : null}
       </form>
+
+      {actionError ? (
+        <p className="text-danger text-xs">{actionError}</p>
+      ) : actionNote ? (
+        <p className="text-success text-xs">{actionNote}</p>
+      ) : null}
 
       {!searchResult ? (
         <div
@@ -248,8 +338,10 @@ export function FeedHomeClient({
             <DealGrid
               deals={searchResult.deals}
               busyId={busyId}
+              savedIds={savedIds}
               onSave={onSave}
               onSkip={onSkip}
+              onUnsave={onUnsave}
             />
           )}
         </div>
@@ -263,38 +355,48 @@ export function FeedHomeClient({
                 title="New for you"
                 deals={feed.newForYou}
                 busyId={busyId}
+                savedIds={savedIds}
                 onSave={onSave}
                 onSkip={onSkip}
+                onUnsave={onUnsave}
                 empty="Nothing new in the last 48 hours — run Scout or Nightly to refill."
               />
               <FeedSection
                 title="Based on your searches"
                 deals={feed.basedOnSearches}
                 busyId={busyId}
+                savedIds={savedIds}
                 onSave={onSave}
                 onSkip={onSkip}
+                onUnsave={onUnsave}
                 empty="Scout a project so we can learn your markets and filters."
               />
               <FeedSection
                 title="Best rated"
                 deals={feed.bestRated}
                 busyId={busyId}
+                savedIds={savedIds}
                 onSave={onSave}
                 onSkip={onSkip}
+                onUnsave={onUnsave}
               />
               <FeedSection
                 title="Most profitable"
                 deals={feed.mostProfitable}
                 busyId={busyId}
+                savedIds={savedIds}
                 onSave={onSave}
                 onSkip={onSkip}
+                onUnsave={onUnsave}
               />
               <FeedSection
                 title="Friends' deals"
                 deals={feed.friends}
                 busyId={busyId}
+                savedIds={savedIds}
                 onSave={onSave}
                 onSkip={onSkip}
+                onUnsave={onUnsave}
                 empty="Coming soon — follow investors and see deals they make public."
               />
             </div>
@@ -304,11 +406,41 @@ export function FeedHomeClient({
         <p className="text-textMuted text-sm py-6">
           Coming soon — follow investors and see deals they make public.
         </p>
+      ) : chip === "skipped" ? (
+        <div className="space-y-4">
+          <h2 className="text-xl font-semibold">Skipped</h2>
+          <p className="text-textMuted text-xs">
+            Deals you tapped X on. Restore to let them show in For you again.
+          </p>
+          {chipDeals.length === 0 ? (
+            <p className="text-textMuted text-sm">No skipped deals yet.</p>
+          ) : (
+            <DealGrid
+              deals={chipDeals}
+              busyId={busyId}
+              savedIds={savedIds}
+              mode="skipped"
+              onSave={onSave}
+              onSkip={onSkip}
+              onUnsave={onUnsave}
+              onUnskip={onUnskip}
+            />
+          )}
+        </div>
       ) : (
         <div className="space-y-4">
           <h2 className="text-xl font-semibold">
             {FEED_CHIPS.find((c) => c.id === chip)?.label}
           </h2>
+          {chip === "saved" ? (
+            <p className="text-textMuted text-xs">
+              Also listed under{" "}
+              <Link href="/portfolio" className="text-primary hover:underline">
+                Portfolio
+              </Link>{" "}
+              for side-by-side compare.
+            </p>
+          ) : null}
           {chipDeals.length === 0 ? (
             <p className="text-textMuted text-sm">
               {chip === "saved"
@@ -321,8 +453,11 @@ export function FeedHomeClient({
             <DealGrid
               deals={chipDeals}
               busyId={busyId}
+              savedIds={savedIds}
+              mode={chip === "saved" ? "saved" : "default"}
               onSave={onSave}
               onSkip={onSkip}
+              onUnsave={onUnsave}
             />
           )}
         </div>
@@ -372,13 +507,21 @@ function ConstraintChips({ constraints }: { constraints: ProjectConstraints }) {
 function DealGrid({
   deals,
   busyId,
+  savedIds,
+  mode = "default",
   onSave,
   onSkip,
+  onUnsave,
+  onUnskip,
 }: {
   deals: FeedDeal[];
   busyId: string | null;
+  savedIds: Set<string>;
+  mode?: "default" | "saved" | "skipped";
   onSave: (d: FeedDeal) => void;
   onSkip: (d: FeedDeal) => void;
+  onUnsave: (d: FeedDeal) => void;
+  onUnskip?: (d: FeedDeal) => void;
 }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -388,8 +531,20 @@ function DealGrid({
           deal={deal}
           className="w-full min-w-0"
           busy={busyId === deal.id}
-          onSave={() => onSave(deal)}
-          onSkip={() => onSkip(deal)}
+          saved={savedIds.has(deal.id)}
+          onSave={
+            mode === "skipped"
+              ? undefined
+              : () => (savedIds.has(deal.id) ? onUnsave(deal) : onSave(deal))
+          }
+          onSkip={
+            mode === "skipped"
+              ? onUnskip
+                ? () => onUnskip(deal)
+                : undefined
+              : () => onSkip(deal)
+          }
+          skipLabel={mode === "skipped" ? "Restore" : undefined}
         />
       ))}
     </div>
@@ -401,15 +556,19 @@ function FeedSection({
   deals,
   empty,
   busyId,
+  savedIds,
   onSave,
   onSkip,
+  onUnsave,
 }: {
   title: string;
   deals: FeedDeal[];
   empty?: string;
   busyId: string | null;
+  savedIds: Set<string>;
   onSave: (d: FeedDeal) => void;
   onSkip: (d: FeedDeal) => void;
+  onUnsave: (d: FeedDeal) => void;
 }) {
   if (deals.length === 0) {
     return (
@@ -429,7 +588,10 @@ function FeedSection({
             key={`${title}-${deal.id}`}
             deal={deal}
             busy={busyId === deal.id}
-            onSave={() => onSave(deal)}
+            saved={savedIds.has(deal.id)}
+            onSave={() =>
+              savedIds.has(deal.id) ? onUnsave(deal) : onSave(deal)
+            }
             onSkip={() => onSkip(deal)}
           />
         ))}

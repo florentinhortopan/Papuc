@@ -14,6 +14,7 @@ const EMPTY: PersonalizedFeed = {
   bestRated: [],
   mostProfitable: [],
   saved: [],
+  skipped: [],
   friends: [],
   taste: null,
 };
