@@ -1,3 +1,4 @@
+import type { ProjectConstraints } from "@papuc/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type {
@@ -5,11 +6,31 @@ import type {
   DealActionsRow,
   DealScoresRow,
   DealsRow,
+  ScenariosRow,
 } from "./database.types";
+import { asScenarioInputs } from "./scenarios";
+import { underwriteSeeds } from "./underwrite";
 
 export type DealWithScore = DealsRow & {
   score: DealScoresRow | null;
   action: DealActionKind | null;
+};
+
+/** Latest saved scenario snapshot for portfolio / compare surfaces. */
+export type DealScenarioSummary = {
+  id: string;
+  name: string;
+  monthlyCashflow: number | null;
+  downPayment: number | null;
+};
+
+export type DealWithPortfolioMetrics = DealWithScore & {
+  /** Prefer saved scenario cashflow/down; otherwise score + project defaults. */
+  monthlyCashflow: number | null;
+  downPayment: number | null;
+  scenario: DealScenarioSummary | null;
+  /** True when cashflow/down came from a saved scenario rather than defaults. */
+  fromScenario: boolean;
 };
 
 interface DealRowWithJoins extends DealsRow {
@@ -107,7 +128,7 @@ export async function clearDealAction(
 
 export async function listSavedDeals(
   supabase: SupabaseClient,
-): Promise<DealWithScore[]> {
+): Promise<DealWithPortfolioMetrics[]> {
   const userId = (await supabase.auth.getUser()).data.user?.id;
   if (!userId) return [];
 
@@ -125,7 +146,7 @@ export async function listSavedDeals(
   };
 
   const rows = (data ?? []) as unknown as Joined[];
-  return rows.map((r) => {
+  const base = rows.map((r) => {
     const deal = r.deals;
     const scores = deal.deal_scores;
     const score: DealScoresRow | null = Array.isArray(scores)
@@ -136,6 +157,84 @@ export async function listSavedDeals(
       ...(rest as DealsRow),
       score,
       action: r.action,
+    } satisfies DealWithScore;
+  });
+
+  if (base.length === 0) return [];
+
+  const dealIds = base.map((d) => d.id);
+  const projectIds = [...new Set(base.map((d) => d.project_id))];
+
+  const [{ data: scenarioRows }, { data: projectRows }] = await Promise.all([
+    supabase
+      .from("scenarios")
+      .select("id, deal_id, name, inputs, monthly_cashflow_at_save, created_at")
+      .eq("owner_id", userId)
+      .in("deal_id", dealIds)
+      .order("created_at", { ascending: false }),
+    supabase.from("projects").select("id, constraints").in("id", projectIds),
+  ]);
+
+  const latestScenarioByDeal = new Map<string, ScenariosRow>();
+  for (const row of (scenarioRows ?? []) as ScenariosRow[]) {
+    if (!latestScenarioByDeal.has(row.deal_id)) {
+      latestScenarioByDeal.set(row.deal_id, row);
+    }
+  }
+
+  const constraintsByProject = new Map<string, ProjectConstraints | null>();
+  for (const p of (projectRows ?? []) as Array<{
+    id: string;
+    constraints: unknown;
+  }>) {
+    constraintsByProject.set(
+      p.id,
+      (p.constraints ?? null) as ProjectConstraints | null,
+    );
+  }
+
+  return base.map((deal) => {
+    const scenarioRow = latestScenarioByDeal.get(deal.id) ?? null;
+    const inputs = scenarioRow ? asScenarioInputs(scenarioRow.inputs) : null;
+    const scenarioDown =
+      inputs?.downPayment != null && inputs.downPayment.trim() !== ""
+        ? Number(inputs.downPayment)
+        : null;
+    const scenarioCash =
+      scenarioRow?.monthly_cashflow_at_save != null &&
+      Number.isFinite(Number(scenarioRow.monthly_cashflow_at_save))
+        ? Number(scenarioRow.monthly_cashflow_at_save)
+        : null;
+
+    const constraints = constraintsByProject.get(deal.project_id);
+    const defaultDown =
+      constraints != null
+        ? underwriteSeeds(deal, constraints).downPayment
+        : null;
+
+    const scenario: DealScenarioSummary | null = scenarioRow
+      ? {
+          id: scenarioRow.id,
+          name: scenarioRow.name,
+          monthlyCashflow: scenarioCash,
+          downPayment:
+            scenarioDown != null && Number.isFinite(scenarioDown)
+              ? scenarioDown
+              : null,
+        }
+      : null;
+
+    return {
+      ...deal,
+      scenario,
+      fromScenario: scenario != null,
+      monthlyCashflow: scenarioCash ?? deal.score?.monthly_cashflow ?? null,
+      downPayment:
+        scenario?.downPayment != null
+          ? scenario.downPayment
+          : defaultDown != null && Number.isFinite(defaultDown)
+            ? defaultDown
+            : null,
     };
   });
 }

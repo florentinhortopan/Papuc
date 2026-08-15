@@ -12,7 +12,8 @@ export default async function PortfolioPage() {
       <div className="mb-6">
         <h1 className="text-3xl font-bold">Portfolio</h1>
         <p className="text-textMuted text-sm mt-1">
-          Saved deals. Tap to select 2-3 and compare side-by-side.
+          Saved deals with cashflow and down payment from your scenario (or
+          project defaults). Select 2–3 to compare.
         </p>
       </div>
       <PortfolioClient initialDeals={deals} />

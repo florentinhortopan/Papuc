@@ -1,12 +1,19 @@
 "use client";
 
+import {
+  Check,
+  ChevronRight,
+  ExternalLink,
+  MapPin,
+} from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { CashflowBadge } from "@/components/cashflow-badge";
 import { DscrBadge } from "@/components/dscr-badge";
 import { Button } from "@/components/ui/button";
 import { dealStreetAddress } from "@/lib/deal-address";
-import type { DealWithScore } from "@/lib/deals";
+import type { DealWithPortfolioMetrics } from "@/lib/deals";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
 import { getDealSourceLink } from "@/lib/source-url";
 import { cn } from "@/lib/utils";
@@ -14,7 +21,7 @@ import { cn } from "@/lib/utils";
 export function PortfolioClient({
   initialDeals,
 }: {
-  initialDeals: DealWithScore[];
+  initialDeals: DealWithPortfolioMetrics[];
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [comparing, setComparing] = useState(false);
@@ -31,7 +38,7 @@ export function PortfolioClient({
     return (
       <div className="bg-surface border border-border rounded-2xl p-10 text-center">
         <p className="text-textMuted">
-          Save deals from the Deal Detail screen and they'll show up here.
+          Save deals from the Deal Detail screen and they&apos;ll show up here.
         </p>
       </div>
     );
@@ -56,7 +63,7 @@ export function PortfolioClient({
         </div>
       ) : null}
 
-      <div className="grid gap-2">
+      <div className="grid gap-3">
         {initialDeals.map((deal) => {
           const selected = selectedIds.includes(deal.id);
           const photo =
@@ -65,77 +72,144 @@ export function PortfolioClient({
               ? (deal.photos as string[])[0]
               : undefined);
           const sourceLink = getDealSourceLink(deal);
+          const place = [deal.city, deal.state].filter(Boolean).join(", ");
+          const meta = [
+            deal.beds ? `${deal.beds} bd` : null,
+            deal.baths ? `${deal.baths} ba` : null,
+            deal.sqft ? `${Math.round(Number(deal.sqft)).toLocaleString()} sqft` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ");
+
           return (
             <div
               key={deal.id}
               className={cn(
-                "flex items-center gap-3 bg-surface border rounded-2xl p-3 transition-colors",
-                selected ? "border-primary" : "border-border",
+                "flex flex-col sm:flex-row sm:items-stretch gap-3 bg-surface border rounded-2xl p-3 sm:p-4 transition-colors",
+                selected ? "border-primary bg-primary/[0.04]" : "border-border",
               )}
             >
               <button
                 type="button"
                 onClick={() => toggle(deal.id)}
-                className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                aria-pressed={selected}
+                aria-label={selected ? "Deselect deal" : "Select deal for compare"}
+                className="flex items-start sm:items-center gap-3 flex-1 min-w-0 text-left"
               >
+                <span
+                  className={cn(
+                    "mt-1 sm:mt-0 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors",
+                    selected
+                      ? "border-primary bg-primary text-primaryFg"
+                      : "border-border bg-surfaceAlt text-transparent",
+                  )}
+                  aria-hidden
+                >
+                  <Check className="h-3 w-3" strokeWidth={3} />
+                </span>
+
                 {photo ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={photo}
                     alt=""
-                    className="w-20 h-20 rounded-lg object-cover"
+                    className="w-20 h-20 rounded-xl object-cover shrink-0"
                   />
                 ) : (
-                  <div className="w-20 h-20 rounded-lg bg-surfaceAlt" />
+                  <div className="w-20 h-20 rounded-xl bg-surfaceAlt shrink-0" />
                 )}
-                <div className="flex-1 min-w-0">
-                  <p className="text-text font-semibold truncate">
-                    {dealStreetAddress(deal) ?? "Address pending"}
-                  </p>
-                  <p className="text-textMuted text-xs mt-0.5">
-                    {[
-                      deal.beds ? `${deal.beds} bd` : null,
-                      deal.baths ? `${deal.baths} ba` : null,
-                      deal.sqft ? `${Math.round(Number(deal.sqft))} sqft` : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-text text-sm font-semibold">
-                      {formatMoney(deal.price ?? deal.est_value)}
-                    </span>
-                    <span className="text-textMuted text-[10px] uppercase tracking-wide">
-                      {deal.price ? "list" : "est. value"}
-                    </span>
+
+                <div className="flex-1 min-w-0 space-y-1.5">
+                  <div>
+                    <p className="text-text font-semibold truncate leading-snug">
+                      {dealStreetAddress(deal) ?? "Address pending"}
+                    </p>
+                    {place ? (
+                      <p className="text-textMuted text-xs mt-0.5 flex items-center gap-1 min-w-0">
+                        <MapPin className="h-3 w-3 shrink-0 opacity-70" />
+                        <span className="truncate">{place}</span>
+                      </p>
+                    ) : null}
+                    {meta ? (
+                      <p className="text-textMuted text-xs mt-0.5 truncate">
+                        {meta}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <MetricChip
+                      label={deal.price ? "List" : "Est."}
+                      value={formatMoney(deal.price ?? deal.est_value)}
+                    />
+                    <MetricChip
+                      label="Cashflow"
+                      value={
+                        deal.monthlyCashflow != null
+                          ? `${deal.monthlyCashflow >= 0 ? "+" : ""}${formatMoney(deal.monthlyCashflow)}/mo`
+                          : "—"
+                      }
+                      tone={
+                        deal.monthlyCashflow == null
+                          ? "muted"
+                          : deal.monthlyCashflow >= 100
+                            ? "success"
+                            : deal.monthlyCashflow >= -100
+                              ? "warning"
+                              : "danger"
+                      }
+                    />
+                    <MetricChip
+                      label="Down"
+                      value={
+                        deal.downPayment != null
+                          ? formatMoney(deal.downPayment)
+                          : "—"
+                      }
+                    />
                     <DscrBadge dscr={deal.score?.dscr ?? null} />
                   </div>
+
+                  {deal.fromScenario && deal.scenario ? (
+                    <p className="text-[10px] text-textMuted uppercase tracking-wide">
+                      Scenario · {deal.scenario.name}
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-textMuted uppercase tracking-wide">
+                      Default underwriting
+                    </p>
+                  )}
                 </div>
-                <span className="text-textMuted text-xs ml-2 hidden sm:inline">
-                  {selected ? "Selected" : "Tap to select"}
-                </span>
               </button>
-              <div className="flex flex-col items-end gap-1 shrink-0">
-                <Link
-                  href={`/deals/${deal.id}`}
-                  className="text-primary text-xs hover:underline"
-                >
-                  Open
-                </Link>
+
+              <div className="flex sm:flex-col items-stretch justify-end gap-2 shrink-0 sm:w-[7.5rem] sm:border-l sm:border-border/60 sm:pl-3">
+                <Button asChild size="sm" className="w-full justify-between px-3">
+                  <Link href={`/deals/${deal.id}`}>
+                    Open
+                    <ChevronRight className="h-3.5 w-3.5 opacity-80" />
+                  </Link>
+                </Button>
                 {sourceLink ? (
-                  <a
-                    href={sourceLink.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-textMuted text-[11px] hover:text-primary hover:underline"
-                    title={
-                      sourceLink.isExact
-                        ? `Open this listing on ${sourceLink.provider}`
-                        : `${sourceLink.provider} address search (no deep link from data provider)`
-                    }
+                  <Button
+                    asChild
+                    size="sm"
+                    variant="secondary"
+                    className="w-full justify-between px-3 font-medium"
                   >
-                    {sourceLink.label} ↗
-                  </a>
+                    <a
+                      href={sourceLink.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={
+                        sourceLink.isExact
+                          ? `Open this listing on ${sourceLink.provider}`
+                          : `${sourceLink.provider} address search (no deep link from data provider)`
+                      }
+                    >
+                      <span className="truncate">{sourceLink.provider}</span>
+                      <ExternalLink className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                    </a>
+                  </Button>
                 ) : null}
               </div>
             </div>
@@ -146,11 +220,48 @@ export function PortfolioClient({
   );
 }
 
+function MetricChip({
+  label,
+  value,
+  tone = "muted",
+}: {
+  label: string;
+  value: string;
+  tone?: "muted" | "success" | "warning" | "danger";
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-baseline gap-1 rounded-lg border px-2 py-1 text-[11px] leading-none",
+        tone === "success" && "border-success/30 bg-success/10",
+        tone === "warning" && "border-warning/30 bg-warning/10",
+        tone === "danger" && "border-danger/30 bg-danger/10",
+        tone === "muted" && "border-border bg-surfaceAlt/80",
+      )}
+    >
+      <span className="text-textMuted uppercase tracking-wide text-[9px] font-semibold">
+        {label}
+      </span>
+      <span
+        className={cn(
+          "font-semibold tabular-nums",
+          tone === "success" && "text-success",
+          tone === "warning" && "text-warning",
+          tone === "danger" && "text-danger",
+          tone === "muted" && "text-text",
+        )}
+      >
+        {value}
+      </span>
+    </span>
+  );
+}
+
 function ComparePane({
   deals,
   onClose,
 }: {
-  deals: DealWithScore[];
+  deals: DealWithPortfolioMetrics[];
   onClose: () => void;
 }) {
   return (
@@ -164,62 +275,96 @@ function ComparePane({
           Close
         </button>
       </div>
-      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${deals.length}, minmax(220px, 1fr))` }}>
-        {deals.map((d) => (
-          <div key={d.id} className="bg-surface border border-border rounded-2xl p-4">
-            <p className="text-text font-semibold line-clamp-2">
-              {dealStreetAddress(d) ?? "Address pending"}
-            </p>
-            <p className="text-textMuted text-xs mb-3">
-              {[
-                d.beds ? `${d.beds} bd` : null,
-                d.baths ? `${d.baths} ba` : null,
-                d.sqft ? `${Math.round(Number(d.sqft))} sqft` : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-            <Row label="Price" value={formatMoney(d.price ?? 0)} />
-            <Row
-              label="Monthly cashflow"
-              value={
-                d.score?.monthly_cashflow != null
-                  ? `${d.score.monthly_cashflow >= 0 ? "+" : ""}${formatMoney(d.score.monthly_cashflow)}`
-                  : "—"
-              }
-            />
-            <Row label="DSCR" value={formatDscr(d.score?.dscr ?? null)} />
-            <Row
-              label="DSCR (75% rent)"
-              value={formatDscr(d.score?.dscr_lender_haircut ?? null)}
-            />
-            <Row
-              label="Cash-on-cash"
-              value={formatPct(d.score?.cash_on_cash ?? null)}
-            />
-            <Row
-              label="5-yr IRR"
-              value={formatPct(d.score?.irr_5yr ?? null)}
-            />
-            <Row
-              label="Score"
-              value={d.score?.score != null ? String(d.score.score) : "—"}
-            />
-            <Row
-              label="Payout (yrs)"
-              value={
-                d.score?.payout_years != null
-                  ? d.score.payout_years.toFixed(2)
-                  : "—"
-              }
-            />
-            {d.score?.rationale ? (
-              <p className="text-textMuted text-xs mt-3 leading-5">
-                {d.score.rationale}
+      <div
+        className="grid gap-3"
+        style={{
+          gridTemplateColumns: `repeat(${deals.length}, minmax(220px, 1fr))`,
+        }}
+      >
+        {deals.map((d) => {
+          const place = [d.city, d.state].filter(Boolean).join(", ");
+          return (
+            <div
+              key={d.id}
+              className="bg-surface border border-border rounded-2xl p-4"
+            >
+              <p className="text-text font-semibold line-clamp-2">
+                {dealStreetAddress(d) ?? "Address pending"}
               </p>
-            ) : null}
-          </div>
-        ))}
+              {place ? (
+                <p className="text-textMuted text-xs mt-0.5 flex items-center gap-1">
+                  <MapPin className="h-3 w-3 shrink-0" />
+                  {place}
+                </p>
+              ) : null}
+              <p className="text-textMuted text-xs mb-3 mt-1">
+                {[
+                  d.beds ? `${d.beds} bd` : null,
+                  d.baths ? `${d.baths} ba` : null,
+                  d.sqft ? `${Math.round(Number(d.sqft))} sqft` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+              <Row label="Price" value={formatMoney(d.price ?? 0)} />
+              <Row
+                label="Monthly cashflow"
+                value={
+                  d.monthlyCashflow != null
+                    ? `${d.monthlyCashflow >= 0 ? "+" : ""}${formatMoney(d.monthlyCashflow)}`
+                    : "—"
+                }
+              />
+              <Row
+                label="Down payment"
+                value={
+                  d.downPayment != null ? formatMoney(d.downPayment) : "—"
+                }
+              />
+              <Row
+                label="Source"
+                value={
+                  d.fromScenario && d.scenario
+                    ? `Scenario · ${d.scenario.name}`
+                    : "Default"
+                }
+              />
+              <Row label="DSCR" value={formatDscr(d.score?.dscr ?? null)} />
+              <Row
+                label="DSCR (75% rent)"
+                value={formatDscr(d.score?.dscr_lender_haircut ?? null)}
+              />
+              <Row
+                label="Cash-on-cash"
+                value={formatPct(d.score?.cash_on_cash ?? null)}
+              />
+              <Row
+                label="5-yr IRR"
+                value={formatPct(d.score?.irr_5yr ?? null)}
+              />
+              <Row
+                label="Score"
+                value={d.score?.score != null ? String(d.score.score) : "—"}
+              />
+              <Row
+                label="Payout (yrs)"
+                value={
+                  d.score?.payout_years != null
+                    ? d.score.payout_years.toFixed(2)
+                    : "—"
+                }
+              />
+              <div className="mt-3">
+                <CashflowBadge monthlyCashflow={d.monthlyCashflow} />
+              </div>
+              {d.score?.rationale ? (
+                <p className="text-textMuted text-xs mt-3 leading-5">
+                  {d.score.rationale}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -227,9 +372,9 @@ function ComparePane({
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between py-1">
+    <div className="flex justify-between py-1 gap-3">
       <span className="text-textMuted text-xs">{label}</span>
-      <span className="text-text text-xs font-semibold">{value}</span>
+      <span className="text-text text-xs font-semibold text-right">{value}</span>
     </div>
   );
 }
