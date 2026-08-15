@@ -1,9 +1,10 @@
-"use client";
-
 import {
   PROPERTY_TYPE_LABELS,
+  PROJECT_USE_CASE_LABELS,
   ProjectConstraintsSchema,
+  type Market,
   type ProjectConstraints,
+  type ProjectUseCase,
   type PropertyType,
 } from "@papuc/core";
 import { useRouter } from "next/navigation";
@@ -38,8 +39,9 @@ const PROPERTY_TYPE_OPTIONS: PropertyType[] = [
 
 const SAMPLE_PROMPTS = [
   "I have $200k down and want $600/month cashflow on single family homes in Austin, TX.",
-  "I have $40k in down payments and want to rent a place out for $2,500/month in Phoenix, AZ.",
-  "Looking for an Airbnb in Berkeley, CA under $1.1M with 4 beds.",
+  "Family of 4 wants a mountain retreat near Tahoe — live a few years, then Airbnb.",
+  "Looking for land in California to develop in 5 years.",
+  "Want a cafe with living upstairs in the East Bay.",
 ];
 
 type Step = "prompt" | "review";
@@ -56,6 +58,19 @@ async function parseProjectPrompt(prompt: string): Promise<ProjectConstraints> {
   }
   const json = (await res.json()) as { constraints: unknown };
   return ProjectConstraintsSchema.parse(json.constraints);
+}
+
+function defaultProjectName(c: ProjectConstraints): string {
+  const useCase = c.intent?.useCase;
+  const label =
+    useCase && useCase !== "unclear"
+      ? PROJECT_USE_CASE_LABELS[useCase]
+      : c.strategy;
+  const markets =
+    c.markets.length > 1
+      ? `${formatMarket(c.markets[0])} +${c.markets.length - 1}`
+      : formatMarket(c.markets[0]);
+  return `${label} — ${markets}`;
 }
 
 export function NewProjectForm() {
@@ -75,7 +90,7 @@ export function NewProjectForm() {
     try {
       const c = await parseProjectPrompt(prompt);
       setConstraints(c);
-      setName(`${c.strategy} in ${formatMarket(c.markets[0])}`);
+      setName(defaultProjectName(c));
       setStep("review");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -109,14 +124,15 @@ export function NewProjectForm() {
       <div>
         <h1 className="text-3xl font-bold mb-1">New project</h1>
         <p className="text-textMuted text-sm mb-6">
-          Describe in plain English what you're looking for. The agent will pull
-          out constraints (market, price, beds, cashflow, DSCR target).
+          Describe any life or investment goal in plain English — rental cashflow,
+          live-then-Airbnb, land to develop, live/work, lifestyle place. The agent
+          will infer use case, markets, and filters you can edit.
         </p>
 
         <Textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="e.g., I have $40k for a down payment and want to rent out a single family home for $2,500/month in Phoenix, AZ."
+          placeholder="e.g., Family of 4 — mountain place near Tahoe, live a few years then Airbnb. We have about $80k."
           className="min-h-32 mb-4"
         />
 
@@ -177,6 +193,83 @@ export function NewProjectForm() {
   );
 }
 
+function strategyArcLabel(
+  arc: NonNullable<NonNullable<ProjectConstraints["intent"]>["strategyArc"]>,
+): string {
+  const phase = (p: string) =>
+    p === "owner"
+      ? "Live / owner-occupy"
+      : p === "STR"
+        ? "Short-term rental"
+        : "Long-term rental";
+  if (arc.later) return `${phase(arc.nearTerm)} → then ${phase(arc.later)}`;
+  return phase(arc.nearTerm);
+}
+
+function WhatWeUnderstood({ constraints }: { constraints: ProjectConstraints }) {
+  const intent = constraints.intent;
+  if (!intent) return null;
+
+  const chips: string[] = [];
+  if (intent.household?.total) chips.push(`Household ${intent.household.total}`);
+  if (constraints.bedsMin != null) chips.push(`≥ ${constraints.bedsMin} beds`);
+  if (intent.horizonYears != null)
+    chips.push(`${intent.horizonYears}-year horizon`);
+  if (intent.capitalStory) chips.push(intent.capitalStory);
+  for (const t of intent.placeTags ?? []) chips.push(t);
+  for (const t of intent.mustHaves ?? []) chips.push(`Must: ${t}`);
+
+  return (
+    <Section title="What we understood">
+      <div className="bg-surfaceAlt border border-border rounded-2xl p-4 mb-3">
+        {intent.summary ? (
+          <p className="text-sm text-text mb-3">{intent.summary}</p>
+        ) : null}
+        <div className="flex flex-wrap gap-2 mb-3">
+          {intent.useCase ? (
+            <span className="rounded-full bg-primary/15 border border-primary/40 text-primary px-3 py-1 text-xs font-semibold">
+              {PROJECT_USE_CASE_LABELS[intent.useCase as ProjectUseCase] ??
+                intent.useCase}
+            </span>
+          ) : null}
+          {intent.strategyArc ? (
+            <span className="rounded-full bg-surface border border-border px-3 py-1 text-xs font-medium text-text">
+              {strategyArcLabel(intent.strategyArc)}
+            </span>
+          ) : null}
+        </div>
+        {chips.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {chips.map((c) => (
+              <span
+                key={c}
+                className="rounded-lg bg-surface border border-border px-2 py-0.5 text-[11px] text-textMuted"
+              >
+                {c}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {intent.inferredMarkets ? (
+          <p className="text-textMuted text-xs mb-2">{intent.inferredMarkets}</p>
+        ) : null}
+        {(intent.warnings ?? []).length > 0 ? (
+          <ul className="space-y-1">
+            {intent.warnings!.map((w) => (
+              <li
+                key={w}
+                className="text-xs text-amber-800 bg-amber-500/10 border border-amber-500/25 rounded-lg px-2 py-1.5"
+              >
+                {w}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
 function ConstraintReview({
   name,
   setName,
@@ -196,30 +289,6 @@ function ConstraintReview({
   saving: boolean;
   error: string | null;
 }) {
-  const market = constraints.markets[0];
-  const cityState =
-    market?.kind === "city"
-      ? { city: market.city, state: market.state }
-      : market?.kind === "county" || market?.kind === "state"
-        ? { city: "", state: market.state }
-        : { city: "", state: "" };
-
-  /**
-   * City + state → city market; state alone → statewide market. This is
-   * how the form preserves a parsed { kind: "state" } market instead of
-   * silently downgrading it to a bogus city on first keystroke.
-   */
-  function setMarket(city: string, state: string) {
-    const st = state.toUpperCase();
-    setConstraints({
-      ...constraints,
-      markets: [
-        city.trim()
-          ? { kind: "city", city, state: st }
-          : { kind: "state", state: st },
-      ],
-    });
-  }
   function patch<K extends keyof ProjectConstraints>(
     k: K,
     v: ProjectConstraints[K],
@@ -234,6 +303,31 @@ function ConstraintReview({
       ...constraints,
       mortgage: { ...constraints.mortgage, [k]: v },
     });
+  }
+
+  function updateMarketAt(index: number, city: string, state: string) {
+    const st = state.toUpperCase();
+    const markets = [...constraints.markets];
+    markets[index] = city.trim()
+      ? { kind: "city", city, state: st || "CA" }
+      : { kind: "state", state: st || "CA" };
+    patch("markets", markets);
+  }
+
+  function removeMarketAt(index: number) {
+    if (constraints.markets.length <= 1) return;
+    patch(
+      "markets",
+      constraints.markets.filter((_, i) => i !== index),
+    );
+  }
+
+  function addMarket() {
+    if (constraints.markets.length >= 5) return;
+    patch("markets", [
+      ...constraints.markets,
+      { kind: "city", city: "", state: "CA" },
+    ]);
   }
 
   /**
@@ -269,30 +363,38 @@ function ConstraintReview({
         onChange={(e) => setName(e.target.value)}
       />
 
-      <Section title="Market">
-        <div className="grid grid-cols-3 gap-3">
-          <Field
-            label="City"
-            placeholder="Austin"
-            value={cityState.city ?? ""}
-            onChange={(e) => setMarket(e.target.value, cityState.state || "")}
-            className="col-span-2"
-            hint="Leave blank to search the whole state"
-          />
-          <Field
-            label="State"
-            placeholder="TX"
-            value={cityState.state ?? ""}
-            onChange={(e) => setMarket(cityState.city || "", e.target.value)}
-          />
+      <WhatWeUnderstood constraints={constraints} />
+
+      <Section title="Markets">
+        <p className="text-textMuted text-xs mb-2">
+          Scout searches up to five markets and merges results. Edit or add cities.
+        </p>
+        <div className="flex flex-col gap-3 mb-2">
+          {constraints.markets.map((m, i) => (
+            <MarketRow
+              key={`${i}-${marketKey(m)}`}
+              market={m}
+              canRemove={constraints.markets.length > 1}
+              onChange={(city, state) => updateMarketAt(i, city, state)}
+              onRemove={() => removeMarketAt(i)}
+            />
+          ))}
         </div>
+        {constraints.markets.length < 5 ? (
+          <button
+            type="button"
+            onClick={addMarket}
+            className="text-xs font-semibold text-primary hover:underline mb-2"
+          >
+            + Add market
+          </button>
+        ) : null}
       </Section>
 
       <Section title="Property type">
         <p className="text-textMuted text-xs mb-2">
-          Tap to toggle. The agent guessed from your prompt — adjust as
-          needed. Mixed-use and commercial are only available on the
-          RealEstateAPI provider.
+          Tap to toggle. Mixed-use and commercial route to RealEstateAPI when
+          that key is configured.
         </p>
         <div className="flex flex-wrap gap-2 mb-2">
           {PROPERTY_TYPE_OPTIONS.map((t) => {
@@ -378,7 +480,9 @@ function ConstraintReview({
             inputMode="decimal"
             value={
               constraints.lotSizeMinSqft
-                ? String(Math.round((constraints.lotSizeMinSqft / 43_560) * 100) / 100)
+                ? String(
+                    Math.round((constraints.lotSizeMinSqft / 43_560) * 100) / 100,
+                  )
                 : ""
             }
             onChange={(e) =>
@@ -566,7 +670,15 @@ function ConstraintReview({
               e.target.value.toUpperCase() === "STR" ? "STR" : "LTR",
             )
           }
-          hint="LTR = long-term rental, STR = Airbnb / short-term"
+          hint="LTR = long-term rental, STR = Airbnb / short-term (near-term underwriting)"
+        />
+        <Field
+          label="Notes"
+          value={constraints.notes ?? ""}
+          onChange={(e) =>
+            patch("notes", e.target.value.trim() ? e.target.value : undefined)
+          }
+          hint="Extra context passed to ranking (amenities, vibe, non-filter desires)"
         />
       </Section>
 
@@ -584,6 +696,87 @@ function ConstraintReview({
           Save project
         </Button>
       </div>
+    </div>
+  );
+}
+
+function marketKey(m: Market): string {
+  if (m.kind === "city") return `city:${m.city},${m.state}`;
+  if (m.kind === "zip") return `zip:${m.zip}`;
+  if (m.kind === "county") return `county:${m.county},${m.state}`;
+  if (m.kind === "state") return `state:${m.state}`;
+  if (m.kind === "near") return `near:${m.place}`;
+  return "poly";
+}
+
+function MarketRow({
+  market,
+  canRemove,
+  onChange,
+  onRemove,
+}: {
+  market: Market;
+  canRemove: boolean;
+  onChange: (city: string, state: string) => void;
+  onRemove: () => void;
+}) {
+  const city =
+    market.kind === "city"
+      ? market.city
+      : market.kind === "near"
+        ? market.place
+        : market.kind === "zip"
+          ? market.zip
+          : market.kind === "county"
+            ? market.county
+            : "";
+  const state =
+    market.kind === "city" ||
+    market.kind === "county" ||
+    market.kind === "state" ||
+    market.kind === "near"
+      ? (market.state ?? "")
+      : "";
+
+  return (
+    <div className="grid grid-cols-[1fr_72px_auto] gap-2 items-end">
+      <Field
+        label={
+          market.kind === "zip"
+            ? "ZIP"
+            : market.kind === "near"
+              ? "Near / place"
+              : market.kind === "county"
+                ? "County"
+                : "City"
+        }
+        placeholder="Austin"
+        value={city}
+        onChange={(e) => onChange(e.target.value, state || "CA")}
+        hint={
+          market.kind === "state" || (!city && state)
+            ? "Blank city = statewide"
+            : undefined
+        }
+      />
+      <Field
+        label="State"
+        placeholder="TX"
+        value={state}
+        onChange={(e) => onChange(city, e.target.value)}
+      />
+      {canRemove ? (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="mb-1 text-xs text-textMuted hover:text-danger px-2 py-2"
+          aria-label="Remove market"
+        >
+          ✕
+        </button>
+      ) : (
+        <span className="w-8" />
+      )}
     </div>
   );
 }

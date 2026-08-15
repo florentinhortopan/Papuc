@@ -40,5 +40,11 @@ export function formatMarket(m: Market | undefined): string {
   if (m.kind === "zip") return `ZIP ${m.zip}`;
   if (m.kind === "county") return `${m.county}, ${m.state}`;
   if (m.kind === "state") return `${m.state} (statewide)`;
+  if (m.kind === "near") {
+    const r = m.radiusMiles ?? 30;
+    return m.state
+      ? `Near ${m.place}, ${m.state} (~${r} mi)`
+      : `Near ${m.place} (~${r} mi)`;
+  }
   return "Custom area";
 }

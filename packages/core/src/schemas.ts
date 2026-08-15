@@ -56,12 +56,91 @@ export const MarketSchema = z.union([
   z.object({ kind: z.literal("county"), county: z.string(), state: z.string() }),
   /** State-wide search, e.g. "land in California" → { kind: "state", state: "CA" }. */
   z.object({ kind: z.literal("state"), state: z.string() }),
+  /**
+   * Vague "near X" geography. Scout expands this into concrete city/zip
+   * markets via region aliases — providers have no true radius API.
+   */
+  z.object({
+    kind: z.literal("near"),
+    place: z.string(),
+    radiusMiles: z.number().positive().default(30),
+    state: z.string().optional(),
+  }),
   z.object({
     kind: z.literal("polygon"),
     polygon: z.array(z.tuple([z.number(), z.number()])),
   }),
 ]);
 export type Market = z.infer<typeof MarketSchema>;
+
+/**
+ * Open taxonomy for free-text project goals. Not niche-locked — any
+ * lifestyle / land / hybrid / commercial intent should map here.
+ */
+export const ProjectUseCaseSchema = z.enum([
+  "rental_income",
+  "primary_residence",
+  "owner_occupy_then_str",
+  "lifestyle_second_home",
+  "live_work",
+  "commercial_ops",
+  "land_hold",
+  "land_develop",
+  "hospitality_str",
+  "unclear",
+]);
+export type ProjectUseCase = z.infer<typeof ProjectUseCaseSchema>;
+
+export const PROJECT_USE_CASE_LABELS: Record<ProjectUseCase, string> = {
+  rental_income: "Rental income",
+  primary_residence: "Primary residence",
+  owner_occupy_then_str: "Live now → short-term later",
+  lifestyle_second_home: "Lifestyle / second home",
+  live_work: "Live / work",
+  commercial_ops: "Commercial operations",
+  land_hold: "Land hold",
+  land_develop: "Land to develop",
+  hospitality_str: "Short-term rental",
+  unclear: "Open / unclear",
+};
+
+export const StrategyArcPhaseSchema = z.enum(["LTR", "STR", "owner"]);
+export type StrategyArcPhase = z.infer<typeof StrategyArcPhaseSchema>;
+
+export const ProjectIntentSchema = z.object({
+  /** One-line restatement of the user's goal (not a template). */
+  summary: z.string().optional(),
+  useCase: ProjectUseCaseSchema.optional(),
+  /** Hold / develop / live-then-rent horizon in years when stated. */
+  horizonYears: z.number().positive().max(50).optional(),
+  household: z
+    .object({
+      adults: z.number().int().nonnegative().optional(),
+      children: z.number().int().nonnegative().optional(),
+      total: z.number().int().positive().optional(),
+    })
+    .optional(),
+  /** Free-form place/lifestyle tags from the prompt (model-generated). */
+  placeTags: z.array(z.string()).optional(),
+  mustHaves: z.array(z.string()).optional(),
+  niceToHaves: z.array(z.string()).optional(),
+  /** Why these markets were chosen / expanded. */
+  inferredMarkets: z.string().optional(),
+  /** How savings / down payment language was interpreted. */
+  capitalStory: z.string().optional(),
+  /**
+   * Hybrid timelines: scout `strategy` should follow nearTerm underwriting
+   * (owner/LTR for multi-year primary stay); `later` is review-only.
+   */
+  strategyArc: z
+    .object({
+      nearTerm: StrategyArcPhaseSchema,
+      later: StrategyArcPhaseSchema.optional(),
+    })
+    .optional(),
+  warnings: z.array(z.string()).optional(),
+});
+export type ProjectIntent = z.infer<typeof ProjectIntentSchema>;
 
 export const MortgageSchema = z.object({
   rateAPR: z.number().min(0).max(0.25).describe("Decimal e.g. 0.075 for 7.5%"),
@@ -74,8 +153,8 @@ export type Mortgage = z.infer<typeof MortgageSchema>;
 /**
  * "How fresh must the listing be?" Maps directly to Zillow's
  * `daysOnZillow` parameter when scouting via HasData. Free-form strings
- * keep the contract loose; the canonical Zillow tokens are listed in
- * the comment below.
+ * keep the contract loose; the canonical Zillow tokens are listed in the
+ * comment below.
  */
 export const ListingRecencySchema = z
   .enum(["24h", "7d", "14d", "30d", "90d", "6m", "12m"])
@@ -119,6 +198,8 @@ export const ProjectConstraintsSchema = z.object({
   strategy: StrategySchema.default("LTR"),
   mortgage: MortgageSchema,
   notes: z.string().optional(),
+  /** Broad free-text goal inference (optional — older projects omit it). */
+  intent: ProjectIntentSchema.optional(),
 });
 export type ProjectConstraints = z.infer<typeof ProjectConstraintsSchema>;
 

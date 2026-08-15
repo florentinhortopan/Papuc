@@ -1,5 +1,6 @@
 import {
   ProjectConstraintsSchema,
+  expandMarketsForScout,
   type ProjectConstraints,
 } from "@papuc/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -262,7 +263,8 @@ function marketMatchesDeal(
   deal: FeedDeal,
 ): boolean {
   if (!markets.length) return true;
-  return markets.some((m) => {
+  const expanded = expandMarketsForScout(markets);
+  return expanded.some((m) => {
     if (m.kind === "zip") {
       return deal.zip != null && String(deal.zip) === String(m.zip);
     }
@@ -277,6 +279,16 @@ function marketMatchesDeal(
     }
     if (m.kind === "county" || m.kind === "state") {
       return !deal.state || deal.state.toUpperCase() === m.state.toUpperCase();
+    }
+    if (m.kind === "near") {
+      const place = m.place.toLowerCase();
+      const cityHit =
+        deal.city != null && deal.city.toLowerCase().includes(place);
+      const stateOk =
+        !m.state ||
+        !deal.state ||
+        deal.state.toUpperCase() === m.state.toUpperCase();
+      return cityHit && stateOk;
     }
     return true;
   });
@@ -298,6 +310,23 @@ function softMatchConstraint(
   if (c.strategy === "STR" || c.strategy === "LTR") {
     // Strategy is underwriting context; slight boost when cashflow exists
     if (deal.score?.monthly_cashflow != null) bonus += 4;
+  }
+
+  // Intent soft signals (place tags / use case) — ranking nudge only.
+  const intent = c.intent;
+  if (intent?.placeTags?.length) {
+    const hay = `${deal.city ?? ""} ${deal.address ?? ""}`.toLowerCase();
+    if (intent.placeTags.some((t) => hay.includes(t.toLowerCase()))) {
+      bonus += 6;
+    }
+  }
+  if (
+    (intent?.useCase === "land_hold" || intent?.useCase === "land_develop") &&
+    deal.lot_size != null &&
+    Number(deal.lot_size) > 0 &&
+    (deal.beds == null || Number(deal.beds) === 0)
+  ) {
+    bonus += 10;
   }
 
   const price = deal.price != null ? Number(deal.price) : null;

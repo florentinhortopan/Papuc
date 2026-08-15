@@ -8,6 +8,7 @@ import {
   defaultStrSchedule,
   estimateInsuranceMonthly,
   estimateScoutCredits,
+  expandMarketsForScout,
   extractZillowAddress,
   HasDataClient,
   insuranceRateForState,
@@ -186,25 +187,72 @@ export async function scoutProjectInternal(
   let lastUpsertError: string | null = null;
   let providerQuery: Record<string, unknown> = {};
   let firstSample: Record<string, unknown> | null = null;
-  const provider: CandidateSource = hasDataKey ? "hasdata" : "realestateapi";
+  const provider = resolveScoutProvider(
+    constraints,
+    Boolean(hasDataKey),
+    Boolean(reaKey),
+  );
 
   try {
-    const market = constraints.markets[0];
-    if (!market) throw new Error("project has no market");
+    const markets = expandMarketsForScout(constraints.markets);
+    if (!markets.length) throw new Error("project has no market");
 
     // Caps come from scout-rules.json (tier × trigger). Override size only
     // when the caller passes an explicit value (tests / ops).
     const size = options.size ?? scoutRule.targetCount;
-    const search: ProviderSearchResult = hasDataKey
-      ? await searchHasData(hasDataKey, constraints, market, size, {
-          maxPages: scoutRule.maxPages,
-          daysOnZillow: effectiveDaysOnZillow,
-        })
-      : await searchRealEstateAPI(reaKey!, constraints, market, size);
-    let candidates = search.candidates;
-    providerQuery = search.query;
-    firstSample = search.firstSample;
+    const perMarketSize = Math.max(
+      8,
+      Math.ceil(size / Math.max(1, markets.length)),
+    );
+
+    const merged: ScoutCandidate[] = [];
+    const seenIds = new Set<string>();
+    const marketQueries: unknown[] = [];
+
+    for (const market of markets) {
+      if (merged.length >= size) break;
+      const search: ProviderSearchResult =
+        provider === "hasdata"
+          ? await searchHasData(hasDataKey!, constraints, market, perMarketSize, {
+              maxPages: scoutRule.maxPages,
+              daysOnZillow: effectiveDaysOnZillow,
+            })
+          : await searchRealEstateAPI(reaKey!, constraints, market, perMarketSize);
+      marketQueries.push(search.query);
+      if (!firstSample && search.firstSample) firstSample = search.firstSample;
+      for (const c of search.candidates) {
+        const id = String(c.listing.id ?? "").trim();
+        if (id) {
+          if (seenIds.has(id)) continue;
+          seenIds.add(id);
+        }
+        merged.push(c);
+        if (merged.length >= size) break;
+      }
+    }
+
+    let candidates = merged.slice(0, size);
+    providerQuery = {
+      markets: markets.map((m) =>
+        m.kind === "city"
+          ? `${m.city}, ${m.state}`
+          : m.kind === "zip"
+            ? m.zip
+            : m.kind === "county"
+              ? `${m.county}, ${m.state}`
+              : m.kind === "state"
+                ? m.state
+                : m.kind === "near"
+                  ? `near ${m.place}`
+                  : "polygon",
+      ),
+      perMarketSize,
+      queries: marketQueries,
+    };
     candidatesSeen = candidates.length;
+
+    // Primary market for STR intel / logging (first expanded).
+    const market = markets[0]!;
 
     if (scoutRule.skipKnownProperties && candidates.length > 0) {
       const { data: existing } = await sb
@@ -233,7 +281,13 @@ export async function scoutProjectInternal(
       }
     }
 
-    console.log("[scout] provider=%s query=%j candidates=%d", provider, search.query, candidates.length);
+    console.log(
+      "[scout] provider=%s markets=%d candidates=%d query=%j",
+      provider,
+      markets.length,
+      candidates.length,
+      providerQuery,
+    );
 
     const downPayment = constraints.downPayment ?? 0;
     const targetCashflow = constraints.targetMonthlyCashflow ?? 0;
@@ -712,6 +766,26 @@ export const ZILLOW_UNSUPPORTED_TYPES = new Set([
 ]);
 
 /**
+ * Prefer RealEstateAPI when the project asks for mixed_use / commercial
+ * (HasData/Zillow can't list them). Otherwise HasData-first when keyed.
+ */
+export function resolveScoutProvider(
+  constraints: ProjectConstraints,
+  hasHasData: boolean,
+  hasRea: boolean,
+): CandidateSource {
+  const wantsUnsupported = constraints.propertyTypes.some((t) =>
+    ZILLOW_UNSUPPORTED_TYPES.has(t),
+  );
+  if (wantsUnsupported && hasRea) return "realestateapi";
+  if (hasHasData) return "hasdata";
+  if (hasRea) return "realestateapi";
+  throw new Error(
+    "No real-estate provider configured: set HASDATA_API_KEY or REALESTATEAPI_KEY",
+  );
+}
+
+/**
  * Zillow's Listing API takes a free-form area string as `keyword`. For
  * city markets we use "City, ST"; for zip we pass the zip code directly;
  * for county we fall back to "<County> County, ST"; for state-wide
@@ -719,13 +793,17 @@ export const ZILLOW_UNSUPPORTED_TYPES = new Set([
  * live probe — while "California, CA" resolves to nothing, which is how
  * state-wide scouts used to silently return zero). Polygon markets aren't
  * supported by the listing endpoint — surface a clear error rather than
- * silently returning the wrong region.
+ * silently returning the wrong region. `near` should be expanded before
+ * calling this; if one slips through, fall back to place + state.
  */
 function marketToZillowKeyword(market: Market): string {
   if (market.kind === "city") return `${market.city}, ${market.state}`;
   if (market.kind === "zip") return market.zip;
   if (market.kind === "county") return `${market.county} County, ${market.state}`;
   if (market.kind === "state") return market.state;
+  if (market.kind === "near") {
+    return market.state ? `${market.place}, ${market.state}` : market.place;
+  }
   throw new Error(
     "HasData/Zillow scout does not support polygon markets — pick a city, zip, county, or state.",
   );
@@ -874,6 +952,11 @@ function buildPropertyFilters(
     filters.zip = market.zip;
   } else if (market.kind === "county" || market.kind === "state") {
     filters.state = market.state;
+  } else if (market.kind === "near") {
+    // Prefer expandMarketsForScout before REA; if a near slips through,
+    // treat place as a city keyword with optional state.
+    filters.city = market.place;
+    if (market.state) filters.state = market.state;
   } else if (market.kind === "polygon") {
     filters.polygon = market.polygon;
   }

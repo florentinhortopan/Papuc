@@ -71,8 +71,15 @@ export class ClaudeProvider implements LLMProvider {
     constraints: ProjectConstraints;
     deals: DealScoreInput[];
   }): Promise<DealScoreOutput[]> {
+    const intent = args.constraints.intent;
     const userMessage = [
       `Original user prompt: ${args.userPrompt}`,
+      ``,
+      intent
+        ? `Parsed intent (weigh placeTags / useCase / mustHaves / strategyArc when ranking):\n${JSON.stringify(intent, null, 2)}`
+        : `Parsed intent: (none — use raw prompt + numeric constraints only)`,
+      ``,
+      `Notes: ${args.constraints.notes ?? "(none)"}`,
       ``,
       `Constraints: ${JSON.stringify(args.constraints)}`,
       ``,

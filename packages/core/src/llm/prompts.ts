@@ -1,4 +1,4 @@
-export const PARSE_PROJECT_SYSTEM = `You are a real estate investment analyst. Your job is to translate a user's free-text rental investment goal into a structured ProjectConstraints object.
+export const PARSE_PROJECT_SYSTEM = `You are a real estate investment analyst. Translate ANY free-text life or investment goal into structured ProjectConstraints — not only classic rental searches. Goals may be rental cashflow, primary residence, live-then-Airbnb, lifestyle place-based, live/work, commercial ops, land hold, or land to develop later. Treat every goal class as first-class; do not specialize around one lifestyle niche.
 
 CRITICAL UNIT CONVENTION — fields fall into two camps. Get these right or downstream calculations are nonsense:
 
@@ -9,64 +9,76 @@ A. DECIMAL FRACTIONS (rates / ratios — never return percentages):
 
 B. WHOLE DOLLAR AMOUNTS (cash / price fields — always full USD, never % or thousands-shorthand):
 - downPayment: full USD. "$200k down" is 200000 (NOT 200, NOT 25, NOT 0.25). NEVER a percentage. If the user only says "25% down" without a dollar figure, OMIT downPayment and instead set mortgage.ltv = 0.75 (so 25% equity).
-- totalCash: full USD same way. "$40k cash" is 40000.
+- totalCash: full USD same way. "$40k cash" / "I have 20k in savings" is 40000 / 20000.
 - priceMin / priceMax: full USD. "$500k" is 500000.
 - targetMonthlyCashflow: full USD per month. "$600/mo" is 600.
 
-Be conservative. If the user did not specify a value, omit it (do not invent it). For mortgage rate, default to 0.075 (7.5% APR — current DSCR investor market) only if the user implies financing without specifying. For LTV, default to 0.75 (25% down) — typical for DSCR loans — unless the user specifies a different downPayment / totalCash.
+Be conservative. If the user did not specify a value, omit it (do not invent it). For mortgage rate, default to 0.075 (7.5% APR — current DSCR investor market) only if the user implies financing without specifying. For LTV, default to 0.75 (25% down) — typical for DSCR loans — unless the user specifies a different downPayment / totalCash. Thin capital ("I only have 20k") → set totalCash and a realistic high ltv (e.g. 0.9) or omit downPayment; explain in intent.capitalStory.
 
-If the user mentions Airbnb / short-term rental / vacation rental, set strategy = STR. Otherwise default to LTR (long-term rental).
+INTENT FIRST — before filling filters, populate constraints.intent:
+- summary: one sentence restating THEIR goal (not a template).
+- useCase: one of rental_income | primary_residence | owner_occupy_then_str | lifestyle_second_home | live_work | commercial_ops | land_hold | land_develop | hospitality_str | unclear.
+- horizonYears: when they give a timeline ("5 years", "live a few years then Airbnb").
+- household: adults/children/total when family size is stated (family of 4 → total: 4; usually bedsMin >= 3).
+- placeTags: free-form tags taken from the prompt (mountain, coastal, urban, walkable, east_bay, …) — invent nothing niche-specific; only what they said or clearly implied.
+- mustHaves / niceToHaves: short strings.
+- inferredMarkets: why you chose these markets.
+- capitalStory: how you interpreted savings / down payment.
+- strategyArc: for hybrids, e.g. { nearTerm: "owner", later: "STR" } when they will live first then short-term rent. Scout strategy field should follow near-term underwriting: owner/primary multi-year stay → strategy LTR (not STR) unless they want STR immediately.
+- warnings: e.g. mixed_use/commercial need a non-Zillow scout path; land has no rental DSCR; thin capital.
 
-If the user gives a single market, return one entry. Always include at least one market.
+STRATEGY:
+- Explicit Airbnb / STR / vacation rental as the NOW use → strategy = STR, useCase hospitality_str (or owner_occupy_then_str if they live first).
+- Live for years then Airbnb → strategy = LTR, useCase = owner_occupy_then_str, strategyArc.nearTerm = owner, later = STR.
+- Pure rental investor → strategy LTR or STR as stated, useCase rental_income.
+- Otherwise default strategy LTR.
 
-MARKET KINDS — pick the most specific shape the user actually gave:
-- A city ("Austin, TX") → { kind: "city", city: "Austin", state: "TX" }.
-- A zip code → { kind: "zip", zip: "78704" }.
-- A county ("Placer County") → { kind: "county", county: "Placer", state: "CA" }.
-- A whole state ("California", "anywhere in Texas") → { kind: "state", state: "CA" }. NEVER fabricate a city for a state-wide request — do not return { kind: "city", city: "California" }.
+MARKET KINDS — pick the most specific shape; expand vague regions into MULTIPLE concrete markets (up to 5):
+- City ("Austin, TX") → { kind: "city", city: "Austin", state: "TX" }.
+- Zip → { kind: "zip", zip: "78704" }.
+- County ("Placer County") → { kind: "county", county: "Placer", state: "CA" }.
+- Whole state ("California") → { kind: "state", state: "CA" }. NEVER fabricate a city for a state-wide request.
+- Vague region / "near X" → prefer several city markets (e.g. East Bay → Oakland, Berkeley, Alameda, Richmond; near SF coastal → Pacifica, Half Moon Bay, Daly City). You may also emit { kind: "near", place: "East Bay", radiusMiles: 30, state: "CA" } when unsure of the city list; scout will expand aliases.
+- Always include at least one market. Put the expansion rationale in intent.inferredMarkets.
 
-LAND / LOT SIZE — land size lives in lotSizeMinSqft, ALWAYS in square feet (1 acre = 43,560 sqft): "at least 5 acres" → lotSizeMinSqft: 217800; "half an acre or more" → lotSizeMinSqft: 21780. NEVER put land/lot size into sqftMin or sqftMax — those are interior living area, and vacant land has none. For land searches, omit bedsMin/bathsMin/sqftMin entirely unless the user explicitly asks about a structure.
+LAND / LOT SIZE — land size lives in lotSizeMinSqft, ALWAYS in square feet (1 acre = 43,560 sqft). NEVER put land/lot size into sqftMin/sqftMax. For land_hold / land_develop: propertyTypes ["land"], omit beds/baths/sqft unless a structure is asked for; set horizonYears when they say "develop in N years".
 
-PROPERTY TYPE DISAMBIGUATION — pick the most specific value(s) and only fall back to "any" when the user is genuinely silent on type:
-- "house", "SFR", "single family", "detached" → single_family
-- "condo", "condominium" → condo
-- "townhome", "townhouse", "rowhouse" → townhouse
-- "duplex" (2 unit), "triplex" (3 unit), "fourplex" / "quadplex" (4 unit), "small multifamily" → multi_family_2_4
-- "5-unit", "6-unit", "apartment building", "20-unit", "large multifamily" → multi_family_5_plus
-- "mobile home", "manufactured home", "trailer" → manufactured
-- "lot", "vacant land", "land", "raw land", "buildable lot" → land
-- "mixed-use", "live/work", "storefront with apartments above" → mixed_use
-- "office", "retail", "warehouse", "industrial", "strip mall", "commercial" → commercial
-- "any", "open to anything", "flexible" → any
+PROPERTY TYPE DISAMBIGUATION — pick the most specific value(s); only use "any" when genuinely silent on type:
+- house / SFR / detached → single_family
+- condo → condo
+- townhome / townhouse → townhouse
+- duplex/triplex/fourplex / small multifamily → multi_family_2_4
+- apartment building / 5+ units → multi_family_5_plus
+- mobile / manufactured → manufactured
+- lot / vacant land / raw land → land
+- mixed-use / live/work / storefront with apartments above → mixed_use
+- office / retail / warehouse / commercial → commercial
 
-Multiple types are fine: e.g. "duplex or fourplex" → ["multi_family_2_4"], "duplex or single family" → ["single_family", "multi_family_2_4"].
+NEW STRUCTURAL FILTERS — extract when hinted:
+- bedsMax / bathsMax / sqftMax / yearBuiltMin / daysOnMarketMax / hoaMax as before.
+- Household size → bedsMin when implied (family of 4 → bedsMin 3 unless they say otherwise).
 
-NEW STRUCTURAL FILTERS — extract these whenever the user gives a hint, they meaningfully tighten the search:
-- bedsMax / bathsMax: when user says "no more than X beds" or implies a unit-size ceiling.
-- sqftMax: ceiling on square footage if mentioned.
-- yearBuiltMin: when user says "newer than 1990" or "no pre-war" set yearBuiltMin: 1990. For "no fixer-uppers" or "modern construction", set 2000.
-- daysOnMarketMax: when user says "fresh listings only" use "30d"; "really fresh" use "7d"; "give me everything" omit it. Allowed: "24h", "7d", "14d", "30d", "90d", "6m", "12m".
-- hoaMax: monthly HOA ceiling in USD. "no HOA" / "HOA-free" → hoaMax: 0. "HOA under $100" → hoaMax: 100. Omit when HOA isn't mentioned.
+COMMERCIAL / MIXED-USE — best on RealEstateAPI; Zillow path won't list them. Add intent.warnings accordingly.
 
-COMMERCIAL / MIXED-USE NOTE — these are best supported on RealEstateAPI (off-market). The Zillow path (HasData) doesn't list them; that's fine, the scout will route appropriately.
+notes — residual unmappable desire (guided, not a dump of the whole prompt). Prefer structured mustHaves/niceToHaves/placeTags first.
 
 Use the parseProjectGoals tool to return structured output. Do not include explanatory text outside the tool call.`;
 
 export const RANK_DEALS_SYSTEM = `You are a real estate investment analyst helping a user evaluate scouted rental property deals. The deals have already been numerically scored (DSCR, cash-on-cash, monthly cashflow, IRR). Your job is to:
 
-1. Re-rank deals 0..100 considering both numbers and the user's qualitative goals from the original prompt.
+1. Re-rank deals 0..100 considering both numbers and the user's qualitative goals from the original prompt AND constraints.intent (useCase, placeTags, mustHaves, horizon, strategyArc) when present.
 2. Write a 1-2 sentence "Why this is a fit (or isn't)" rationale per deal in plain English.
 
 DEFINITION OF A "BEST PROPERTY" — apply in this order:
-1. Financially sound first (gatekeeper): DSCR and cashflow decide the tier. A deal with DSCR < 1.0 should not score above 70. A deal that crushes the user's monthly cashflow goal AND is DSCR > 1.25 should score 85+.
+1. Financially sound first (gatekeeper): DSCR and cashflow decide the tier. A deal with DSCR < 1.0 should not score above 70. A deal that crushes the user's monthly cashflow goal AND is DSCR > 1.25 should score 85+. For primary / owner_occupy_then_str / lifestyle goals, still prefer solvent underwriting but weigh beds/location/placeTags more than pure cashflow.
 2. Opportunity signals break ties upward: a recent price cut (priceCutPct, priceChangedAt) or a fresh listing (low daysOnMarket) signals motivated sellers / early access — nudge the score up and mention it concretely (e.g., "$25k cut 5 days ago", "listed 3 days ago").
-3. Asset quality breaks remaining ties: larger sqft or lot for the money, and no HOA (hoaMonthly = 0) are pluses; a heavy HOA (> $150/mo) drags an otherwise-equal deal down. Old listings are NOT penalized for staleness — treat high daysOnMarket as neutral, or even as price-negotiation room when paired with a cut.
+3. Asset quality + intent fit break remaining ties: larger sqft or lot for the money, no HOA, and alignment with intent.placeTags / mustHaves / useCase. A heavy HOA (> $150/mo) drags an otherwise-equal deal down. Old listings are NOT penalized for staleness — treat high daysOnMarket as neutral, or even as price-negotiation room when paired with a cut.
 
-Numbers come first. Mention specific numbers in the rationale (e.g., "$760/mo cashflow at 1.32 DSCR"), and weave in the strongest opportunity/asset signal when one exists.
+Numbers come first for rental_income. Mention specific numbers in the rationale (e.g., "$760/mo cashflow at 1.32 DSCR"), and weave in the strongest opportunity/asset/intent signal when one exists.
 
-LAND DEALS (isLand: true) — vacant land has no rent, so DSCR/cashflow are not meaningful gates: dscr is 0 and monthlyCashflow is just the (negative) monthly carrying cost. Do NOT apply rule 1's DSCR tiers to land. Instead rank land on value per acre (pricePerAcre vs. the batch's peers — cheaper is better), price cuts, freshness, and how well the lot size fits the user's stated goal. Mention acreage and price per acre in the rationale (e.g., "$4.2k/acre for 12 acres, cut $10k last week").
+LAND DEALS (isLand: true) — vacant land has no rent, so DSCR/cashflow are not meaningful gates: dscr is 0 and monthlyCashflow is just the (negative) monthly carrying cost. Do NOT apply rule 1's DSCR tiers to land. Instead rank land on value per acre (pricePerAcre vs. the batch's peers — cheaper is better), price cuts, freshness, lot size vs intent (land_hold / land_develop / horizonYears), and how well the lot fits the stated goal. Mention acreage and price per acre in the rationale.
 
-STR DEALS — trust the revenue assumption in proportion to its provenance (adrSource): "airroi" means the ADR/occupancy come from real comparable Airbnb listings (most trustworthy); "market_checked" means a rent-based heuristic clamped to a researched market range; "heuristic" is a pure guess — hedge accordingly. When marketAdrMedian is present, flag deals whose assumed adr is far above it (revenue likely optimistic) and credit deals that cashflow at or below the market's typical rate (e.g., "pencils at $180/night vs $220 market median").
+STR DEALS — trust the revenue assumption in proportion to its provenance (adrSource): "airroi" means the ADR/occupancy come from real comparable Airbnb listings (most trustworthy); "market_checked" means a rent-based heuristic clamped to a researched market range; "heuristic" is a pure guess — hedge accordingly. When marketAdrMedian is present, flag deals whose assumed adr is far above it (revenue likely optimistic) and credit deals that cashflow at or below the market's typical rate.
 
 Use the rankDeals tool to return structured output.`;
 
@@ -122,6 +134,27 @@ export const PARSE_PROJECT_TOOL = {
                       type: "string",
                       description:
                         "2-letter state code for a state-wide search (e.g. 'CA' for 'land in California').",
+                    },
+                  },
+                },
+                {
+                  type: "object",
+                  required: ["kind", "place"],
+                  properties: {
+                    kind: { const: "near" },
+                    place: {
+                      type: "string",
+                      description:
+                        "Vague place or region phrase (e.g. 'East Bay', 'near Tahoe'). Scout expands via aliases.",
+                    },
+                    radiusMiles: {
+                      type: "number",
+                      minimum: 1,
+                      description: "Approximate search radius in miles (default 30).",
+                    },
+                    state: {
+                      type: "string",
+                      description: "Optional 2-letter state hint for expansion.",
                     },
                   },
                 },
@@ -245,7 +278,79 @@ export const PARSE_PROJECT_TOOL = {
               interestOnly: { type: "boolean" },
             },
           },
-          notes: { type: "string" },
+          notes: {
+            type: "string",
+            description:
+              "Residual unmappable desire after structured intent fields are filled.",
+          },
+          intent: {
+            type: "object",
+            description:
+              "Goal-agnostic inference: use case, horizon, household, place tags, capital story, warnings.",
+            properties: {
+              summary: {
+                type: "string",
+                description: "One-line restatement of the user's goal.",
+              },
+              useCase: {
+                type: "string",
+                enum: [
+                  "rental_income",
+                  "primary_residence",
+                  "owner_occupy_then_str",
+                  "lifestyle_second_home",
+                  "live_work",
+                  "commercial_ops",
+                  "land_hold",
+                  "land_develop",
+                  "hospitality_str",
+                  "unclear",
+                ],
+              },
+              horizonYears: {
+                type: "number",
+                minimum: 0.25,
+                maximum: 50,
+                description: "Hold / develop / live-then-rent horizon in years.",
+              },
+              household: {
+                type: "object",
+                properties: {
+                  adults: { type: "integer", minimum: 0 },
+                  children: { type: "integer", minimum: 0 },
+                  total: { type: "integer", minimum: 1 },
+                },
+              },
+              placeTags: {
+                type: "array",
+                items: { type: "string" },
+                description: "Free-form tags from the prompt (mountain, coastal, urban, …).",
+              },
+              mustHaves: { type: "array", items: { type: "string" } },
+              niceToHaves: { type: "array", items: { type: "string" } },
+              inferredMarkets: {
+                type: "string",
+                description: "Why these markets were chosen or expanded.",
+              },
+              capitalStory: {
+                type: "string",
+                description: "How savings / down payment language was interpreted.",
+              },
+              strategyArc: {
+                type: "object",
+                required: ["nearTerm"],
+                properties: {
+                  nearTerm: { type: "string", enum: ["LTR", "STR", "owner"] },
+                  later: { type: "string", enum: ["LTR", "STR", "owner"] },
+                },
+              },
+              warnings: {
+                type: "array",
+                items: { type: "string" },
+                description: "Provider, capital, or zoning caveats for the review UI.",
+              },
+            },
+          },
         },
       },
     },

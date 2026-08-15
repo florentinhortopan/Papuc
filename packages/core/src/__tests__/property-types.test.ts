@@ -140,6 +140,7 @@ describe("ProjectConstraints new optional filter fields", () => {
       (v) => v.properties.kind.const,
     );
     expect(kinds).toContain("state");
+    expect(kinds).toContain("near");
     expect(constraints.properties.lotSizeMinSqft?.type).toBe("number");
     expect(constraints.properties.lotSizeMinSqft?.minimum).toBe(0);
   });

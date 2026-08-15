@@ -20,6 +20,7 @@ describe("MockLLMProvider.parseProjectGoals", () => {
     const llm = new MockLLMProvider();
     const c = await parseProjectGoals(llm, "Looking for an Airbnb in Berkeley, CA");
     expect(c.strategy).toBe("STR");
+    expect(c.intent?.useCase).toBe("hospitality_str");
   });
 });
 
