@@ -1,11 +1,17 @@
 "use client";
 
-import { Loader2, Search } from "lucide-react";
+import { Loader2, Mic, Search } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { FeedDealCard } from "@/components/feed-deal-card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  VoiceConcierge,
+  VoiceConciergeTrigger,
+} from "@/components/voice-concierge";
 import {
   dealsForChip,
   FEED_CHIPS,
@@ -53,9 +59,14 @@ async function deleteDealAction(
 
 export function FeedHomeClient({
   initialFeed,
+  projectCount = 0,
 }: {
   initialFeed: PersonalizedFeed;
+  projectCount?: number;
 }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const talkOpened = useRef(false);
   const [feed, setFeed] = useState(initialFeed);
   const [chip, setChip] = useState<FeedChip>("for_you");
   const [prompt, setPrompt] = useState("");
@@ -65,6 +76,17 @@ export function FeedHomeClient({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+
+  const firstRun = projectCount === 0;
+
+  useEffect(() => {
+    if (talkOpened.current) return;
+    if (searchParams.get("talk") !== "1") return;
+    talkOpened.current = true;
+    setVoiceOpen(true);
+    router.replace("/home", { scroll: false });
+  }, [searchParams, router]);
 
   const savedIds = useMemo(
     () => new Set(feed.saved.map((d) => d.id)),
@@ -248,6 +270,36 @@ export function FeedHomeClient({
         </p>
       </div>
 
+      {firstRun ? (
+        <div className="rounded-3xl border border-primary/30 bg-primary/10 p-6 sm:p-8 text-center">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-primary mb-2">
+            Papuc Concierge
+          </p>
+          <h2 className="text-2xl font-bold text-text mb-2">
+            Talk through what you want
+          </h2>
+          <p className="text-textMuted text-sm max-w-md mx-auto mb-5">
+            A short voice call — rant freely, we listen carefully, then turn it
+            into your first scout project.
+          </p>
+          <Button
+            type="button"
+            onClick={() => setVoiceOpen(true)}
+            className="inline-flex items-center gap-2"
+          >
+            <Mic className="h-4 w-4" />
+            Talk to Papuc
+          </Button>
+          <p className="text-textMuted text-[11px] mt-3">
+            Or{" "}
+            <Link href="/projects/new" className="text-primary hover:underline">
+              type a project
+            </Link>{" "}
+            instead.
+          </p>
+        </div>
+      ) : null}
+
       <form onSubmit={onSearch} className="relative">
         <div className="flex items-center gap-2 rounded-full border border-border bg-surface shadow-sm px-4 py-3 focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20">
           <Search className="h-4 w-4 text-textMuted shrink-0" aria-hidden />
@@ -260,6 +312,7 @@ export function FeedHomeClient({
             disabled={searching}
             aria-label="AI deal search"
           />
+          <VoiceConciergeTrigger onClick={() => setVoiceOpen(true)} />
           <button
             type="submit"
             disabled={searching || !prompt.trim()}
@@ -276,6 +329,13 @@ export function FeedHomeClient({
           <p className="text-danger text-xs mt-2">{searchError}</p>
         ) : null}
       </form>
+
+      <VoiceConcierge
+        open={voiceOpen}
+        onOpenChange={setVoiceOpen}
+        variant={firstRun ? "first_run" : "ongoing"}
+        completionMode="create"
+      />
 
       {actionError ? (
         <p className="text-danger text-xs">{actionError}</p>

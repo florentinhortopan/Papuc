@@ -9,12 +9,17 @@ import {
   type ProjectUseCase,
   type PropertyType,
 } from "@papuc/core";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { Mic } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/input";
+import {
+  VoiceConcierge,
+  VOICE_TRANSCRIPT_KEY,
+} from "@/components/voice-concierge";
 import { formatMarket } from "@/lib/format";
 import { createProject } from "@/lib/projects";
 import { createClient } from "@/lib/supabase/client";
@@ -62,7 +67,7 @@ async function parseProjectPrompt(prompt: string): Promise<ProjectConstraints> {
   return ProjectConstraintsSchema.parse(json.constraints);
 }
 
-function defaultProjectName(c: ProjectConstraints): string {
+export function defaultProjectName(c: ProjectConstraints): string {
   const useCase = c.intent?.useCase;
   const label =
     useCase && useCase !== "unclear"
@@ -77,6 +82,8 @@ function defaultProjectName(c: ProjectConstraints): string {
 
 export function NewProjectForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const voiceBootstrapped = useRef(false);
   const [prompt, setPrompt] = useState("");
   const [step, setStep] = useState<Step>("prompt");
   const [parsing, setParsing] = useState(false);
@@ -84,13 +91,16 @@ export function NewProjectForm() {
   const [constraints, setConstraints] = useState<ProjectConstraints | null>(null);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
-  async function parse() {
-    if (!prompt.trim()) return;
+  async function parse(overridePrompt?: string) {
+    const text = (overridePrompt ?? prompt).trim();
+    if (!text) return;
     setError(null);
     setParsing(true);
     try {
-      const c = await parseProjectPrompt(prompt);
+      if (overridePrompt != null) setPrompt(overridePrompt);
+      const c = await parseProjectPrompt(text);
       setConstraints(c);
       setName(defaultProjectName(c));
       setStep("review");
@@ -100,6 +110,23 @@ export function NewProjectForm() {
       setParsing(false);
     }
   }
+
+  useEffect(() => {
+    if (voiceBootstrapped.current) return;
+    if (searchParams.get("from") !== "voice") return;
+    voiceBootstrapped.current = true;
+    let stored = "";
+    try {
+      stored = sessionStorage.getItem(VOICE_TRANSCRIPT_KEY) ?? "";
+      sessionStorage.removeItem(VOICE_TRANSCRIPT_KEY);
+    } catch {
+      stored = "";
+    }
+    if (stored.trim()) {
+      void parse(stored);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   async function save() {
     if (!constraints) return;
@@ -127,9 +154,20 @@ export function NewProjectForm() {
         <h1 className="text-3xl font-bold mb-1">New project</h1>
         <p className="text-textMuted text-sm mb-6">
           Describe any life or investment goal in plain English — rental cashflow,
-          live-then-Airbnb, land to develop, live/work, lifestyle place. The agent
-          will infer use case, markets, and filters you can edit.
+          live-then-Airbnb, land to develop, live/work, lifestyle place. Or talk
+          it through with Papuc Concierge.
         </p>
+
+        <div className="mb-4 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setVoiceOpen(true)}
+            className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/15 px-4 py-2.5 text-sm font-semibold text-primary hover:bg-primary/25 transition-colors"
+          >
+            <Mic className="h-4 w-4" />
+            Talk to Papuc
+          </button>
+        </div>
 
         <Textarea
           value={prompt}
@@ -167,7 +205,7 @@ export function NewProjectForm() {
             Cancel
           </Button>
           <Button
-            onClick={parse}
+            onClick={() => void parse()}
             loading={parsing}
             disabled={!prompt.trim()}
             className="flex-1"
@@ -175,6 +213,16 @@ export function NewProjectForm() {
             Parse goals
           </Button>
         </div>
+
+        <VoiceConcierge
+          open={voiceOpen}
+          onOpenChange={setVoiceOpen}
+          variant="ongoing"
+          completionMode="handoff"
+          onTranscript={(t) => {
+            void parse(t);
+          }}
+        />
       </div>
     );
   }
@@ -272,7 +320,7 @@ function WhatWeUnderstood({ constraints }: { constraints: ProjectConstraints }) 
   );
 }
 
-function ConstraintReview({
+export function ConstraintReview({
   name,
   setName,
   constraints,
@@ -281,6 +329,9 @@ function ConstraintReview({
   onSave,
   saving,
   error,
+  title = "Review constraints",
+  subtitle = "The agent extracted these. Tweak anything before saving.",
+  saveLabel = "Create project",
 }: {
   name: string;
   setName: (v: string) => void;
@@ -290,6 +341,9 @@ function ConstraintReview({
   onSave: () => void;
   saving: boolean;
   error: string | null;
+  title?: string;
+  subtitle?: string;
+  saveLabel?: string;
 }) {
   function patch<K extends keyof ProjectConstraints>(
     k: K,
@@ -354,10 +408,8 @@ function ConstraintReview({
 
   return (
     <div>
-      <h1 className="text-3xl font-bold mb-1">Review constraints</h1>
-      <p className="text-textMuted text-sm mb-6">
-        The agent extracted these. Tweak anything before saving.
-      </p>
+      <h1 className="text-3xl font-bold mb-1">{title}</h1>
+      <p className="text-textMuted text-sm mb-6">{subtitle}</p>
 
       <Field
         label="Project name"
@@ -695,7 +747,7 @@ function ConstraintReview({
           Back
         </Button>
         <Button onClick={onSave} loading={saving} className="flex-1">
-          Save project
+          {saveLabel}
         </Button>
       </div>
     </div>

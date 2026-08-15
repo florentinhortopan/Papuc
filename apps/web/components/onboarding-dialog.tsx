@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -15,16 +16,16 @@ import { getProfile, markOnboarded } from "@/lib/profile";
 
 const STEPS = [
   {
-    title: "Describe a deal in plain English",
-    body: "Tell Papuc what you're looking for: market, budget, target cashflow. No spreadsheets, no SQL.",
+    title: "Talk to Papuc about what you want",
+    body: "Rant freely into the mic — market, budget, live vs rent, land, lifestyle. The Concierge listens carefully and only asks what’s missing.",
   },
   {
-    title: "We translate it into search constraints",
-    body: "Claude turns your prompt into structured filters. You can edit anything before saving.",
+    title: "We turn the conversation into scout filters",
+    body: "Your call becomes editable constraints. Tweak anything before we start scouting.",
   },
   {
     title: "We scout MLS + score every match",
-    body: "Each candidate gets a full pro-forma (DSCR, IRR, cash-on-cash) ported from Berkeley.xlsx, and a 1-2 sentence rationale.",
+    body: "Each candidate gets a full pro-forma (DSCR, IRR, cash-on-cash) and a short rationale.",
   },
   {
     title: "DSCR estimates, not lender quotes",
@@ -33,6 +34,7 @@ const STEPS = [
 ];
 
 export function OnboardingDialog() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
 
@@ -53,6 +55,16 @@ export function OnboardingDialog() {
     setOpen(false);
     const supabase = createClient();
     await markOnboarded(supabase).catch(() => {});
+  }
+
+  async function startTalking() {
+    await close();
+    router.push("/home?talk=1");
+  }
+
+  async function typeInstead() {
+    await close();
+    router.push("/projects/new");
   }
 
   const last = step === STEPS.length - 1;
@@ -80,7 +92,7 @@ export function OnboardingDialog() {
         <DialogDescription className="text-sm leading-6 mt-2">
           {current.body}
         </DialogDescription>
-        <DialogFooter className="!mt-6 flex-row justify-end gap-2">
+        <DialogFooter className="!mt-6 flex-row flex-wrap justify-end gap-2">
           {step > 0 ? (
             <Button
               variant="ghost"
@@ -93,9 +105,16 @@ export function OnboardingDialog() {
               Skip
             </Button>
           )}
-          <Button onClick={last ? close : () => setStep((s) => s + 1)}>
-            {last ? "Got it" : "Next"}
-          </Button>
+          {last ? (
+            <>
+              <Button variant="secondary" onClick={() => void typeInstead()}>
+                I’ll type instead
+              </Button>
+              <Button onClick={() => void startTalking()}>Talk to Papuc</Button>
+            </>
+          ) : (
+            <Button onClick={() => setStep((s) => s + 1)}>Next</Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
