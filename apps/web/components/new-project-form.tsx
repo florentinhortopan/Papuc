@@ -1,3 +1,5 @@
+"use client";
+
 import {
   PROPERTY_TYPE_LABELS,
   PROJECT_USE_CASE_LABELS,
