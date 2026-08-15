@@ -55,13 +55,40 @@ export function PortfolioClient({
 
   return (
     <div>
-      {selectedIds.length >= 2 ? (
-        <div className="mb-4">
-          <Button onClick={() => setComparing(true)}>
-            Compare {selectedIds.length} deals
-          </Button>
+      {selectedIds.length >= 1 ? (
+        <div className="mb-4 sticky top-0 z-10 -mx-1 px-1 py-2 bg-background/95 backdrop-blur-sm border-b border-border/60">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+            <Button
+              onClick={() => setComparing(true)}
+              disabled={selectedIds.length < 2}
+              className="shrink-0"
+            >
+              {selectedIds.length >= 2
+                ? `Compare ${selectedIds.length} deals`
+                : "Compare"}
+            </Button>
+            <p className="text-textMuted text-sm leading-snug">
+              {selectedIds.length === 1
+                ? "1 selected — tap another deal to compare side by side (up to 3)."
+                : selectedIds.length >= 3
+                  ? "3 selected (max). Open compare when you’re ready."
+                  : `${selectedIds.length} selected — open compare, or pick one more (up to 3).`}
+            </p>
+            <button
+              type="button"
+              onClick={() => setSelectedIds([])}
+              className="text-xs text-textMuted hover:text-text sm:ml-auto shrink-0"
+            >
+              Clear
+            </button>
+          </div>
         </div>
-      ) : null}
+      ) : (
+        <p className="text-textMuted text-sm mb-4">
+          Tap the checkmark on a deal to select it, then add at least one more to
+          compare.
+        </p>
+      )}
 
       <div className="grid gap-3">
         {initialDeals.map((deal) => {
