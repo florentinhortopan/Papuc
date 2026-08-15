@@ -1,7 +1,7 @@
 "use client";
 
-import { Radar } from "lucide-react";
-import { useState, type MouseEvent } from "react";
+import { Binoculars } from "lucide-react";
+import { useEffect, useState, type MouseEvent } from "react";
 
 import { UpgradeDialog } from "@/components/upgrade-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -14,8 +14,8 @@ import { cn } from "@/lib/utils";
  * Per-project Nightly scout control. Pro persists to the project row;
  * free users see a locked control that opens UpgradeDialog (Stripe TBD).
  *
- * `compact` = icon-only Radar button for dense project cards (same row as
- * last-scout timestamp). Full layout keeps the labeled switch for detail.
+ * `compact` = icon-only Binoculars button for dense project cards (same
+ * row as last-scout timestamp). Full layout keeps the labeled switch.
  */
 export function NightlyScoutToggle({
   projectId,
@@ -28,16 +28,23 @@ export function NightlyScoutToggle({
   enabled: boolean;
   onEnabledChange: (next: boolean) => void;
   subscriptionTier: SubscriptionTier;
-  /** Icon-only radar control for project grid cards. */
+  /** Icon-only scout control for project grid cards. */
   compact?: boolean;
 }) {
   const isPro = subscriptionTier === "pro";
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
 
   // Free always shows off visually — cron won't run for them anyway.
   const shownOn = isPro && enabled;
+
+  useEffect(() => {
+    if (!flash) return;
+    const t = window.setTimeout(() => setFlash(null), 2200);
+    return () => window.clearTimeout(t);
+  }, [flash]);
 
   async function persist(next: boolean) {
     setSaving(true);
@@ -48,6 +55,7 @@ export function NightlyScoutToggle({
         nightly_scout_enabled: next,
       });
       onEnabledChange(next);
+      setFlash(next ? "Nightly scout on" : "Nightly scout off");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -60,6 +68,7 @@ export function NightlyScoutToggle({
     e.stopPropagation();
     if (saving) return;
     if (!isPro) {
+      setFlash("Requires Papuc Pro");
       setUpgradeOpen(true);
       return;
     }
@@ -88,6 +97,21 @@ export function NightlyScoutToggle({
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}
         >
+          {flash ? (
+            <div
+              role="status"
+              className={cn(
+                "pointer-events-none absolute bottom-full right-0 mb-1.5 whitespace-nowrap rounded-lg border px-2 py-1 text-[11px] font-semibold shadow-lg z-10 animate-in fade-in zoom-in-95",
+                flash.includes("on") && !flash.includes("Requires")
+                  ? "border-primary/40 bg-primary text-primaryFg"
+                  : flash.includes("off")
+                    ? "border-border bg-surfaceAlt text-text"
+                    : "border-primary/40 bg-surface text-primary",
+              )}
+            >
+              {flash}
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={onToggleClick}
@@ -103,8 +127,8 @@ export function NightlyScoutToggle({
               error && "border-danger/40 text-danger",
             )}
           >
-            <Radar
-              className={cn("h-4 w-4", shownOn && "animate-pulse")}
+            <Binoculars
+              className="h-4 w-4"
               strokeWidth={shownOn ? 2.25 : 1.75}
             />
             {!isPro ? (
@@ -122,7 +146,7 @@ export function NightlyScoutToggle({
         >
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Radar
+              <Binoculars
                 className={cn(
                   "h-3.5 w-3.5 shrink-0",
                   shownOn ? "text-primary" : "text-textMuted",
@@ -136,11 +160,13 @@ export function NightlyScoutToggle({
               ) : null}
             </div>
             <p className="text-textMuted text-[11px] leading-4">
-              {isPro
-                ? shownOn
-                  ? "On — new listings while you sleep"
-                  : "Off — manual Scout deals only"
-                : "New listings while you sleep"}
+              {flash
+                ? flash
+                : isPro
+                  ? shownOn
+                    ? "On — new listings while you sleep"
+                    : "Off — manual Scout deals only"
+                  : "New listings while you sleep"}
             </p>
             {error ? (
               <p className="text-danger text-[11px] mt-1">{error}</p>

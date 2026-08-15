@@ -23,22 +23,25 @@ export function ProjectListItemCard({
   );
 
   return (
-    <div className="bg-surface border border-border rounded-2xl overflow-hidden hover:border-border/80 transition-colors">
-      <Link href={`/projects/${project.id}`} className="block">
+    <div className="h-full flex flex-col bg-surface border border-border rounded-2xl overflow-hidden hover:border-border/80 transition-colors">
+      <Link
+        href={`/projects/${project.id}`}
+        className="flex flex-col flex-1 min-h-0"
+      >
         <ProjectPhotoMosaic photos={project.mosaicPhotos} />
-        <div className="p-4 pb-0">
-          <div className="flex items-start justify-between gap-2 mb-2">
-            <p className="text-text text-lg font-semibold truncate flex-1">
+        <div className="p-4 pb-0 flex flex-col flex-1">
+          <div className="flex items-start justify-between gap-2 mb-2 min-h-7">
+            <p className="text-text text-lg font-semibold truncate flex-1 leading-7">
               {project.name}
             </p>
-            <span className="text-textMuted text-xs capitalize shrink-0">
+            <span className="text-textMuted text-xs capitalize shrink-0 leading-7">
               {project.status}
             </span>
           </div>
-          <p className="text-textMuted text-sm line-clamp-2 mb-3">
+          <p className="text-textMuted text-sm line-clamp-2 min-h-10 mb-3 leading-5">
             {project.raw_prompt}
           </p>
-          <div className="flex flex-wrap gap-2 mb-3">
+          <div className="flex flex-wrap content-start gap-2 min-h-[3.25rem] mb-3">
             <Badge>
               {project.dealCount === 1
                 ? "1 deal"
@@ -54,7 +57,7 @@ export function ProjectListItemCard({
           </div>
         </div>
       </Link>
-      <div className="px-4 pb-4 flex items-center justify-between gap-3">
+      <div className="mt-auto px-4 pb-4 pt-1 flex items-center justify-between gap-3 min-h-10">
         <p className="text-textMuted text-xs truncate min-w-0">
           {project.last_scout_at
             ? `Last scout ${formatDate(project.last_scout_at)}`
@@ -74,7 +77,7 @@ export function ProjectListItemCard({
 
 function ProjectPhotoMosaic({ photos }: { photos: (string | null)[] }) {
   return (
-    <div className="grid grid-cols-3 grid-rows-2 aspect-[3/2] bg-surfaceAlt">
+    <div className="grid grid-cols-3 grid-rows-2 aspect-[3/2] bg-surfaceAlt shrink-0">
       {photos.map((url, i) =>
         url ? (
           // eslint-disable-next-line @next/next/no-img-element
