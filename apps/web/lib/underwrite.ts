@@ -7,6 +7,7 @@ import {
   DEFAULT_LTR_VACANCY_RATE,
   DEFAULT_STR_MANAGEMENT_FEE_RATE,
   defaultStrSchedule,
+  estimateInsuranceMonthly,
   estimateMaintenanceMonthly,
   insuranceRateForState,
   propertyTaxRateForState,
@@ -27,8 +28,8 @@ import type { DealsRow } from "./database.types";
  * Three surfaces show a cashflow for the same deal and must agree:
  *   - the deal-detail editor seeds its input fields from these values,
  *   - the public /share/[token] page computes its verdict live from them,
- *   - the scout computes equivalent values from the raw listing at scout
- *     time (see lib/scouting.ts) and stores them in deal_scores.
+ *   - the scout underwrites through `underwriteDeal` (this module) and
+ *     stores the result in deal_scores / the nightly digest email.
  *
  * The stored deal_scores row goes stale whenever the cost model evolves
  * (it's only refreshed on re-scout) — so anything user-facing that can
@@ -84,9 +85,21 @@ export function underwriteSeeds(
   marketAdrIntel?: StrMarketAdrIntel | null,
 ): UnderwriteSeeds {
   const strategy = constraints.strategy === "STR" ? "STR" : "LTR";
-  const price = Number(deal.price ?? constraints.priceMax ?? 400000);
+  // Same purchase-price chain as the scout: list price → AVM/est_value →
+  // project priceMax. Skipping est_value made off-market / AVM-only deals
+  // underwrite at priceMax (or $400k) on the detail page while the digest
+  // and deal_scores used the scouted AVM — cashflow/DSCR disagreed.
+  const price = Number(
+    deal.price ?? deal.est_value ?? constraints.priceMax ?? 400000,
+  );
   const ltv = constraints.mortgage?.ltv ?? 0.8;
-  const downPayment = Number(constraints.downPayment ?? price * (1 - ltv));
+  // Treat 0 / missing as "derive from LTV" — same as the scout. A literal
+  // $0 down would otherwise make every deal look free-financed.
+  const downPayment = Number(
+    constraints.downPayment != null && constraints.downPayment > 0
+      ? constraints.downPayment
+      : price * (1 - ltv),
+  );
   const monthlyRent = Number(deal.est_rent ?? 2500);
 
   const homeType =
@@ -132,9 +145,13 @@ export function underwriteSeeds(
       deal.property_tax_rate != null
         ? Number(deal.property_tax_rate)
         : propertyTaxRateForState(deal.state),
+    // Same formula as scout (`estimateInsuranceMonthly`) with a $400/yr
+    // floor so tiny AVMs don't seed a nonsense near-zero premium.
     insuranceAnnual: Math.max(
       400,
-      Math.round(price * insuranceRateForState(deal.state)),
+      Math.round(
+        estimateInsuranceMonthly(price, insuranceRateForState(deal.state)) * 12,
+      ),
     ),
     hoaMonthly: Number(deal.hoa_monthly ?? assumeHoaMonthly(homeType)),
     utilitiesMonthly: strategy === "STR" ? 400 : 0,

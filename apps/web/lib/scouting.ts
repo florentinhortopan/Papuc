@@ -1,23 +1,15 @@
 import {
-  assumeHoaMonthly,
-  computeAutoPMIRateFromLoan,
   computeBaseScore,
   computeBatchContext,
-  computeProForma,
-  DEFAULT_CLOSING_COSTS_PCT,
-  defaultStrSchedule,
-  estimateInsuranceMonthly,
   estimateScoutCredits,
   expandMarketsForScout,
   extractZillowAddress,
   HasDataClient,
-  insuranceRateForState,
   propertyTaxRateForState,
   RealEstateAPIClient,
   resolveEffectiveDaysOnZillow,
   resolveScoutRule,
   streetFromZillowUrl,
-  strScheduleFromEstimate,
   type ListingRecency,
   type Market,
   type MLSListingSummary,
@@ -34,6 +26,7 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getOrResearchMarketStrIntel } from "./str-intel";
+import { underwriteDeal, type UnderwritableDeal } from "./underwrite";
 
 const MAX_HYDRATE_PARALLEL = 5;
 /**
@@ -289,7 +282,6 @@ export async function scoutProjectInternal(
       providerQuery,
     );
 
-    const downPayment = constraints.downPayment ?? 0;
     const targetCashflow = constraints.targetMonthlyCashflow ?? 0;
 
     // STR projects: sanity-check the rent-based ADR heuristic against
@@ -367,11 +359,6 @@ export async function scoutProjectInternal(
         continue;
       }
 
-      const effectiveDown =
-        downPayment > 0
-          ? downPayment
-          : effectivePrice * (1 - constraints.mortgage.ltv);
-
       const homeType =
         typeof (listing.raw as Record<string, unknown> | undefined)?.homeType ===
         "string"
@@ -394,33 +381,43 @@ export async function scoutProjectInternal(
       // for condos/townhouses that almost always means an unreported fee,
       // not a free ride, so underwrite with a typical fee instead of $0.
       const hoaMonthly = listing.hoaMonthly ?? detail?.hoaMonthly;
-      const underwritingHoa = hoaMonthly ?? assumeHoaMonthly(homeType);
 
-      // Location-aware carrying costs: effective property tax rate and
-      // insurance rate for the listing's state instead of flat national
-      // averages (1.1% tax everywhere made NJ/TX deals look cheap and HI
-      // deals look expensive). The rate is persisted on the deal so the
-      // detail page underwrites at exactly the same number.
+      // Location-aware carrying costs: effective property tax rate for the
+      // listing's state. Persisted on the deal so the detail page underwrites
+      // at exactly the same number via underwriteSeeds.
       const stateCode = listing.state ?? ("state" in market ? market.state : undefined);
       const propertyTaxRatePct = propertyTaxRateForState(stateCode);
-      const insuranceRatePct = insuranceRateForState(stateCode);
 
-      // For STR we hydrate the full 12-month schedule from the shared
-      // helper in @papuc/core so the cashflow we store in deal_scores
-      // (and surface on the deal card) matches exactly what the detail
-      // page recomputes when the user opens the listing. Priority:
-      //   1. comps-based AirROI estimate the user already fetched for
-      //      this exact property (real ADR + seasonality),
-      //   2. rent heuristic clamped into the market's plausible ADR
-      //      range with market-average occupancy (web-search intel),
+      // For STR we hydrate the schedule through underwriteDeal (same helper
+      // the deal-detail + share page use). Priority:
+      //   1. comps-based AirROI estimate already on this property,
+      //   2. rent heuristic clamped to market ADR range,
       //   3. plain rent heuristic.
       const storedEstimate = strEstimates.get(listing.id);
-      const strSchedule =
-        constraints.strategy === "STR" && !isLand
-          ? storedEstimate
-            ? strScheduleFromEstimate(storedEstimate)
-            : defaultStrSchedule(monthlyRent, marketAdrIntel)
-          : null;
+      const dealForUnderwrite: UnderwritableDeal = {
+        price: mlsPrice ?? null,
+        est_value: avm ?? null,
+        est_rent: monthlyRent,
+        state: listing.state ?? null,
+        hoa_monthly: hoaMonthly ?? null,
+        property_tax_rate: propertyTaxRatePct,
+        mls_data: listing.raw ?? null,
+        str_adr: storedEstimate?.adr ?? null,
+        str_occupancy: storedEstimate?.occupancy ?? null,
+        str_monthly_distribution: storedEstimate?.monthlyRevenueDistribution ?? null,
+        str_estimated_at: storedEstimate ? new Date().toISOString() : null,
+      };
+      // Land always underwrites as $0-rent LTR so we never invent STR revenue
+      // for a vacant parcel.
+      const underwriteConstraints: ProjectConstraints = isLand
+        ? { ...constraints, strategy: "LTR" }
+        : constraints;
+      const { seeds, result: proforma } = underwriteDeal(
+        dealForUnderwrite,
+        underwriteConstraints,
+        isLand ? undefined : marketAdrIntel,
+      );
+      const strSchedule = seeds.strSchedule;
       // Provenance + value of the ADR assumption, persisted with the
       // score so the deal card and detail page can display the exact
       // nightly rate this cashflow was underwritten at.
@@ -435,36 +432,6 @@ export async function scoutProjectInternal(
                 marketAdrIntel.adrMedian !== undefined)
             ? ("market_checked" as const)
             : ("heuristic" as const);
-
-      // Be explicit about every cost so the cashflow we store in
-      // `deal_scores` matches what the deal-detail page recomputes live.
-      // Without this, a $1M deal scouted with the proforma's default
-      // $100/mo insurance would show a wildly rosier cashflow on the card
-      // than on the detail page (which scales insurance with price).
-      const proforma = computeProForma({
-        price: effectivePrice,
-        downPayment: effectiveDown,
-        rateAPR: constraints.mortgage.rateAPR,
-        termYears: constraints.mortgage.termYears,
-        interestOnly: constraints.mortgage.interestOnly ?? false,
-        // Land always underwrites as a $0-rent LTR: passing "STR" without a
-        // schedule would fall back to the proforma's $200/night default and
-        // invent revenue for a vacant parcel.
-        strategy: isLand ? "LTR" : constraints.strategy,
-        monthlyRentLTR: constraints.strategy === "LTR" ? monthlyRent : 0,
-        monthlyNights: strSchedule?.monthlyNights,
-        monthlyADR: strSchedule?.monthlyADR,
-        monthlyOccupancy: strSchedule?.monthlyOccupancy,
-        monthlyAvgStays: strSchedule?.monthlyAvgStays,
-        hoaMonthly: underwritingHoa,
-        propertyTaxRatePct,
-        insuranceMonthly: estimateInsuranceMonthly(effectivePrice, insuranceRatePct),
-        pmiRatePct: computeAutoPMIRateFromLoan(effectivePrice, effectiveDown),
-        closingCosts: effectivePrice * DEFAULT_CLOSING_COSTS_PCT,
-        // Maintenance (1%/yr of value), LTR vacancy (5%), and management
-        // fees (15% STR / 8% LTR) come from the shared core defaults so
-        // the detail page recomputes the identical cashflow.
-      });
 
       const monthlyCashflow = proforma.annualPreTaxProfit / 12;
       // Land skips both rent-based gates: with $0 income its DSCR is 0 and
@@ -496,7 +463,7 @@ export async function scoutProjectInternal(
           cashOnCash: proforma.cashOnCashReturn,
           assetClass: isLand ? "land" : "rental",
           signals: {
-            price: effectivePrice,
+            price: seeds.price,
             priceChange: listing.priceChange,
             priceChangedAt: listing.priceChangedAt,
             daysOnMarket: listing.daysOnMarket,
@@ -1420,7 +1387,6 @@ export async function scoutComparablesForDeal(
     })),
   );
 
-  const downPayment = constraints.downPayment ?? 0;
   const targetCashflow = constraints.targetMonthlyCashflow ?? 0;
   const landOnlyProject = isLandOnlyProject(constraints);
 
@@ -1438,11 +1404,6 @@ export async function scoutComparablesForDeal(
       const effectivePrice = mlsPrice ?? avm;
       if (!effectivePrice) continue;
 
-      const effectiveDown =
-        downPayment > 0
-          ? downPayment
-          : effectivePrice * (1 - constraints.mortgage.ltv);
-
       const homeType =
         typeof (listing.raw as Record<string, unknown> | undefined)?.homeType ===
         "string"
@@ -1456,26 +1417,27 @@ export async function scoutComparablesForDeal(
           estimateRentFromPrice(effectivePrice));
 
       const hoaMonthly = listing.hoaMonthly ?? detail.hoaMonthly;
-      const underwritingHoa = hoaMonthly ?? assumeHoaMonthly(homeType);
       const stateCode = listing.state ?? subject.state ?? undefined;
       const propertyTaxRatePct = propertyTaxRateForState(stateCode);
-      const insuranceRatePct = insuranceRateForState(stateCode);
 
-      const proforma = computeProForma({
-        price: effectivePrice,
-        downPayment: effectiveDown,
-        rateAPR: constraints.mortgage.rateAPR,
-        termYears: constraints.mortgage.termYears,
-        interestOnly: constraints.mortgage.interestOnly ?? false,
-        strategy: isLand ? "LTR" : constraints.strategy === "STR" ? "LTR" : constraints.strategy,
-        // Comps underwrite as LTR so we don't invent STR seasonality without
-        // an AirROI estimate; users can open the deal and run STR later.
-        monthlyRentLTR: monthlyRent,
-        hoaMonthly: underwritingHoa,
-        propertyTaxRatePct,
-        insuranceMonthly: estimateInsuranceMonthly(effectivePrice, insuranceRatePct),
-        pmiRatePct: computeAutoPMIRateFromLoan(effectivePrice, effectiveDown),
-        closingCosts: effectivePrice * DEFAULT_CLOSING_COSTS_PCT,
+      // Comps underwrite as LTR via the shared helper so card/detail/email
+      // agree; users can open the deal and switch to STR later.
+      const dealForUnderwrite: UnderwritableDeal = {
+        price: mlsPrice ?? null,
+        est_value: avm ?? null,
+        est_rent: monthlyRent,
+        state: listing.state ?? null,
+        hoa_monthly: hoaMonthly ?? null,
+        property_tax_rate: propertyTaxRatePct,
+        mls_data: listing.raw ?? null,
+        str_adr: null,
+        str_occupancy: null,
+        str_monthly_distribution: null,
+        str_estimated_at: null,
+      };
+      const { seeds, result: proforma } = underwriteDeal(dealForUnderwrite, {
+        ...constraints,
+        strategy: "LTR",
       });
 
       const monthlyCashflow = proforma.annualPreTaxProfit / 12;
@@ -1486,7 +1448,7 @@ export async function scoutComparablesForDeal(
         cashOnCash: proforma.cashOnCashReturn,
         assetClass: isLand ? "land" : "rental",
         signals: {
-          price: effectivePrice,
+          price: seeds.price,
           priceChange: listing.priceChange,
           priceChangedAt: listing.priceChangedAt,
           daysOnMarket: listing.daysOnMarket,
