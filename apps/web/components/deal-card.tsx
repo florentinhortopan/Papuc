@@ -1,4 +1,5 @@
 import { estimateSTRAdrFromLTRRent, type Strategy } from "@papuc/core";
+import { Heart, RotateCcw, X } from "lucide-react";
 import Link from "next/link";
 
 import { CashflowBadge } from "@/components/cashflow-badge";
@@ -19,9 +20,20 @@ const ADR_SOURCE_LABEL: Record<string, string> = {
 export function DealCard({
   deal,
   strategy,
+  busy = false,
+  saved = false,
+  onSave,
+  onSkip,
+  skipLabel,
 }: {
   deal: DealWithScore;
   strategy?: Strategy;
+  busy?: boolean;
+  saved?: boolean;
+  onSave?: () => void;
+  onSkip?: () => void;
+  /** When set (e.g. Restore on Skipped), replaces the X icon. */
+  skipLabel?: string;
 }) {
   const score = deal.score;
   // STR: show the nightly rate the cashflow was actually underwritten at
@@ -40,33 +52,80 @@ export function DealCard({
   const street = dealStreetAddress(deal);
 
   return (
-    <Link
-      href={`/deals/${deal.id}`}
-      className="bg-surface border border-border rounded-2xl overflow-hidden block hover:border-border/80 transition-colors"
-    >
+    <div className="bg-surface border border-border rounded-2xl overflow-hidden hover:border-border/80 transition-colors">
       <div className="relative">
-        {photo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={photo}
-            alt={street ?? "deal"}
-            className="w-full h-48 object-cover"
-          />
-        ) : (
-          <div className="w-full h-48 bg-surfaceAlt flex items-center justify-center">
-            <span className="text-textMuted text-xs">No photo</span>
-          </div>
-        )}
-        {typeof score?.score === "number" ? (
-          <div className="absolute right-3 top-3 bg-black/65 rounded-full px-2 py-1">
-            <span className="text-white text-xs font-semibold">
-              {score.score}
-            </span>
+        <Link href={`/deals/${deal.id}`} className="block group">
+          {photo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={photo}
+              alt={street ?? "deal"}
+              className="w-full h-48 object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+            />
+          ) : (
+            <div className="w-full h-48 bg-surfaceAlt flex items-center justify-center">
+              <span className="text-textMuted text-xs">No photo</span>
+            </div>
+          )}
+          {typeof score?.score === "number" ? (
+            <div className="absolute right-3 top-3 bg-black/65 rounded-full px-2 py-1 z-[1]">
+              <span className="text-white text-xs font-semibold">
+                {score.score}
+              </span>
+            </div>
+          ) : null}
+        </Link>
+
+        {onSave || onSkip ? (
+          <div className="absolute bottom-2 right-2 z-10 flex gap-1.5">
+            {onSkip ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onSkip();
+                }}
+                aria-label={skipLabel ?? "Skip deal"}
+                title={skipLabel ?? "Skip — hide from this project's deals"}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black/85 disabled:opacity-50 shadow"
+              >
+                {skipLabel ? (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                ) : (
+                  <X className="h-3.5 w-3.5" />
+                )}
+              </button>
+            ) : null}
+            {onSave ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onSave();
+                }}
+                aria-label={saved ? "Unsave deal" : "Save deal"}
+                aria-pressed={saved}
+                title={saved ? "Remove from Saved" : "Save to Portfolio"}
+                className={`flex h-8 w-8 items-center justify-center rounded-full shadow disabled:opacity-50 ${
+                  saved
+                    ? "bg-primary text-primaryFg"
+                    : "bg-black/70 text-white hover:bg-primary"
+                }`}
+              >
+                <Heart
+                  className={`h-3.5 w-3.5 ${saved ? "fill-current" : ""}`}
+                />
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
 
-      <div className="p-4">
+      <Link href={`/deals/${deal.id}`} className="block p-4">
         <div className="flex justify-between items-start gap-2 mb-1">
           <p className="text-text font-semibold truncate flex-1">
             {street ?? "Address pending"}
@@ -124,23 +183,33 @@ export function DealCard({
         ) : null}
 
         {sourceLink ? (
-          <a
-            href={sourceLink.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center gap-1 text-primary text-xs hover:underline mt-3"
+          <span
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              window.open(sourceLink.url, "_blank", "noopener,noreferrer");
+            }}
+            className="inline-flex items-center gap-1 text-primary text-xs hover:underline mt-3 cursor-pointer"
             title={
               sourceLink.isExact
                 ? `Open this listing on ${sourceLink.provider}`
                 : `${sourceLink.provider} address search (no deep link from data provider)`
             }
+            role="link"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                window.open(sourceLink.url, "_blank", "noopener,noreferrer");
+              }
+            }}
           >
             {sourceLink.label}
             <span aria-hidden>↗</span>
-          </a>
+          </span>
         ) : null}
-      </div>
-    </Link>
+      </Link>
+    </div>
   );
 }

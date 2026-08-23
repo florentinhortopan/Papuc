@@ -23,6 +23,10 @@ import { PublicFeedToggle } from "@/components/public-feed-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { SubscriptionTier } from "@/lib/database.types";
+import {
+  deleteDealAction,
+  postDealAction,
+} from "@/lib/deal-actions-client";
 import { listDeals, type DealWithScore } from "@/lib/deals";
 import { deleteProject, updateProject, type ProjectRow } from "@/lib/projects";
 import { formatDate, formatMarket, formatMoney } from "@/lib/format";
@@ -31,11 +35,30 @@ import {
   isScoutWithinCooldown,
 } from "@/lib/scout-freshness";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 
 function rankByScore(deals: DealWithScore[]): DealWithScore[] {
   return [...deals].sort(
     (a, b) => (b.score?.score ?? 0) - (a.score?.score ?? 0),
   );
+}
+
+type DealStatusChip = "all" | "saved" | "skipped";
+
+const STATUS_CHIPS: Array<{ id: DealStatusChip; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "saved", label: "Saved" },
+  { id: "skipped", label: "Skipped" },
+];
+
+function dealsForStatusChip(
+  deals: DealWithScore[],
+  chip: DealStatusChip,
+): DealWithScore[] {
+  if (chip === "saved") return deals.filter((d) => d.action === "saved");
+  if (chip === "skipped") return deals.filter((d) => d.action === "dismissed");
+  // Default grid hides skipped deals (same idea as Discover For you).
+  return deals.filter((d) => d.action !== "dismissed");
 }
 
 /** Zillow homeType codes (as stored on deals) → our constraint enum. */
@@ -98,14 +121,101 @@ export function ProjectDetailClient({
   const [lastScoutAt, setLastScoutAt] = useState<string | null>(
     project.last_scout_at,
   );
+  const [statusChip, setStatusChip] = useState<DealStatusChip>("all");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionNote, setActionNote] = useState<string | null>(null);
   const projectIdRef = useRef(project.id);
   const scoutFresh = isScoutWithinCooldown(lastScoutAt);
   const scoutedAgo = formatScoutedAgo(lastScoutAt);
 
-  const visibleDeals = useMemo(
-    () => applyDealFilters(deals, filters),
-    [deals, filters],
+  const statusCounts = useMemo(
+    () => ({
+      all: deals.filter((d) => d.action !== "dismissed").length,
+      saved: deals.filter((d) => d.action === "saved").length,
+      skipped: deals.filter((d) => d.action === "dismissed").length,
+    }),
+    [deals],
   );
+
+  const statusPool = useMemo(
+    () => dealsForStatusChip(deals, statusChip),
+    [deals, statusChip],
+  );
+
+  const visibleDeals = useMemo(
+    () => applyDealFilters(statusPool, filters),
+    [statusPool, filters],
+  );
+
+  function setDealAction(
+    dealId: string,
+    action: DealWithScore["action"],
+  ) {
+    setDeals((prev) =>
+      prev.map((d) => (d.id === dealId ? { ...d, action } : d)),
+    );
+  }
+
+  async function onSave(deal: DealWithScore) {
+    setBusyId(deal.id);
+    setActionNote(null);
+    setError(null);
+    try {
+      await postDealAction(deal.id, deal.project_id, "saved");
+      setDealAction(deal.id, "saved");
+      setActionNote("Saved — find it under Saved or in Portfolio.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onUnsave(deal: DealWithScore) {
+    setBusyId(deal.id);
+    setActionNote(null);
+    setError(null);
+    try {
+      await deleteDealAction(deal.id, "saved");
+      setDealAction(deal.id, null);
+      setActionNote("Removed from Saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onSkip(deal: DealWithScore) {
+    setBusyId(deal.id);
+    setActionNote(null);
+    setError(null);
+    try {
+      await postDealAction(deal.id, deal.project_id, "dismissed");
+      setDealAction(deal.id, "dismissed");
+      setActionNote("Skipped — restore anytime from the Skipped chip.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onUnskip(deal: DealWithScore) {
+    setBusyId(deal.id);
+    setActionNote(null);
+    setError(null);
+    try {
+      await deleteDealAction(deal.id, "dismissed");
+      setDealAction(deal.id, null);
+      setActionNote("Restored — it's back in All.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   // Mirror of `deals.length` readable inside stable callbacks without
   // recreating them (recreating refreshDeals used to churn the realtime
   // subscription on every deals change).
@@ -535,14 +645,48 @@ export function ProjectDetailClient({
       <h2 className="text-lg font-semibold mt-8 mb-3">
         Deals{" "}
         {deals.length
-          ? visibleDeals.length !== deals.length
+          ? visibleDeals.length !== statusPool.length ||
+            statusPool.length !== deals.length
             ? `(${visibleDeals.length} of ${deals.length})`
             : `(${deals.length})`
           : ""}
       </h2>
       {deals.length > 0 ? (
+        <div className="flex gap-2 overflow-x-auto pb-3 mb-1 -mx-1 px-1 scrollbar-none">
+          {STATUS_CHIPS.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => {
+                setStatusChip(chip.id);
+                setActionNote(null);
+              }}
+              className={cn(
+                "shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
+                statusChip === chip.id
+                  ? "border-primary bg-primary/15 text-primary"
+                  : "border-border bg-surface text-textMuted hover:text-text",
+              )}
+            >
+              {chip.label}
+              <span className="ml-1.5 tabular-nums opacity-70">
+                {statusCounts[chip.id]}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {actionNote ? (
+        <p className="text-textMuted text-xs mb-3">{actionNote}</p>
+      ) : null}
+      {!isOwner && error ? (
+        <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 mb-3">
+          <p className="text-danger text-xs">{error}</p>
+        </div>
+      ) : null}
+      {deals.length > 0 ? (
         <DealFiltersBar
-          deals={deals}
+          deals={statusPool}
           filters={filters}
           onChange={(next) => {
             setFilters(next);
@@ -592,10 +736,20 @@ export function ProjectDetailClient({
             </p>
           )}
         </div>
+      ) : statusPool.length === 0 ? (
+        <div className="bg-surface border border-border rounded-2xl p-6 text-center">
+          <p className="text-textMuted text-sm">
+            {statusChip === "saved"
+              ? "No saved deals yet — tap the heart on a listing."
+              : statusChip === "skipped"
+                ? "No skipped deals yet."
+                : "No deals in this view."}
+          </p>
+        </div>
       ) : visibleDeals.length === 0 && isAnyFilterActive(filters) ? (
         <div className="bg-surface border border-border rounded-2xl p-6 text-center">
           <p className="text-textMuted text-sm">
-            No deals match the current filters ({deals.length} hidden).
+            No deals match the current filters ({statusPool.length} hidden).
           </p>
           <Button
             variant="secondary"
@@ -610,9 +764,28 @@ export function ProjectDetailClient({
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {visibleDeals.map((deal) => (
-            <DealCard key={deal.id} deal={deal} strategy={project.constraints.strategy} />
-          ))}
+          {visibleDeals.map((deal) => {
+            const isSkipped = statusChip === "skipped";
+            const isSaved = deal.action === "saved";
+            return (
+              <DealCard
+                key={deal.id}
+                deal={deal}
+                strategy={project.constraints.strategy}
+                busy={busyId === deal.id}
+                saved={isSaved}
+                onSave={
+                  isSkipped
+                    ? undefined
+                    : () => void (isSaved ? onUnsave(deal) : onSave(deal))
+                }
+                onSkip={() =>
+                  void (isSkipped ? onUnskip(deal) : onSkip(deal))
+                }
+                skipLabel={isSkipped ? "Restore" : undefined}
+              />
+            );
+          })}
         </div>
       )}
 

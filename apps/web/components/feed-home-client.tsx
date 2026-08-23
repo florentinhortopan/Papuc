@@ -19,6 +19,10 @@ import {
   type FeedDeal,
   type PersonalizedFeed,
 } from "@/lib/feed";
+import {
+  deleteDealAction,
+  postDealAction,
+} from "@/lib/deal-actions-client";
 import { formatMarket } from "@/lib/format";
 import type { ProjectConstraints } from "@papuc/core";
 
@@ -27,35 +31,6 @@ type SearchResult = {
   constraints: ProjectConstraints;
   prompt: string;
 };
-
-async function postDealAction(
-  deal: FeedDeal,
-  action: "saved" | "dismissed",
-): Promise<void> {
-  const res = await fetch(`/api/deals/${deal.id}/action`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, projectId: deal.project.id }),
-  });
-  const json = (await res.json().catch(() => ({}))) as { error?: string };
-  if (!res.ok) {
-    throw new Error(json.error || `action failed (${res.status})`);
-  }
-}
-
-async function deleteDealAction(
-  dealId: string,
-  action: "saved" | "dismissed",
-): Promise<void> {
-  const res = await fetch(
-    `/api/deals/${dealId}/action?action=${encodeURIComponent(action)}`,
-    { method: "DELETE" },
-  );
-  const json = (await res.json().catch(() => ({}))) as { error?: string };
-  if (!res.ok) {
-    throw new Error(json.error || `undo failed (${res.status})`);
-  }
-}
 
 export function FeedHomeClient({
   initialFeed,
@@ -132,7 +107,7 @@ export function FeedHomeClient({
     setActionError(null);
     setActionNote(null);
     try {
-      await postDealAction(deal, "saved");
+      await postDealAction(deal.id, deal.project.id, "saved");
       setFeed((prev) => {
         const withoutSkip = prev.skipped.filter((d) => d.id !== deal.id);
         if (prev.saved.some((d) => d.id === deal.id)) {
@@ -157,7 +132,7 @@ export function FeedHomeClient({
     setActionError(null);
     setActionNote(null);
     try {
-      await postDealAction(deal, "dismissed");
+      await postDealAction(deal.id, deal.project.id, "dismissed");
       setFeed((prev) => ({
         ...prev,
         saved: prev.saved.filter((d) => d.id !== deal.id),

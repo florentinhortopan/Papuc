@@ -48,7 +48,11 @@ function pickScore(row: DealRowWithJoins): DealScoresRow | null {
 function pickAction(row: DealRowWithJoins): DealActionKind | null {
   const arr = row.deal_actions;
   if (!arr || arr.length === 0) return null;
-  return arr[0]?.action ?? null;
+  const kinds = arr.map((a) => a.action);
+  // Prefer like/skip over contact/offer so the project grid status is accurate.
+  if (kinds.includes("saved")) return "saved";
+  if (kinds.includes("dismissed")) return "dismissed";
+  return kinds[0] ?? null;
 }
 
 export async function listDeals(
