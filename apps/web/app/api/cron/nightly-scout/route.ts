@@ -12,9 +12,48 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+/**
+ * TEMP email smoke-test knobs — revert after verifying Resend:
+ * - DIGEST_MIN_SCORE was 70
+ * - DIGEST_FALLBACK_EXISTING lets digests fire when the cheap nightly
+ *   scout finds no brand-new listings
+ */
+const DIGEST_MIN_SCORE = 0;
+const DIGEST_FALLBACK_EXISTING = true;
+const DIGEST_FALLBACK_LIMIT = 5;
+
 type OwnerDigestBucket = {
   projects: DigestProject[];
 };
+
+function toDigestDeal(d: {
+  id: string;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  deal_scores?:
+    | { score?: unknown; dscr?: unknown; monthly_cashflow?: unknown }
+    | Array<{ score?: unknown; dscr?: unknown; monthly_cashflow?: unknown }>
+    | null;
+}): DigestDeal {
+  const scores = Array.isArray(d.deal_scores) ? d.deal_scores[0] : d.deal_scores;
+  return {
+    id: d.id,
+    address: d.address ?? null,
+    city: d.city ?? null,
+    state: d.state ?? null,
+    score: Number(scores?.score ?? 0),
+    dscr:
+      scores?.dscr != null && Number.isFinite(Number(scores.dscr))
+        ? Number(scores.dscr)
+        : null,
+    monthlyCashflow:
+      scores?.monthly_cashflow != null &&
+      Number.isFinite(Number(scores.monthly_cashflow))
+        ? Number(scores.monthly_cashflow)
+        : null,
+  };
+}
 
 /**
  * Triggered by Vercel Cron (vercel.json -> 0 8 * * *) and authenticated by
@@ -120,33 +159,25 @@ export async function GET(req: Request) {
         )
         .eq("project_id", proj.id);
 
-      const newOnes: DigestDeal[] = (post ?? [])
-        .filter((d: { id: string }) => !preIds.has(d.id))
-        .map((d: any) => {
-          const scores = Array.isArray(d.deal_scores)
-            ? d.deal_scores[0]
-            : d.deal_scores;
-          return {
-            id: d.id as string,
-            address: (d.address as string | null) ?? null,
-            city: (d.city as string | null) ?? null,
-            state: (d.state as string | null) ?? null,
-            score: Number(scores?.score ?? 0),
-            dscr:
-              scores?.dscr != null && Number.isFinite(Number(scores.dscr))
-                ? Number(scores.dscr)
-                : null,
-            monthlyCashflow:
-              scores?.monthly_cashflow != null &&
-              Number.isFinite(Number(scores.monthly_cashflow))
-                ? Number(scores.monthly_cashflow)
-                : null,
-          };
-        })
-        .filter((d) => d.score >= 70)
+      const mapped: DigestDeal[] = (post ?? []).map((d: any) =>
+        toDigestDeal(d),
+      );
+
+      let digestDeals: DigestDeal[] = mapped
+        .filter((d) => !preIds.has(d.id))
+        .filter((d) => d.score >= DIGEST_MIN_SCORE)
         .sort((a, b) => b.score - a.score);
 
-      if (newOnes.length > 0) {
+      // TEMP: if nightly found nothing new, still email top existing matches
+      // so we can verify Resend end-to-end.
+      if (DIGEST_FALLBACK_EXISTING && digestDeals.length === 0) {
+        digestDeals = mapped
+          .filter((d) => d.score >= DIGEST_MIN_SCORE)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, DIGEST_FALLBACK_LIMIT);
+      }
+
+      if (digestDeals.length > 0) {
         let bucket = digestsByOwner.get(proj.owner_id);
         if (!bucket) {
           bucket = { projects: [] };
@@ -155,14 +186,14 @@ export async function GET(req: Request) {
         bucket.projects.push({
           projectId: proj.id,
           projectName: proj.name,
-          deals: newOnes,
+          deals: digestDeals,
         });
       }
 
       summary.push({
         projectId: proj.id,
         ok: true,
-        newDeals: newOnes.length,
+        newDeals: digestDeals.length,
       });
     } catch (err) {
       summary.push({
