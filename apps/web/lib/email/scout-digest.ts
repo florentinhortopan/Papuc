@@ -1,8 +1,19 @@
+/**
+ * Nightly scout digest — light, email-client-safe HTML (tables + inline CSS).
+ * Design tokens from Stitch Papuc digest + UX Pro newsletter palette.
+ */
+
 import {
   emailFromAddress,
   getResendClient,
   siteOrigin,
 } from "@/lib/email/resend";
+
+/** Product gate: only new deals at or above this score enter digests. */
+export const DIGEST_MIN_SCORE = 30;
+
+const FONT =
+  "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
 
 export type DigestDeal = {
   id: string;
@@ -12,6 +23,7 @@ export type DigestDeal = {
   score: number;
   dscr: number | null;
   monthlyCashflow: number | null;
+  imageUrl: string | null;
 };
 
 export type DigestProject = {
@@ -24,6 +36,8 @@ export type ScoutDigestInput = {
   to: string;
   displayName?: string | null;
   projects: DigestProject[];
+  /** Defaults to DIGEST_MIN_SCORE — kept injectable for tests. */
+  minScore?: number;
 };
 
 function formatMoney(n: number): string {
@@ -37,12 +51,78 @@ function dealLabel(d: DigestDeal): string {
   return "Address pending";
 }
 
+function placeLine(d: DigestDeal): string {
+  return [d.city, d.state].filter(Boolean).join(", ");
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/** Only embed absolute https images — skip everything else. */
+export function safeHttpsImageUrl(url: string | null | undefined): string | null {
+  if (!url?.trim()) return null;
+  try {
+    const u = new URL(url.trim());
+    if (u.protocol !== "https:") return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+function metricCell(label: string, value: string, emphasize = false): string {
+  const valueColor = emphasize ? "#7C5CFF" : "#1A1A1A";
+  return `<td width="33%" valign="top" style="padding:0 4px;text-align:center;">
+  <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:#64748B;line-height:16px;margin:0 0 4px;">${label}</div>
+  <div style="font-size:18px;font-weight:700;color:${valueColor};line-height:24px;">${escapeHtml(value)}</div>
+</td>`;
+}
+
+function dealCardHtml(d: DigestDeal, origin: string): string {
+  const href = `${origin}/deals/${d.id}`;
+  const label = dealLabel(d);
+  const place = placeLine(d);
+  const cf =
+    d.monthlyCashflow != null ? `${formatMoney(d.monthlyCashflow)}/mo` : "—";
+  const dscr =
+    d.dscr != null && Number.isFinite(d.dscr) ? d.dscr.toFixed(2) : "—";
+  const score = String(Math.round(d.score));
+  const img = safeHttpsImageUrl(d.imageUrl);
+
+  const media = img
+    ? `<img src="${escapeHtml(img)}" width="552" alt="${escapeHtml(label)}" style="display:block;width:100%;max-width:552px;height:auto;border:0;border-radius:4px 4px 0 0;" />`
+    : `<div style="background:#F1F5F9;color:#64748B;font-size:13px;text-align:center;padding:48px 16px;border-radius:4px 4px 0 0;">No photo</div>`;
+
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;border:1px solid #E2E8F0;border-radius:4px;overflow:hidden;background:#FFFFFF;">
+  <tr>
+    <td style="padding:0;line-height:0;font-size:0;">
+      <a href="${href}" style="text-decoration:none;">${media}</a>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:16px 20px 20px;">
+      <a href="${href}" style="color:#7C5CFF;font-size:16px;font-weight:600;line-height:24px;text-decoration:none;">${escapeHtml(label)}</a>
+      ${
+        place
+          ? `<div style="color:#64748B;font-size:13px;line-height:20px;margin:4px 0 12px;">${escapeHtml(place)}</div>`
+          : `<div style="margin:0 0 12px;"></div>`
+      }
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;">
+        <tr>
+          ${metricCell("Score", score, true)}
+          ${metricCell("DSCR", dscr)}
+          ${metricCell("Cashflow", cf)}
+        </tr>
+      </table>
+      <a href="${href}" style="display:inline-block;background:#7C5CFF;color:#FFFFFF;font-size:14px;font-weight:600;line-height:20px;text-decoration:none;padding:10px 16px;border-radius:4px;">View deal</a>
+    </td>
+  </tr>
+</table>`;
 }
 
 export function buildScoutDigestContent(input: ScoutDigestInput): {
@@ -52,12 +132,13 @@ export function buildScoutDigestContent(input: ScoutDigestInput): {
   totalDeals: number;
 } {
   const origin = siteOrigin();
+  const minScore = input.minScore ?? DIGEST_MIN_SCORE;
   const totalDeals = input.projects.reduce((n, p) => n + p.deals.length, 0);
   const projectCount = input.projects.length;
   const subject =
     projectCount === 1
-      ? `${totalDeals} new high-score deal${totalDeals === 1 ? "" : "s"} — ${input.projects[0]!.projectName}`
-      : `${totalDeals} new high-score deals across ${projectCount} projects`;
+      ? `${totalDeals} new deal${totalDeals === 1 ? "" : "s"} — ${input.projects[0]!.projectName}`
+      : `${totalDeals} new deals across ${projectCount} projects`;
 
   const greeting = input.displayName?.trim()
     ? `Hi ${input.displayName.trim()},`
@@ -65,69 +146,89 @@ export function buildScoutDigestContent(input: ScoutDigestInput): {
 
   const projectBlocksHtml = input.projects
     .map((p) => {
-      const rows = p.deals
+      const cards = p.deals
         .slice(0, 5)
-        .map((d) => {
-          const href = `${origin}/deals/${d.id}`;
-          const cf =
-            d.monthlyCashflow != null
-              ? `${formatMoney(d.monthlyCashflow)}/mo`
-              : "—";
-          const dscr =
-            d.dscr != null && Number.isFinite(d.dscr)
-              ? d.dscr.toFixed(2)
-              : "—";
-          return `<tr>
-  <td style="padding:10px 0;border-bottom:1px solid #2a2a36;">
-    <a href="${href}" style="color:#7c5cff;font-weight:600;text-decoration:none;">${escapeHtml(dealLabel(d))}</a>
-    <div style="color:#8b8b96;font-size:12px;margin-top:4px;">
-      Score ${Math.round(d.score)} · DSCR ${dscr} · ${cf}
-    </div>
-  </td>
-</tr>`;
-        })
+        .map((d) => dealCardHtml(d, origin))
         .join("");
       const more =
         p.deals.length > 5
-          ? `<p style="color:#8b8b96;font-size:12px;margin:8px 0 0;">+${p.deals.length - 5} more on this project</p>`
+          ? `<p style="color:#64748B;font-size:13px;line-height:20px;margin:0 0 8px;">+${p.deals.length - 5} more on this project</p>`
           : "";
-      return `<div style="margin:0 0 28px;">
-  <h2 style="margin:0 0 8px;font-size:16px;color:#f5f5f7;">
-    <a href="${origin}/projects/${p.projectId}" style="color:#f5f5f7;text-decoration:none;">${escapeHtml(p.projectName)}</a>
-  </h2>
-  <table width="100%" cellpadding="0" cellspacing="0">${rows}</table>
-  ${more}
-  <p style="margin:12px 0 0;">
-    <a href="${origin}/projects/${p.projectId}" style="color:#7c5cff;font-size:13px;">Open project →</a>
-  </p>
-</div>`;
+      return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 32px;">
+  <tr>
+    <td style="padding:0 0 12px;border-bottom:3px solid #001F3F;">
+      <a href="${origin}/projects/${p.projectId}" style="color:#001F3F;font-size:16px;font-weight:600;line-height:24px;text-decoration:none;">${escapeHtml(p.projectName)}</a>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:16px 0 0;">
+      ${cards}
+      ${more}
+      <p style="margin:8px 0 0;">
+        <a href="${origin}/projects/${p.projectId}" style="color:#7C5CFF;font-size:13px;font-weight:600;text-decoration:none;">Open project →</a>
+      </p>
+    </td>
+  </tr>
+</table>`;
     })
     .join("");
 
+  const hostPath = `${origin.replace(/^https?:\/\//, "")}/projects`;
+
   const html = `<!DOCTYPE html>
-<html>
-<body style="margin:0;padding:0;background:#0b0b0f;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;">
-  <div style="max-width:560px;margin:0 auto;padding:32px 20px;color:#f5f5f7;">
-    <p style="font-size:20px;font-weight:700;margin:0 0 4px;">Papuc</p>
-    <p style="color:#8b8b96;font-size:13px;margin:0 0 24px;">Nightly scout digest</p>
-    <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">${escapeHtml(greeting)}</p>
-    <p style="font-size:15px;line-height:1.5;margin:0 0 24px;">
-      Your overnight scout found <strong>${totalDeals}</strong> new high-score
-      deal${totalDeals === 1 ? "" : "s"} (score ≥ 70).
-    </p>
-    ${projectBlocksHtml}
-    <p style="color:#8b8b96;font-size:12px;line-height:1.5;margin:32px 0 0;">
-      You're receiving this because Nightly scout is on for these projects.
-      Manage projects at <a href="${origin}/projects" style="color:#7c5cff;">${origin.replace(/^https?:\/\//, "")}/projects</a>.
-    </p>
-  </div>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <meta name="supported-color-schemes" content="light" />
+  <title>${escapeHtml(subject)}</title>
+</head>
+<body style="margin:0;padding:0;background:#FCF9F8;font-family:${FONT};">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FCF9F8;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:4px;">
+          <tr>
+            <td style="padding:24px 24px 8px;">
+              <div style="font-size:24px;font-weight:700;line-height:32px;letter-spacing:-0.02em;color:#001F3F;margin:0;">Papuc</div>
+              <div style="font-size:13px;line-height:20px;color:#64748B;margin:4px 0 0;">Nightly scout digest</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 24px 8px;font-size:15px;line-height:24px;color:#1A1A1A;">
+              ${escapeHtml(greeting)}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 24px 24px;font-size:15px;line-height:24px;color:#1A1A1A;">
+              Your overnight scout found <strong>${totalDeals}</strong> new
+              deal${totalDeals === 1 ? "" : "s"} (score ≥ ${minScore}).
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 24px 8px;">
+              ${projectBlocksHtml}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 24px 28px;font-size:12px;line-height:18px;color:#64748B;">
+              You're receiving this because Nightly scout is on for these projects.
+              Manage projects at
+              <a href="${origin}/projects" style="color:#7C5CFF;text-decoration:none;">${escapeHtml(hostPath)}</a>.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>`;
 
   const textLines = [
     greeting,
     "",
-    `Your overnight scout found ${totalDeals} new high-score deal${totalDeals === 1 ? "" : "s"} (score ≥ 70).`,
+    `Your overnight scout found ${totalDeals} new deal${totalDeals === 1 ? "" : "s"} (score ≥ ${minScore}).`,
     "",
   ];
   for (const p of input.projects) {

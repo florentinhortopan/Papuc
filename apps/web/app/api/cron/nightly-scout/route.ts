@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
+  DIGEST_MIN_SCORE,
   sendScoutDigest,
   type DigestDeal,
   type DigestProject,
@@ -12,31 +13,33 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-/**
- * TEMP email smoke-test knobs — revert after verifying Resend:
- * - DIGEST_MIN_SCORE was 70
- * - DIGEST_FALLBACK_EXISTING lets digests fire when the cheap nightly
- *   scout finds no brand-new listings
- */
-const DIGEST_MIN_SCORE = 0;
-const DIGEST_FALLBACK_EXISTING = true;
-const DIGEST_FALLBACK_LIMIT = 5;
-
 type OwnerDigestBucket = {
   projects: DigestProject[];
 };
+
+function firstPhotoUrl(photos: unknown): string | null {
+  if (!Array.isArray(photos) || photos.length === 0) return null;
+  const first = photos[0];
+  return typeof first === "string" && first.trim() ? first.trim() : null;
+}
 
 function toDigestDeal(d: {
   id: string;
   address?: string | null;
   city?: string | null;
   state?: string | null;
+  primary_image_url?: string | null;
+  photos?: unknown;
   deal_scores?:
     | { score?: unknown; dscr?: unknown; monthly_cashflow?: unknown }
     | Array<{ score?: unknown; dscr?: unknown; monthly_cashflow?: unknown }>
     | null;
 }): DigestDeal {
   const scores = Array.isArray(d.deal_scores) ? d.deal_scores[0] : d.deal_scores;
+  const primary =
+    typeof d.primary_image_url === "string" && d.primary_image_url.trim()
+      ? d.primary_image_url.trim()
+      : null;
   return {
     id: d.id,
     address: d.address ?? null,
@@ -52,6 +55,7 @@ function toDigestDeal(d: {
       Number.isFinite(Number(scores.monthly_cashflow))
         ? Number(scores.monthly_cashflow)
         : null,
+    imageUrl: primary ?? firstPhotoUrl(d.photos),
   };
 }
 
@@ -59,7 +63,7 @@ function toDigestDeal(d: {
  * Triggered by Vercel Cron (vercel.json -> 0 8 * * *) and authenticated by
  * the CRON_SECRET shared secret. For each active project with nightly scout
  * enabled, runs a scheduled scout for Pro owners, then emails one Resend
- * digest per owner when new high-score deals appeared.
+ * digest per owner when new deals scoring ≥ DIGEST_MIN_SCORE appeared.
  *
  * Pro-only (see scout-rules.json). Free owners and projects with
  * nightly_scout_enabled=false are skipped.
@@ -113,7 +117,7 @@ export async function GET(req: Request) {
     error?: string;
   }> = [];
 
-  /** Accumulate high-score new deals per owner for a single digest email. */
+  /** Accumulate qualifying new deals per owner for a single digest email. */
   const digestsByOwner = new Map<string, OwnerDigestBucket>();
 
   for (const proj of projects ?? []) {
@@ -155,29 +159,31 @@ export async function GET(req: Request) {
       const { data: post } = await sb
         .from("deals")
         .select(
-          "id, address, city, state, deal_scores!inner(score, dscr, monthly_cashflow)",
+          "id, address, city, state, primary_image_url, photos, deal_scores!inner(score, dscr, monthly_cashflow)",
         )
         .eq("project_id", proj.id);
 
-      const mapped: DigestDeal[] = (post ?? []).map((d: any) =>
-        toDigestDeal(d),
-      );
-
-      let digestDeals: DigestDeal[] = mapped
+      const digestDeals: DigestDeal[] = (post ?? [])
+        .map((d: any) => toDigestDeal(d))
         .filter((d) => !preIds.has(d.id))
         .filter((d) => d.score >= DIGEST_MIN_SCORE)
         .sort((a, b) => b.score - a.score);
 
-      // TEMP: if nightly found nothing new, still email top existing matches
-      // so we can verify Resend end-to-end.
-      if (DIGEST_FALLBACK_EXISTING && digestDeals.length === 0) {
-        digestDeals = mapped
+      // Ops preview: ?includeExisting=1 (still requires CRON_SECRET) emails
+      // top existing deals so we can verify the fancy template without waiting
+      // for brand-new MLS hits.
+      const includeExisting =
+        new URL(req.url).searchParams.get("includeExisting") === "1";
+      let forDigest = digestDeals;
+      if (includeExisting && forDigest.length === 0) {
+        forDigest = (post ?? [])
+          .map((d: any) => toDigestDeal(d))
           .filter((d) => d.score >= DIGEST_MIN_SCORE)
           .sort((a, b) => b.score - a.score)
-          .slice(0, DIGEST_FALLBACK_LIMIT);
+          .slice(0, 5);
       }
 
-      if (digestDeals.length > 0) {
+      if (forDigest.length > 0) {
         let bucket = digestsByOwner.get(proj.owner_id);
         if (!bucket) {
           bucket = { projects: [] };
@@ -186,14 +192,14 @@ export async function GET(req: Request) {
         bucket.projects.push({
           projectId: proj.id,
           projectName: proj.name,
-          deals: digestDeals,
+          deals: forDigest,
         });
       }
 
       summary.push({
         projectId: proj.id,
         ok: true,
-        newDeals: digestDeals.length,
+        newDeals: forDigest.length,
       });
     } catch (err) {
       summary.push({
@@ -230,6 +236,7 @@ export async function GET(req: Request) {
         to,
         displayName: profile?.display_name,
         projects: bucket.projects,
+        minScore: DIGEST_MIN_SCORE,
       });
       if (!result) {
         emails.push({
