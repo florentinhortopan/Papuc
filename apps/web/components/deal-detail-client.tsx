@@ -25,6 +25,7 @@ import { DscrBadge } from "@/components/dscr-badge";
 import { FinancingFitPanel } from "@/components/financing-fit-panel";
 import { MarketSignalBadges } from "@/components/market-signal-badges";
 import { PhotoCarousel } from "@/components/photo-carousel";
+import { ProLockedPanel } from "@/components/pro-locked-panel";
 import { StrCashflowMatrix, defaultStrMatrix, type StrMatrixValue } from "@/components/str-matrix";
 import {
   PhotoConditionEstimate,
@@ -47,6 +48,7 @@ import { dealStreetAddress } from "@/lib/deal-address";
 import { actOnDeal, clearDealAction, type DealWithScore } from "@/lib/deals";
 import { exportProFormaCsv } from "@/lib/export";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
+import type { SubscriptionTier } from "@/lib/database.types";
 import type { ProjectRow } from "@/lib/projects";
 import {
   asScenarioInputs,
@@ -107,6 +109,7 @@ export function DealDetailClient({
   marketAdrIntel,
   autoConditionAnalysis = true,
   isOwner = true,
+  subscriptionTier = "free",
 }: {
   deal: DealWithScore;
   project: ProjectRow;
@@ -119,7 +122,10 @@ export function DealDetailClient({
   autoConditionAnalysis?: boolean;
   /** False when viewing a deal from someone else's public project. */
   isOwner?: boolean;
+  /** Viewer subscription — gates Catch the catch / financing fit. */
+  subscriptionTier?: SubscriptionTier;
 }) {
+  const isPro = subscriptionTier === "pro";
   const router = useRouter();
   const [deal, setDeal] = useState(initialDeal);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1343,7 +1349,7 @@ export function DealDetailClient({
           </CollapsibleCard>
         </div>
 
-        {isOwner ? (
+        {isPro && isOwner ? (
           <div className="order-12 lg:order-none">
             <PhotoConditionEstimate
               dealId={deal.id}
@@ -1365,7 +1371,89 @@ export function DealDetailClient({
               }}
             />
           </div>
-        ) : null}
+        ) : isPro && !isOwner ? (
+          <div className="order-12 lg:order-none">
+            {cachedConditionEstimate ? (
+              <PhotoConditionEstimate
+                dealId={deal.id}
+                cached={cachedConditionEstimate}
+                included={false}
+                onIncludedChange={() => {}}
+                photoCount={photos.length}
+                onEstimateChange={setLiveConditionEstimate}
+                focusFindingId={focusFindingId}
+                focusNonce={focusFindingNonce}
+                autoRun={false}
+                readOnly
+                onSelectPhoto={(i) => {
+                  setPhotoIndex(i);
+                  if (typeof document !== "undefined") {
+                    document
+                      .getElementById("deal-photos")
+                      ?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "nearest",
+                      });
+                  }
+                }}
+              />
+            ) : (
+              <div
+                id="photo-condition-panel"
+                className="bg-surface border border-border rounded-2xl p-4"
+              >
+                <p className="text-text text-base font-semibold mb-1">
+                  Catch the catch
+                </p>
+                <p className="text-textMuted text-xs leading-5">
+                  No photo condition analysis on this listing yet. Run it from a
+                  deal you own.
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="order-12 lg:order-none">
+            <ProLockedPanel
+              id="photo-condition-panel"
+              title="Catch the catch"
+              description={
+                cachedConditionEstimate
+                  ? "Photo condition notes exist on this listing. Upgrade to Pro to open findings, rehab estimates, and inject costs into your scenario."
+                  : "Scan listing photos for red flags and rehab / maintenance estimates — then optionally fold those costs into your underwriting."
+              }
+              feature="Catch the catch unlocks photo condition analysis, rehab estimates, and carousel finding badges that jump into the full report."
+              teaser={
+                cachedConditionEstimate ? (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="success">
+                        {cachedConditionEstimate.overall
+                          ? cachedConditionEstimate.overall.replace(/_/g, " ")
+                          : "Analyzed"}
+                      </Badge>
+                      {cachedConditionEstimate.rehabSuggested != null ? (
+                        <span className="text-text text-xs font-semibold">
+                          Rehab ~
+                          {formatMoney(cachedConditionEstimate.rehabSuggested)}
+                        </span>
+                      ) : null}
+                    </div>
+                    {cachedConditionEstimate.summary ? (
+                      <p className="text-textMuted text-xs leading-5 line-clamp-2">
+                        {cachedConditionEstimate.summary}
+                      </p>
+                    ) : (
+                      <p className="text-textMuted text-xs">
+                        Findings ready — unlock Pro to review them.
+                      </p>
+                    )}
+                  </div>
+                ) : undefined
+              }
+            />
+          </div>
+        )}
 
         {isOwner ? (
           <div className="order-11 lg:order-none">
@@ -1445,30 +1533,46 @@ export function DealDetailClient({
         </div>
 
         <div className="order-[16] lg:order-none">
-          <FinancingFitPanel
-            dealId={deal.id}
-            profile={{
-              strategy: state.strategy,
-              price: derived.price,
-              downPayment: derived.downPayment,
-              ltv: derived.ltv,
-              dscr: result.dscr,
-              dscrLenderHaircut: result.dscrLenderHaircut,
-              monthlyCashflow: result.annualPreTaxProfit / 12,
-              rehabBudget: Math.max(
-                toNum(state.improvements),
-                liveConditionEstimate?.rehabSuggested ??
-                  deal.condition_rehab_suggested ??
-                  0,
-              ),
-              isLand: isLandDeal,
-              state: deal.state,
-              city: deal.city,
-              zip: deal.zip,
-              propertyType: dealHomeType,
-              interestOnly: project.constraints.mortgage?.interestOnly ?? false,
-            }}
-          />
+          {isPro ? (
+            <FinancingFitPanel
+              dealId={deal.id}
+              profile={{
+                strategy: state.strategy,
+                price: derived.price,
+                downPayment: derived.downPayment,
+                ltv: derived.ltv,
+                dscr: result.dscr,
+                dscrLenderHaircut: result.dscrLenderHaircut,
+                monthlyCashflow: result.annualPreTaxProfit / 12,
+                rehabBudget: Math.max(
+                  toNum(state.improvements),
+                  liveConditionEstimate?.rehabSuggested ??
+                    deal.condition_rehab_suggested ??
+                    0,
+                ),
+                isLand: isLandDeal,
+                state: deal.state,
+                city: deal.city,
+                zip: deal.zip,
+                propertyType: dealHomeType,
+                interestOnly: project.constraints.mortgage?.interestOnly ?? false,
+              }}
+            />
+          ) : (
+            <ProLockedPanel
+              id="financing-fit-panel"
+              title="Financing fit"
+              description="Match lenders to this scenario’s DSCR, down payment, location, and rehab needs — then get suggested next steps for buying."
+              feature="Financing fit matches curated lenders to your live scenario and drafts next steps for getting to a loan."
+              teaser={
+                <p className="text-textMuted text-xs leading-5">
+                  Using {formatMoney(derived.price)} ·{" "}
+                  {Math.round(derived.ltv * 100)}% LTV · DSCR{" "}
+                  {result.dscrLenderHaircut.toFixed(2)} (lender haircut)
+                </p>
+              }
+            />
+          )}
         </div>
 
         {isOwner ? (

@@ -26,6 +26,8 @@ export function UpgradeDialog({
         <div className="bg-surfaceAlt border border-border rounded-2xl p-4 mt-4">
           <p className="text-text font-semibold mb-2">Pro includes</p>
           <ul className="space-y-1">
+            <Bullet>Catch the catch — photo condition / rehab notes</Bullet>
+            <Bullet>Financing fit — lender match + next steps</Bullet>
             <Bullet>Background scouting (nightly per project)</Bullet>
             <Bullet>Email alerts for new high-score deals</Bullet>
             <Bullet>Side-by-side comparing 3+ deals</Bullet>

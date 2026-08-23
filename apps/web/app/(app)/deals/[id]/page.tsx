@@ -70,6 +70,7 @@ export default async function DealDetailPage({
           isOwner ? (profile?.auto_condition_analysis ?? true) : false
         }
         isOwner={isOwner}
+        subscriptionTier={profile?.subscription_tier ?? "free"}
       />
     </div>
   );

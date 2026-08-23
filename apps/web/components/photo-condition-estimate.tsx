@@ -280,6 +280,7 @@ export function PhotoConditionEstimate({
   focusFindingId = null,
   focusNonce = 0,
   autoRun = false,
+  readOnly = false,
 }: {
   dealId: string;
   cached: ConditionEstimatePayload | null;
@@ -310,6 +311,8 @@ export function PhotoConditionEstimate({
    * complete estimate is already cached on the deal.
    */
   autoRun?: boolean;
+  /** Browse mode: show cached findings without run / include controls. */
+  readOnly?: boolean;
 }) {
   const [estimate, setEstimate] = useState<ConditionEstimatePayload | null>(
     cached,
@@ -500,7 +503,7 @@ export function PhotoConditionEstimate({
             Running
           </Badge>
         ) : (
-          <Badge>premium · opt-in</Badge>
+          <Badge>{readOnly ? "view only" : "premium · opt-in"}</Badge>
         )}
       </div>
 
@@ -627,18 +630,20 @@ export function PhotoConditionEstimate({
                 {estimate.disclaimer}
               </p>
 
-              <ScenarioIncludeToggle
-                label="Include rehab costs in scenario"
-                description={
-                  included
-                    ? `Using ${formatMoney(estimate.rehabSuggested)} rehab + ${formatMoney(estimate.maintenanceMonthlySuggested)}/mo maintenance`
-                    : "Off — Improvements / Maintenance stay at your baseline"
-                }
-                included={included}
-                onToggle={toggleIncluded}
-                ariaLabelOn="Remove rehab costs from scenario"
-                ariaLabelOff="Include rehab costs in scenario"
-              />
+              {!readOnly ? (
+                <ScenarioIncludeToggle
+                  label="Include rehab costs in scenario"
+                  description={
+                    included
+                      ? `Using ${formatMoney(estimate.rehabSuggested)} rehab + ${formatMoney(estimate.maintenanceMonthlySuggested)}/mo maintenance`
+                      : "Off — Improvements / Maintenance stay at your baseline"
+                  }
+                  included={included}
+                  onToggle={toggleIncluded}
+                  ariaLabelOn="Remove rehab costs from scenario"
+                  ariaLabelOff="Include rehab costs in scenario"
+                />
+              ) : null}
 
               <div className="flex items-center justify-between gap-2">
                 <p className="text-textMuted text-[11px]">
@@ -651,16 +656,18 @@ export function PhotoConditionEstimate({
                     ? `Analyzed ${new Date(estimate.estimatedAt).toLocaleDateString()}.`
                     : ""}
                 </p>
-                <ScenarioRefreshLink
-                  loading={loading}
-                  onClick={() => runAnalysis(true)}
-                  title="Re-run Claude vision on the full listing gallery"
-                />
+                {!readOnly ? (
+                  <ScenarioRefreshLink
+                    loading={loading}
+                    onClick={() => runAnalysis(true)}
+                    title="Re-run Claude vision on the full listing gallery"
+                  />
+                ) : null}
               </div>
             </>
           ) : null}
         </>
-      ) : !loading ? (
+      ) : !loading && !readOnly ? (
         <>
           <p className="text-textMuted text-xs leading-5">
             Have Claude review the full listing photo gallery for red flags,
