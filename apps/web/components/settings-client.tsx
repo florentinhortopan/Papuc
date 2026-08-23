@@ -14,33 +14,80 @@ export function SettingsClient({
   email,
   tier,
   autoConditionAnalysis: initialAutoCondition,
+  nightlyScoutsPaused: initialNightlyPaused,
+  emailDigestsEnabled: initialEmailDigests,
 }: {
   email: string | null;
   tier: SubscriptionTier;
   /** Default true when the column is missing / unset. */
   autoConditionAnalysis: boolean;
+  /** Default false — nightly scouts run unless paused. */
+  nightlyScoutsPaused: boolean;
+  /** Default true — digests on unless opted out. */
+  emailDigestsEnabled: boolean;
 }) {
+  const isPro = tier === "pro";
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [autoCondition, setAutoCondition] = useState(initialAutoCondition);
-  const [savingAuto, setSavingAuto] = useState(false);
-  const [autoError, setAutoError] = useState<string | null>(null);
+  const [nightlyPaused, setNightlyPaused] = useState(initialNightlyPaused);
+  const [emailDigests, setEmailDigests] = useState(initialEmailDigests);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function persist(
+    key: string,
+    patch: Parameters<typeof updateProfileSettings>[1],
+    rollback: () => void,
+  ) {
+    setSavingKey(key);
+    setError(null);
+    try {
+      const supabase = createClient();
+      await updateProfileSettings(supabase, patch);
+    } catch (err) {
+      rollback();
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
+  function requireProOrUpgrade(): boolean {
+    if (isPro) return true;
+    setShowUpgrade(true);
+    return false;
+  }
 
   async function toggleAutoCondition() {
     const next = !autoCondition;
     setAutoCondition(next);
-    setSavingAuto(true);
-    setAutoError(null);
-    try {
-      const supabase = createClient();
-      await updateProfileSettings(supabase, {
-        auto_condition_analysis: next,
-      });
-    } catch (err) {
-      setAutoCondition(!next);
-      setAutoError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSavingAuto(false);
-    }
+    await persist(
+      "auto",
+      { auto_condition_analysis: next },
+      () => setAutoCondition(!next),
+    );
+  }
+
+  async function toggleNightlyPaused() {
+    if (!requireProOrUpgrade()) return;
+    const next = !nightlyPaused;
+    setNightlyPaused(next);
+    await persist(
+      "nightly",
+      { nightly_scouts_paused: next },
+      () => setNightlyPaused(!next),
+    );
+  }
+
+  async function toggleEmailDigests() {
+    if (!requireProOrUpgrade()) return;
+    const next = !emailDigests;
+    setEmailDigests(next);
+    await persist(
+      "email",
+      { email_digests_enabled: next },
+      () => setEmailDigests(!next),
+    );
   }
 
   return (
@@ -55,16 +102,18 @@ export function SettingsClient({
       <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
         <div className="flex items-center justify-between mb-1">
           <p className="text-textMuted text-xs">Plan</p>
-          <Badge variant={tier === "pro" ? "primary" : "muted"}>
+          <Badge variant={isPro ? "primary" : "muted"}>
             {tier.toUpperCase()}
           </Badge>
         </div>
         <p className="text-text text-base mt-1">
-          {tier === "pro"
-            ? "Background scouting + alerts enabled"
+          {isPro
+            ? nightlyPaused
+              ? "Pro — nightly scouts paused"
+              : "Background scouting + alerts enabled"
             : "Free plan — manual scouting only"}
         </p>
-        {tier !== "pro" ? (
+        {!isPro ? (
           <Button
             variant="outline"
             size="sm"
@@ -76,43 +125,51 @@ export function SettingsClient({
         ) : null}
       </div>
 
-      <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-text text-sm font-semibold">
-              Auto-run Catch the catch
-            </p>
-            <p className="text-textMuted text-xs leading-5 mt-1">
-              When you open a property, analyze listing photos for rehab
-              red flags automatically. Skips deals that already have a
-              cached result — use Refresh on the panel to re-run.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void toggleAutoCondition()}
-            disabled={savingAuto}
-            aria-pressed={autoCondition}
-            aria-label={
-              autoCondition
-                ? "Disable auto Catch the catch"
-                : "Enable auto Catch the catch"
-            }
-            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
-              autoCondition ? "bg-primary" : "bg-border"
-            }`}
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
-                autoCondition ? "translate-x-6" : "translate-x-1"
-              }`}
-            />
-          </button>
-        </div>
-        {autoError ? (
-          <p className="text-danger text-xs mt-2">{autoError}</p>
-        ) : null}
-      </div>
+      <p className="text-textMuted text-xs font-semibold uppercase tracking-wide mb-2 mt-5">
+        Scouting & alerts
+      </p>
+
+      <SettingsToggle
+        title="Pause all nightly scouts"
+        description="Temporarily stop background scouting across every project. Per-project toggles still apply when you unpause. Your Pro plan stays active."
+        pressed={nightlyPaused}
+        onToggle={() => void toggleNightlyPaused()}
+        saving={savingKey === "nightly"}
+        proOnly
+        isPro={isPro}
+      />
+
+      <SettingsToggle
+        title="Email digests"
+        description="Morning email when nightly scout finds strong new deals. Turn off to keep scouting in-app without inbox noise."
+        pressed={emailDigests}
+        onToggle={() => void toggleEmailDigests()}
+        saving={savingKey === "email"}
+        proOnly
+        isPro={isPro}
+        disabled={nightlyPaused && isPro}
+        disabledHint={
+          nightlyPaused && isPro
+            ? "Digests stay off while nightly scouts are paused."
+            : undefined
+        }
+      />
+
+      <p className="text-textMuted text-xs font-semibold uppercase tracking-wide mb-2 mt-5">
+        Deal tools
+      </p>
+
+      <SettingsToggle
+        title="Auto-run Catch the catch"
+        description="When you open a property, analyze listing photos for rehab red flags automatically. Skips deals that already have a cached result — use Refresh on the panel to re-run."
+        pressed={autoCondition}
+        onToggle={() => void toggleAutoCondition()}
+        saving={savingKey === "auto"}
+      />
+
+      {error ? (
+        <p className="text-danger text-xs mt-2 mb-2">{error}</p>
+      ) : null}
 
       <div className="mt-6">
         <SignOutButton />
@@ -121,8 +178,74 @@ export function SettingsClient({
       <UpgradeDialog
         open={showUpgrade}
         onOpenChange={setShowUpgrade}
-        feature="Unlock background scouting, email alerts, and pro-forma exports."
+        feature="Unlock background scouting, email digests, and pro-forma exports."
       />
+    </div>
+  );
+}
+
+function SettingsToggle({
+  title,
+  description,
+  pressed,
+  onToggle,
+  saving,
+  proOnly = false,
+  isPro = true,
+  disabled = false,
+  disabledHint,
+}: {
+  title: string;
+  description: string;
+  pressed: boolean;
+  onToggle: () => void;
+  saving: boolean;
+  proOnly?: boolean;
+  isPro?: boolean;
+  disabled?: boolean;
+  disabledHint?: string;
+}) {
+  const locked = proOnly && !isPro;
+  return (
+    <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-text text-sm font-semibold">{title}</p>
+            {proOnly ? (
+              <Badge variant="primary" className="text-[10px] px-1.5 py-0">
+                Pro
+              </Badge>
+            ) : null}
+          </div>
+          <p className="text-textMuted text-xs leading-5 mt-1">{description}</p>
+          {disabledHint ? (
+            <p className="text-textMuted text-[11px] mt-1 italic">{disabledHint}</p>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={onToggle}
+          disabled={saving || disabled}
+          aria-pressed={locked ? false : pressed}
+          aria-label={
+            locked
+              ? `${title} requires Papuc Pro`
+              : pressed
+                ? `Disable ${title}`
+                : `Enable ${title}`
+          }
+          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+            !locked && pressed ? "bg-primary" : "bg-border"
+          }`}
+        >
+          <span
+            className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${
+              !locked && pressed ? "translate-x-6" : "translate-x-1"
+            }`}
+          />
+        </button>
+      </div>
     </div>
   );
 }

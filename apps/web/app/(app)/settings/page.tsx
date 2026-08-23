@@ -17,6 +17,8 @@ export default async function SettingsPage() {
       email={user?.email ?? null}
       tier={profile?.subscription_tier ?? "free"}
       autoConditionAnalysis={profile?.auto_condition_analysis ?? true}
+      nightlyScoutsPaused={profile?.nightly_scouts_paused ?? false}
+      emailDigestsEnabled={profile?.email_digests_enabled ?? true}
     />
   );
 }

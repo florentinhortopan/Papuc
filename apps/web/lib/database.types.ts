@@ -22,6 +22,13 @@ export type ProfileRow = {
    * complete estimate is already cached on the deal.
    */
   auto_condition_analysis: boolean;
+  /**
+   * When true, nightly cron skips all scheduled scouts for this owner
+   * (even if individual projects have nightly_scout_enabled).
+   */
+  nightly_scouts_paused: boolean;
+  /** When false, nightly digests are not emailed (scouts may still run). */
+  email_digests_enabled: boolean;
   created_at: string;
   updated_at: string;
 };

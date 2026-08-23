@@ -65,8 +65,12 @@ function toDigestDeal(d: {
  * enabled, runs a scheduled scout for Pro owners, then emails one Resend
  * digest per owner when new deals scoring ≥ DIGEST_MIN_SCORE appeared.
  *
- * Pro-only (see scout-rules.json). Free owners and projects with
- * nightly_scout_enabled=false are skipped.
+ * Pro-only (see scout-rules.json). Skipped when:
+ *   - free tier
+ *   - project nightly_scout_enabled=false
+ *   - profile nightly_scouts_paused=true (account-level pause)
+ * Digests are skipped when profile email_digests_enabled=false (scout may
+ * still run so the in-app portfolio stays fresh).
  */
 export async function GET(req: Request) {
   // Vercel Cron also passes a Vercel-specific header `x-vercel-cron`, but the
@@ -90,12 +94,19 @@ export async function GET(req: Request) {
   const tierByOwner = new Map<string, "free" | "pro">();
   const profileByOwner = new Map<
     string,
-    { email: string | null; display_name: string | null }
+    {
+      email: string | null;
+      display_name: string | null;
+      nightly_scouts_paused: boolean;
+      email_digests_enabled: boolean;
+    }
   >();
   if (ownerIds.length > 0) {
     const { data: profiles } = await sb
       .from("profiles")
-      .select("id, subscription_tier, email, display_name")
+      .select(
+        "id, subscription_tier, email, display_name, nightly_scouts_paused, email_digests_enabled",
+      )
       .in("id", ownerIds);
     for (const row of profiles ?? []) {
       tierByOwner.set(
@@ -105,6 +116,9 @@ export async function GET(req: Request) {
       profileByOwner.set(row.id as string, {
         email: (row.email as string | null) ?? null,
         display_name: (row.display_name as string | null) ?? null,
+        nightly_scouts_paused: Boolean(row.nightly_scouts_paused),
+        // Default true when column missing on older rows mid-migrate.
+        email_digests_enabled: row.email_digests_enabled !== false,
       });
     }
   }
@@ -134,6 +148,17 @@ export async function GET(req: Request) {
     const subscriptionTier = tierByOwner.get(proj.owner_id) ?? "free";
     // Free tier: scheduled scout disabled in scout-rules.json (Pro wedge).
     if (subscriptionTier !== "pro") {
+      summary.push({
+        projectId: proj.id,
+        ok: true,
+        newDeals: 0,
+        skipped: true,
+      });
+      continue;
+    }
+
+    const ownerProfile = profileByOwner.get(proj.owner_id);
+    if (ownerProfile?.nightly_scouts_paused) {
       summary.push({
         projectId: proj.id,
         ok: true,
@@ -183,7 +208,8 @@ export async function GET(req: Request) {
           .slice(0, 5);
       }
 
-      if (forDigest.length > 0) {
+      const digestsOk = ownerProfile?.email_digests_enabled !== false;
+      if (digestsOk && forDigest.length > 0) {
         let bucket = digestsByOwner.get(proj.owner_id);
         if (!bucket) {
           bucket = { projects: [] };

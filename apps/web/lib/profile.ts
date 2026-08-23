@@ -29,6 +29,8 @@ export async function updateProfileSettings(
   supabase: SupabaseClient,
   patch: {
     auto_condition_analysis?: boolean;
+    nightly_scouts_paused?: boolean;
+    email_digests_enabled?: boolean;
   },
 ): Promise<void> {
   const userId = (await supabase.auth.getUser()).data.user?.id;
