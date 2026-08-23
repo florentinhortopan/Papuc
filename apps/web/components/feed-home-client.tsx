@@ -198,11 +198,31 @@ export function FeedHomeClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: q }),
       });
-      const json = (await res.json()) as SearchResult & { error?: string };
+      const json = (await res.json()) as {
+        kind?: "deal" | "property_miss" | "feed";
+        deals?: FeedDeal[];
+        constraints?: ProjectConstraints;
+        prompt?: string;
+        dealId?: string;
+        error?: string;
+      };
       if (!res.ok) throw new Error(json.error || `search ${res.status}`);
+
+      if (json.kind === "deal" && json.dealId) {
+        router.push(`/deals/${json.dealId}`);
+        return;
+      }
+      if (json.kind === "property_miss") {
+        setSearchError(
+          json.error ??
+            "Couldn’t find that property. Try a fuller address, a listing link, or a broader search.",
+        );
+        return;
+      }
+
       setSearchResult({
         deals: json.deals ?? [],
-        constraints: json.constraints,
+        constraints: json.constraints!,
         prompt: json.prompt ?? q,
       });
     } catch (err) {
@@ -282,7 +302,7 @@ export function FeedHomeClient({
             type="text"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Find cashflowing 3beds near Austin under $500k…"
+            placeholder="Ask for deals — or paste a listing URL / street address"
             className="flex-1 min-w-0 bg-transparent text-sm text-text placeholder:text-textMuted outline-none"
             disabled={searching}
             aria-label="AI deal search"

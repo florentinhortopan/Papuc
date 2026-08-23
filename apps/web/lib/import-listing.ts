@@ -1,15 +1,29 @@
 import {
   computeBaseScore,
+  detectPropertyLookupIntent,
   HasDataClient,
   parseListingUrl,
+  pickZillowAddressMatch,
+  ProjectConstraintsSchema,
   propertyTaxRateForState,
   streetFromZillowUrl,
+  type ListingAddressHint,
+  type ParsedListingUrl,
   type ProjectConstraints,
   type ZillowPropertyDetail,
 } from "@papuc/core";
+import {
+  addressHintIsUsable,
+  ClaudeProvider,
+} from "@papuc/core/llm";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { getProject, type ProjectRow } from "./projects";
+import {
+  createProject,
+  getProject,
+  listProjects,
+  type ProjectRow,
+} from "./projects";
 import { underwriteDeal, type UnderwritableDeal } from "./underwrite";
 
 function round(n: number, digits: number): number {
@@ -26,72 +40,273 @@ function isLandHomeType(homeType: string | undefined): boolean {
   return /lot|land|vacant/i.test(homeType);
 }
 
-/**
- * Fetch a Zillow property via HasData and upsert it onto an owned project
- * using the same underwrite path as scout / deal detail.
- */
-export async function importListingFromUrl(
+export type ImportListingSuccess = {
+  ok: true;
+  dealId: string;
+  projectId: string;
+  alreadyExisted: boolean;
+  address: string | null;
+  zpid: string | null;
+  sourceUrl: string;
+  monthlyCashflow: number;
+  dscr: number;
+  score: number;
+};
+
+export type ImportListingFailure = {
+  ok: false;
+  status: number;
+  error: string;
+  code?: string;
+};
+
+/** Pick an owned project, or create a lightweight "Imports" bucket. */
+export async function resolveImportProject(
   sb: SupabaseClient,
-  args: {
-    userId: string;
-    projectId: string;
-    urlText: string;
-  },
-): Promise<
-  | {
-      ok: true;
-      dealId: string;
-      projectId: string;
-      alreadyExisted: boolean;
-      address: string | null;
-      zpid: string | null;
-      sourceUrl: string;
-      monthlyCashflow: number;
-      dscr: number;
-      score: number;
+  userId: string,
+  projectId?: string | null,
+): Promise<ProjectRow | ImportListingFailure> {
+  const requested = (projectId ?? "").trim();
+  if (requested) {
+    try {
+      const project = await getProject(sb, requested);
+      if (project.owner_id !== userId) {
+        return { ok: false, status: 403, error: "not your project" };
+      }
+      return project;
+    } catch {
+      return { ok: false, status: 404, error: "project not found" };
     }
-  | { ok: false; status: number; error: string; code?: string }
+  }
+
+  const owned = await listProjects(sb);
+  if (owned[0]) return owned[0];
+
+  const constraints = ProjectConstraintsSchema.parse({
+    markets: [{ kind: "city", city: "Austin", state: "TX" }],
+    strategy: "LTR",
+    minDSCR: 1.0,
+    mortgage: {
+      rateAPR: 0.075,
+      termYears: 30,
+      ltv: 0.75,
+      interestOnly: false,
+    },
+    notes: "Auto-created for one-off listing imports",
+    intent: {
+      summary: "Imports inbox for pasted addresses and listing links",
+      useCase: "rental_income",
+    },
+  });
+
+  return createProject(sb, {
+    name: "Imports",
+    rawPrompt: "Auto-created for listing imports",
+    constraints,
+  });
+}
+
+function hintFromFreeTextAddress(address: string): ListingAddressHint {
+  const t = address.trim();
+  const zip = t.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1];
+  const states = [...t.matchAll(/\b([A-Za-z]{2})\b/g)].map((m) =>
+    m[1]!.toUpperCase(),
+  );
+  const US = new Set([
+    "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC",
+  ]);
+  const state = [...states].reverse().find((s) => US.has(s));
+  const street = t.replace(/,.*/, "").trim() || t;
+  return {
+    street,
+    state,
+    zip,
+    keyword: t,
+    source: "slug",
+    confidence: zip || state ? "medium" : "low",
+  };
+}
+
+async function resolveAddressHint(
+  parsed: ParsedListingUrl,
+): Promise<
+  | { ok: true; hint: ListingAddressHint }
+  | ImportListingFailure
 > {
-  const parsed = parseListingUrl(args.urlText);
-  if (!parsed.ok) {
+  if (addressHintIsUsable(parsed.addressHint)) {
+    return { ok: true, hint: parsed.addressHint };
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
     return {
       ok: false,
-      status: 400,
-      error: parsed.message,
-      code: parsed.code,
+      status: 422,
+      error:
+        "Could not read an address from that URL slug. Paste a clearer property link, or set ANTHROPIC_API_KEY for LLM address extraction.",
+      code: "address_unparsed",
     };
   }
 
-  let project: ProjectRow;
   try {
-    project = await getProject(sb, args.projectId);
-  } catch {
-    return { ok: false, status: 404, error: "project not found" };
-  }
-  if (project.owner_id !== args.userId) {
-    return { ok: false, status: 403, error: "not your project" };
-  }
-
-  const apiKey = process.env.HASDATA_API_KEY;
-  if (!apiKey) {
-    return { ok: false, status: 500, error: "HASDATA_API_KEY not set" };
-  }
-
-  const client = new HasDataClient({ apiKey });
-  let detail: ZillowPropertyDetail;
-  try {
-    detail = await client.getZillowProperty(parsed.canonicalUrl);
+    const claude = new ClaudeProvider({
+      apiKey,
+      model: process.env.ANTHROPIC_MODEL,
+    });
+    const hint = await claude.extractListingAddress({
+      url: parsed.canonicalUrl,
+      platform: parsed.platform,
+    });
+    if (!addressHintIsUsable(hint) || hint.confidence === "low") {
+      return {
+        ok: false,
+        status: 422,
+        error:
+          "Could not confidently read a street address from that listing URL.",
+        code: "address_unparsed",
+      };
+    }
+    return { ok: true, hint };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
       status: 502,
-      error: `Could not load that Zillow listing: ${msg}`,
+      error: `Address extraction failed: ${msg}`,
+      code: "address_llm_error",
+    };
+  }
+}
+
+async function fetchViaAddressHint(
+  client: HasDataClient,
+  hint: ListingAddressHint,
+  sourceUrl: string,
+): Promise<
+  | {
+      ok: true;
+      detail: ZillowPropertyDetail;
+      sourceUrl: string;
+      zillowUrl: string;
+    }
+  | ImportListingFailure
+> {
+  let search;
+  try {
+    search = await client.searchZillow({
+      keyword: hint.keyword,
+      type: "forSale",
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      status: 502,
+      error: `Zillow address search failed: ${msg}`,
       code: "provider_error",
     };
   }
 
-  const zpid = (detail.zpid || parsed.zpid || "").trim();
+  const pick = pickZillowAddressMatch(search.data ?? [], hint);
+  if (!pick.ok) {
+    return {
+      ok: false,
+      status: 422,
+      error:
+        pick.reason === "ambiguous"
+          ? `Multiple Zillow matches for "${hint.keyword}" — paste a Zillow homedetails URL instead.`
+          : `No Zillow listing matched "${hint.keyword}". Try a fuller address or a listing link.`,
+      code: pick.reason === "ambiguous" ? "ambiguous_match" : "no_match",
+    };
+  }
+
+  const detailUrl =
+    pick.hit.detailUrl ||
+    (pick.hit.zpid
+      ? `https://www.zillow.com/homedetails/${pick.hit.zpid}_zpid/`
+      : null);
+  if (!detailUrl) {
+    return {
+      ok: false,
+      status: 422,
+      error: "Matched Zillow listing had no detail URL.",
+      code: "no_detail_url",
+    };
+  }
+
+  try {
+    const detail = await client.getZillowProperty(detailUrl);
+    return {
+      ok: true,
+      detail,
+      sourceUrl,
+      zillowUrl: detail.url || detailUrl,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      status: 502,
+      error: `Could not load Zillow detail for matched address: ${msg}`,
+      code: "provider_error",
+    };
+  }
+}
+
+async function fetchZillowDetailForImport(
+  client: HasDataClient,
+  parsed: ParsedListingUrl,
+): Promise<
+  | {
+      ok: true;
+      detail: ZillowPropertyDetail;
+      sourceUrl: string;
+      zillowUrl: string;
+    }
+  | ImportListingFailure
+> {
+  if (parsed.platform === "zillow") {
+    try {
+      const detail = await client.getZillowProperty(parsed.canonicalUrl);
+      const zillowUrl = detail.url || parsed.canonicalUrl;
+      return {
+        ok: true,
+        detail,
+        sourceUrl: zillowUrl,
+        zillowUrl,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        status: 502,
+        error: `Could not load that Zillow listing: ${msg}`,
+        code: "provider_error",
+      };
+    }
+  }
+
+  const resolved = await resolveAddressHint(parsed);
+  if (!resolved.ok) return resolved;
+  return fetchViaAddressHint(client, resolved.hint, parsed.canonicalUrl);
+}
+
+async function upsertUnderwrittenDeal(
+  sb: SupabaseClient,
+  project: ProjectRow,
+  args: {
+    detail: ZillowPropertyDetail;
+    sourceUrl: string;
+    zillowUrl: string;
+    parsedZpid?: string;
+    fallbackAddress?: string | null;
+    importedFromUrl?: string;
+    importedPlatform?: string;
+    importedListingId?: string;
+  },
+): Promise<ImportListingSuccess | ImportListingFailure> {
+  const { detail, sourceUrl, zillowUrl } = args;
+  const zpid = (detail.zpid || args.parsedZpid || "").trim();
   if (!zpid) {
     return {
       ok: false,
@@ -101,10 +316,10 @@ export async function importListingFromUrl(
     };
   }
 
-  const sourceUrl = detail.url || parsed.canonicalUrl;
   const address =
     detail.address?.trim() ||
-    streetFromZillowUrl(sourceUrl) ||
+    streetFromZillowUrl(zillowUrl) ||
+    args.fallbackAddress ||
     null;
   const price = detail.price ?? null;
   const avm = detail.zestimate ?? null;
@@ -131,7 +346,16 @@ export async function importListingFromUrl(
   const mlsData = {
     ...(detail.raw && typeof detail.raw === "object" ? detail.raw : {}),
     homeType: detail.homeType,
-    importedFromUrl: sourceUrl,
+    ...(args.importedFromUrl
+      ? { importedFromUrl: args.importedFromUrl }
+      : { importedFromUrl: sourceUrl }),
+    ...(args.importedPlatform
+      ? { importedPlatform: args.importedPlatform }
+      : {}),
+    ...(args.importedListingId
+      ? { importedListingId: args.importedListingId }
+      : {}),
+    zillowUrl,
   };
 
   const dealForUnderwrite: UnderwritableDeal = {
@@ -265,4 +489,107 @@ export async function importListingFromUrl(
     dscr: proforma.dscr,
     score: Math.round(baseScore),
   };
+}
+
+/**
+ * Import from a listing URL or free-text street address into an owned project
+ * (or auto-picked / auto-created Imports project).
+ */
+export async function importListingFromQuery(
+  sb: SupabaseClient,
+  args: {
+    userId: string;
+    query: string;
+    projectId?: string | null;
+  },
+): Promise<ImportListingSuccess | ImportListingFailure> {
+  const query = (args.query ?? "").trim();
+  if (!query) {
+    return { ok: false, status: 400, error: "query is required", code: "empty" };
+  }
+
+  const projectOrErr = await resolveImportProject(
+    sb,
+    args.userId,
+    args.projectId,
+  );
+  if ("ok" in projectOrErr && projectOrErr.ok === false) return projectOrErr;
+  const project = projectOrErr as ProjectRow;
+
+  const apiKey = process.env.HASDATA_API_KEY;
+  if (!apiKey) {
+    return { ok: false, status: 500, error: "HASDATA_API_KEY not set" };
+  }
+  const client = new HasDataClient({ apiKey });
+
+  const intent =
+    detectPropertyLookupIntent(query) ??
+    (parseListingUrl(query).ok
+      ? ({ kind: "url" as const, value: query })
+      : null);
+
+  // Explicit address path (spoken / typed street address).
+  if (intent?.kind === "address") {
+    const hint = hintFromFreeTextAddress(intent.value);
+    if (!addressHintIsUsable(hint)) {
+      return {
+        ok: false,
+        status: 422,
+        error: "Need a fuller street address (include city and state or ZIP).",
+        code: "address_unparsed",
+      };
+    }
+    const fetched = await fetchViaAddressHint(client, hint, intent.value);
+    if (!fetched.ok) return fetched;
+    return upsertUnderwrittenDeal(sb, project, {
+      detail: fetched.detail,
+      sourceUrl: fetched.sourceUrl,
+      zillowUrl: fetched.zillowUrl,
+      fallbackAddress: intent.value,
+      importedFromUrl: intent.value,
+      importedPlatform: "address",
+    });
+  }
+
+  // URL path (Zillow / Redfin / Realtor / Homes).
+  const urlText = intent?.kind === "url" ? intent.value : query;
+  const parsed = parseListingUrl(urlText);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      status: 400,
+      error: parsed.message,
+      code: parsed.code,
+    };
+  }
+
+  const fetched = await fetchZillowDetailForImport(client, parsed);
+  if (!fetched.ok) return fetched;
+
+  return upsertUnderwrittenDeal(sb, project, {
+    detail: fetched.detail,
+    sourceUrl: fetched.sourceUrl,
+    zillowUrl: fetched.zillowUrl,
+    parsedZpid: parsed.zpid,
+    fallbackAddress: parsed.addressHint?.keyword ?? null,
+    importedFromUrl: parsed.canonicalUrl,
+    importedPlatform: parsed.platform,
+    importedListingId: parsed.listingId,
+  });
+}
+
+/** @deprecated Prefer importListingFromQuery — kept for existing /import UI. */
+export async function importListingFromUrl(
+  sb: SupabaseClient,
+  args: {
+    userId: string;
+    projectId: string;
+    urlText: string;
+  },
+): Promise<ImportListingSuccess | ImportListingFailure> {
+  return importListingFromQuery(sb, {
+    userId: args.userId,
+    projectId: args.projectId,
+    query: args.urlText,
+  });
 }

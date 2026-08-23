@@ -1,9 +1,15 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ProjectConstraintsSchema, type ProjectConstraints } from "../schemas";
+import type { ListingAddressHint } from "../listing-url";
+import {
+  normalizeExtractedListingAddress,
+} from "./extract-listing-address";
 import {
   ADVISE_FINANCING_FIT_SYSTEM,
   ADVISE_FINANCING_FIT_TOOL,
   ANALYZE_PROPERTY_CONDITION_SYSTEM,
+  EXTRACT_LISTING_ADDRESS_SYSTEM,
+  EXTRACT_LISTING_ADDRESS_TOOL,
   PARSE_PROJECT_SYSTEM,
   PARSE_PROJECT_TOOL,
   RANK_DEALS_SYSTEM,
@@ -295,6 +301,45 @@ export class ClaudeProvider implements LLMProvider {
       }
     }
     throw new Error("Claude did not return adviseFinancingFit tool call");
+  }
+
+  /**
+   * Read a US street address from a listing URL slug only (no page fetch).
+   * Used when deterministic parsers miss Redfin / Realtor / Homes paths.
+   */
+  async extractListingAddress(args: {
+    url: string;
+    platform?: string;
+  }): Promise<ListingAddressHint | null> {
+    const userMessage = [
+      args.platform ? `Platform: ${args.platform}` : null,
+      `URL: ${args.url}`,
+      `Extract the property street address from this URL slug.`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const res = await this.client.messages.create({
+      model: this.model,
+      max_tokens: Math.min(this.maxTokens, 512),
+      system: EXTRACT_LISTING_ADDRESS_SYSTEM,
+      tools: [EXTRACT_LISTING_ADDRESS_TOOL as any],
+      tool_choice: {
+        type: "tool",
+        name: EXTRACT_LISTING_ADDRESS_TOOL.name,
+      } as any,
+      messages: [{ role: "user", content: userMessage }],
+    });
+
+    for (const block of res.content) {
+      if (
+        block.type === "tool_use" &&
+        block.name === EXTRACT_LISTING_ADDRESS_TOOL.name
+      ) {
+        return normalizeExtractedListingAddress(block.input);
+      }
+    }
+    throw new Error("Claude did not return extractListingAddress tool call");
   }
 
   /** Model id used for calls (exposed so callers can cache provenance). */

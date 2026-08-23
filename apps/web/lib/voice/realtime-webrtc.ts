@@ -10,6 +10,11 @@ export type VoiceSessionEvent =
   | { type: "status"; status: VoiceSessionStatus }
   | { type: "caption"; role: "user" | "assistant"; text: string }
   | { type: "progress"; topic: VoiceProgressTopic; label?: string }
+  | {
+      type: "property_found";
+      dealId: string;
+      address?: string | null;
+    }
   | { type: "finished"; summary?: string }
   | { type: "error"; message: string };
 
@@ -220,6 +225,64 @@ export async function startVoiceSession(
   ) => {
     if (!callId || processedCallIds.has(callId)) return;
     processedCallIds.add(callId);
+
+    if (name === "lookup_property") {
+      const addressOrUrl =
+        typeof args.addressOrUrl === "string" ? args.addressOrUrl.trim() : "";
+      if (!addressOrUrl) {
+        sendToolOutput(callId, {
+          ok: false,
+          reason: "Missing addressOrUrl. Ask the user for the street address or listing link.",
+        });
+        return;
+      }
+      void (async () => {
+        try {
+          const res = await fetch("/api/import/listing", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: addressOrUrl }),
+          });
+          const body = (await res.json()) as {
+            dealId?: string;
+            address?: string | null;
+            error?: string;
+            code?: string;
+          };
+          if (!res.ok || !body.dealId) {
+            sendToolOutput(callId, {
+              ok: false,
+              reason:
+                body.error ??
+                "Property not found. Continue the intake conversation.",
+              code: body.code,
+            });
+            return;
+          }
+          sendToolOutput(callId, {
+            ok: true,
+            dealId: body.dealId,
+            address: body.address ?? addressOrUrl,
+            message:
+              "Property imported. Confirm briefly out loud; the app will open the deal.",
+          });
+          onEvent({
+            type: "property_found",
+            dealId: body.dealId,
+            address: body.address ?? null,
+          });
+        } catch (err) {
+          sendToolOutput(callId, {
+            ok: false,
+            reason:
+              err instanceof Error
+                ? err.message
+                : "Lookup failed. Continue the intake conversation.",
+          });
+        }
+      })();
+      return;
+    }
 
     if (name === "note_progress") {
       const topic = args.topic as VoiceProgressTopic;

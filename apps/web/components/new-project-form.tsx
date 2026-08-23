@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  detectPropertyLookupIntent,
   PROPERTY_TYPE_LABELS,
   PROJECT_USE_CASE_LABELS,
   ProjectConstraintsSchema,
@@ -100,6 +101,29 @@ export function NewProjectForm() {
     setParsing(true);
     try {
       if (overridePrompt != null) setPrompt(overridePrompt);
+
+      const lookup = detectPropertyLookupIntent(text);
+      if (lookup) {
+        const res = await fetch("/api/import/listing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: lookup.value }),
+        });
+        const body = (await res.json()) as {
+          dealId?: string;
+          error?: string;
+        };
+        if (res.ok && body.dealId) {
+          router.push(`/deals/${body.dealId}`);
+          return;
+        }
+        setError(
+          body.error ??
+            "Couldn’t find that property. Keep describing your goals, or try a fuller address / listing link.",
+        );
+        return;
+      }
+
       const c = await parseProjectPrompt(text);
       setConstraints(c);
       setName(defaultProjectName(c));
@@ -153,9 +177,9 @@ export function NewProjectForm() {
       <div>
         <h1 className="text-3xl font-bold mb-1">New project</h1>
         <p className="text-textMuted text-sm mb-6">
-          Describe any life or investment goal in plain English — rental cashflow,
-          live-then-Airbnb, land to develop, live/work, lifestyle place. Or talk
-          it through with Papuc Concierge.
+          Describe any life or investment goal in plain English — or paste a
+          listing URL / street address to open that deal. Or talk it through with
+          Papuc Concierge.
         </p>
 
         <div className="mb-4 flex justify-center">

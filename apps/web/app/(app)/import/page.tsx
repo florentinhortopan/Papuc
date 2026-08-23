@@ -19,9 +19,9 @@ export default async function ImportListingPage({
       <div className="mb-6">
         <h1 className="text-3xl font-bold">Import listing</h1>
         <p className="text-textMuted text-sm mt-1 max-w-lg leading-6">
-          Paste a Zillow property URL to pull it into Papuc underwriting. Useful
-          for a specific deal you found outside scout — later the same path can
-          power Shortcuts or a bot.
+          Paste a Zillow, Redfin, Realtor, or Homes.com URL — or a street
+          address — to pull it into Papuc underwriting. Discover search and
+          Voice Concierge use the same path when you name a specific property.
         </p>
       </div>
       <ImportListingClient

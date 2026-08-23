@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { importListingFromUrl } from "@/lib/import-listing";
+import { importListingFromQuery } from "@/lib/import-listing";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
- * Import a pasted listing URL into an owned project.
- * MVP: Zillow homedetails → HasData property → underwriteDeal upsert.
+ * Import a listing URL or street address into an owned project.
+ * projectId is optional — uses the most recent project, or creates "Imports".
  */
 export async function POST(req: Request) {
   const supabase = await createClient();
@@ -20,26 +20,30 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  let body: { url?: string; projectId?: string };
+  let body: { url?: string; query?: string; projectId?: string };
   try {
-    body = (await req.json()) as { url?: string; projectId?: string };
+    body = (await req.json()) as {
+      url?: string;
+      query?: string;
+      projectId?: string;
+    };
   } catch {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
 
-  const url = (body.url ?? "").trim();
-  const projectId = (body.projectId ?? "").trim();
-  if (!url) {
-    return NextResponse.json({ error: "url is required" }, { status: 400 });
-  }
-  if (!projectId) {
-    return NextResponse.json({ error: "projectId is required" }, { status: 400 });
+  const query = (body.query ?? body.url ?? "").trim();
+  const projectId = (body.projectId ?? "").trim() || null;
+  if (!query) {
+    return NextResponse.json(
+      { error: "url or query is required" },
+      { status: 400 },
+    );
   }
 
-  const result = await importListingFromUrl(supabase, {
+  const result = await importListingFromQuery(supabase, {
     userId: user.id,
     projectId,
-    urlText: url,
+    query,
   });
 
   if (!result.ok) {

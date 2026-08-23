@@ -1,4 +1,9 @@
 import {
+  extractAddressFromListingUrl,
+  type ListingAddressHint,
+  type ListingUrlPlatform,
+} from "../listing-url";
+import {
   ProjectConstraintsSchema,
   type ProjectConstraints,
   type ProjectIntent,
@@ -262,6 +267,17 @@ export class MockLLMProvider implements LLMProvider {
       }
       return { dealId: d.dealId, score, rationale };
     });
+  }
+
+  /** Offline stand-in: reuses deterministic slug parsers. */
+  async extractListingAddress(args: {
+    url: string;
+    platform?: string;
+  }): Promise<ListingAddressHint | null> {
+    const platform = (args.platform ?? "unknown") as ListingUrlPlatform;
+    const { hint } = extractAddressFromListingUrl(platform, args.url);
+    if (!hint) return null;
+    return { ...hint, source: "llm" };
   }
 
   /**

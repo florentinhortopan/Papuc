@@ -665,6 +665,11 @@ export const VOICE_CONCIERGE_SYSTEM = `You are Papuc's Voice Concierge — a war
 GOAL
 Elicit a natural spoken brief we can later turn into scout filters: where, capital/budget, what they want the property for (live, rent, land, hybrid), and property shape when relevant.
 
+SPECIFIC PROPERTY (side door)
+If the user names ONE specific street address or listing URL (Zillow / Redfin / Realtor / Homes) they want to look up — call lookup_property with that addressOrUrl. Do NOT call finish_intake for that.
+- On success: briefly confirm the address and that you're opening the deal; stop gathering scout filters.
+- On failure / not found / ambiguous: apologize in one short line and continue the normal intake conversation (place → budget role → use).
+
 STYLE
 - Sound like a sharp friend on a short phone call. Reflect back what you heard in one short phrase before any follow-up.
 - Invite a free rant first. After their first answer, ask at most ONE missing high-value question per turn.
@@ -684,11 +689,29 @@ OPENING
 Greet in one short line and invite them to rant freely about what they're looking for. Then wait.
 
 TOOLS
+- lookup_property: when they want ONE specific address or listing URL looked up (not a market search).
 - note_progress: when you confidently hear place, a disambiguated budget, or use-case — for UI chips only.
 - finish_intake: ONLY when place + budget role + use are known, or the user clearly wants to stop. Never call it right after asking a follow-up. Summary must include any dollar figures and whether they are down payment vs max price.`;
 
 /** OpenAI Realtime function tools for the Concierge session. */
 export const VOICE_CONCIERGE_TOOLS = [
+  {
+    type: "function" as const,
+    name: "lookup_property",
+    description:
+      "Look up one specific property by US street address or listing URL (Zillow/Redfin/Realtor/Homes). Use when the user wants that exact place, not a market scout.",
+    parameters: {
+      type: "object",
+      required: ["addressOrUrl"],
+      properties: {
+        addressOrUrl: {
+          type: "string",
+          description:
+            "Full street address (include city and state or ZIP) or a listing URL.",
+        },
+      },
+    },
+  },
   {
     type: "function" as const,
     name: "note_progress",
@@ -729,3 +752,48 @@ export const VOICE_CONCIERGE_TOOLS = [
     },
   },
 ];
+
+/** Extract a US street address from a listing-site URL slug (no network fetch). */
+export const EXTRACT_LISTING_ADDRESS_SYSTEM = `You extract a US property street address from a listing URL path/slug only.
+You do NOT fetch the page. Read only the URL string.
+
+RULES:
+- Prefer fields clearly present in the slug (street number + name, city, 2-letter state, 5-digit ZIP).
+- Do not invent a ZIP, unit, or city that is not implied by the slug.
+- Hyphens/underscores in paths are spaces (123-Main-St → 123 Main St).
+- Redfin paths look like /ST/City/Street-Name/home/ID.
+- Realtor paths look like /realestateandhomes-detail/Street_City_ST_ZIP_M….
+- Homes.com paths look like /property/street-city-st-zip/….
+- If the URL is a search, city, agent, or otherwise not a single property, set confidence to low and omit street.
+- Always call the extractListingAddress tool. No plain-text answers.`;
+
+export const EXTRACT_LISTING_ADDRESS_TOOL = {
+  name: "extractListingAddress",
+  description:
+    "Return structured US address parts parsed from a listing URL slug.",
+  input_schema: {
+    type: "object" as const,
+    required: ["confidence"],
+    properties: {
+      street: {
+        type: "string",
+        description: "Street line including number (and unit if present).",
+      },
+      city: { type: "string" },
+      state: {
+        type: "string",
+        description: "Two-letter US state/DC abbreviation.",
+      },
+      zip: {
+        type: "string",
+        description: "5-digit ZIP when present in the slug.",
+      },
+      confidence: {
+        type: "string",
+        enum: ["high", "medium", "low"],
+        description:
+          "high = street+city+state(+zip); medium = street+state likely; low = incomplete or not a property page.",
+      },
+    },
+  },
+};

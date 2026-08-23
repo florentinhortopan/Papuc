@@ -44,7 +44,7 @@ export function formatVoiceTranscriptForParse(
   return parts.join("\n");
 }
 
-type Phase = "call" | "finishing" | "error";
+type Phase = "call" | "finishing" | "opening_deal" | "error";
 
 export function VoiceConcierge({
   open,
@@ -67,6 +67,7 @@ export function VoiceConcierge({
   const sessionRef = useRef<VoiceSessionHandle | null>(null);
   const completingRef = useRef(false);
   const progressRef = useRef<Partial<Record<VoiceProgressTopic, string>>>({});
+  const propertyDealRef = useRef<string | null>(null);
   const [phase, setPhase] = useState<Phase>("call");
   const [status, setStatus] = useState<VoiceSessionStatus>("connecting");
   const [caption, setCaption] = useState<{
@@ -78,6 +79,7 @@ export function VoiceConcierge({
   >({});
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [openingAddress, setOpeningAddress] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -89,14 +91,17 @@ export function VoiceConcierge({
     }
 
     let cancelled = false;
+    let propertyNavTimer: number | undefined;
     completingRef.current = false;
     progressRef.current = {};
+    propertyDealRef.current = null;
     setPhase("call");
     setStatus("connecting");
     setCaption(null);
     setProgress({});
     setMuted(false);
     setError(null);
+    setOpeningAddress(null);
 
     void (async () => {
       try {
@@ -113,11 +118,29 @@ export function VoiceConcierge({
             };
             setProgress(progressRef.current);
           }
+          if (ev.type === "property_found") {
+            propertyDealRef.current = ev.dealId;
+            completingRef.current = true;
+            setOpeningAddress(ev.address ?? null);
+            setPhase("opening_deal");
+            if (propertyNavTimer != null) window.clearTimeout(propertyNavTimer);
+            // Let the model speak a short confirm, then open the deal.
+            propertyNavTimer = window.setTimeout(() => {
+              sessionRef.current?.stop({ discard: true });
+              sessionRef.current = null;
+              onOpenChange(false);
+              router.push(`/deals/${ev.dealId}`);
+            }, 2800);
+          }
           if (ev.type === "error") {
             setError(ev.message);
             setPhase("error");
           }
           if (ev.type === "finished") {
+            if (propertyDealRef.current) {
+              // Property handoff already navigating — ignore intake finish.
+              return;
+            }
             const text = formatVoiceTranscriptForParse(handle.getTranscript(), {
               summary: ev.summary,
               progress: progressRef.current,
@@ -140,6 +163,7 @@ export function VoiceConcierge({
 
     return () => {
       cancelled = true;
+      if (propertyNavTimer != null) window.clearTimeout(propertyNavTimer);
       // Don't discard while navigating to the project form after a real finish.
       if (!completingRef.current) {
         sessionRef.current?.stop({ discard: true });
@@ -237,18 +261,24 @@ export function VoiceConcierge({
                 : "Papuc Concierge"}
             </p>
             <h2 className="text-xl font-bold text-text mb-1">
-              {phase === "finishing"
-                ? "Turning that into a project…"
-                : status === "connecting"
-                  ? "Connecting…"
-                  : status === "speaking"
-                    ? "Papuc is speaking"
-                    : "Listening"}
+              {phase === "opening_deal"
+                ? "Opening that property…"
+                : phase === "finishing"
+                  ? "Turning that into a project…"
+                  : status === "connecting"
+                    ? "Connecting…"
+                    : status === "speaking"
+                      ? "Papuc is speaking"
+                      : "Listening"}
             </h2>
             <p className="text-textMuted text-sm mb-5">
-              {phase === "finishing"
-                ? "Drafting scout filters from your conversation."
-                : "Rant freely — we’ll ask only what’s missing."}
+              {phase === "opening_deal"
+                ? openingAddress
+                  ? `Found ${openingAddress}`
+                  : "Pulling up the deal page."
+                : phase === "finishing"
+                  ? "Drafting scout filters from your conversation."
+                  : "Rant freely — we’ll ask only what’s missing. Or name a specific address."}
             </p>
 
             <div
@@ -261,7 +291,9 @@ export function VoiceConcierge({
                     : "border-border bg-surfaceAlt",
               )}
             >
-              {phase === "finishing" || status === "connecting" ? (
+              {phase === "finishing" ||
+              phase === "opening_deal" ||
+              status === "connecting" ? (
                 <Loader2 className="h-10 w-10 text-primary animate-spin" />
               ) : muted ? (
                 <MicOff className="h-10 w-10 text-textMuted" />

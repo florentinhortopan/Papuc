@@ -49,7 +49,7 @@ export function ImportListingClient({
       const res = await fetch("/api/import/listing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url.trim(), projectId }),
+        body: JSON.stringify({ query: url.trim(), projectId }),
       });
       const body = (await res.json()) as ImportResult & {
         error?: string;
@@ -87,13 +87,12 @@ export function ImportListingClient({
         <Textarea
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://www.zillow.com/homedetails/…/…_zpid/"
+          placeholder="Listing URL or street address (city + state/ZIP)"
           className="min-h-24"
         />
         <p className="text-textMuted text-xs leading-5">
-          Paste a Zillow property link (homedetails). We only call our listing
-          providers — never fetch arbitrary sites. Redfin / Realtor support
-          comes next.
+          Paste a Zillow / Redfin / Realtor / Homes link or a US street address.
+          We resolve via Zillow (HasData) — never fetch arbitrary sites.
         </p>
 
         <div>
