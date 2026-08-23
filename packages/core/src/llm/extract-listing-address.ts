@@ -100,7 +100,7 @@ export function normalizeExtractedListingAddress(
 
 /** True when slug hint is good enough to skip the LLM. */
 export function addressHintIsUsable(
-  hint: ListingAddressHint | undefined,
+  hint: ListingAddressHint | null | undefined,
 ): hint is ListingAddressHint {
   if (!hint?.street || !hint.keyword) return false;
   if (hint.confidence === "low") return false;

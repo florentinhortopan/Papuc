@@ -436,7 +436,7 @@ export function PhotoConditionEstimate({
     if (autoStartedDealIds.has(dealId)) return;
     autoStartedDealIds.add(dealId);
     void runAnalysis(false);
-  }, [autoRun, dealId, cachedAt, cached?.done, estimate?.estimatedAt, estimate?.done, runAnalysis]);
+  }, [autoRun, dealId, cachedAt, cached?.estimatedAt, cached?.done, estimate?.estimatedAt, estimate?.done, runAnalysis]);
 
   function toggleIncluded() {
     if (!estimate || estimate.done === false) return;

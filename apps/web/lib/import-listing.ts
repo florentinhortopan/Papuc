@@ -157,7 +157,7 @@ async function resolveAddressHint(
       url: parsed.canonicalUrl,
       platform: parsed.platform,
     });
-    if (!addressHintIsUsable(hint) || hint.confidence === "low") {
+    if (!addressHintIsUsable(hint)) {
       return {
         ok: false,
         status: 422,
