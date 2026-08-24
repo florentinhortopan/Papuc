@@ -112,21 +112,30 @@ function collapseWs(s: string): string {
 /**
  * Heuristic US street address: leading house number + street token, plus
  * state and/or ZIP so we are not matching "3 beds in Austin".
+ * Allows ordinal streets like "22nd Ave" / "3rd St".
  */
 export function looksLikeUsStreetAddress(text: string): boolean {
   const t = collapseWs(text);
   if (t.length < 10 || t.length > 160) return false;
-  if (!/^\d{1,6}\s+[A-Za-z]/.test(t)) return false;
+  // House # then street — street may start with a letter OR an ordinal (22nd).
+  if (
+    !/^\d{1,6}\s+(?:[A-Za-z]|\d{1,3}(?:st|nd|rd|th)\b)/i.test(t)
+  ) {
+    return false;
+  }
 
   const hasZip = /\b\d{5}(?:-\d{4})?\b/.test(t);
   const stateMatch = t.match(/\b([A-Za-z]{2})\b/g) ?? [];
   const hasState = stateMatch.some((s) => US_STATE.has(s.toUpperCase()));
-  // "Austin, TX" / "Austin TX" style city+state without forcing ZIP.
-  const cityState = /,\s*[A-Za-z]{2}\b/.test(t) || /\b[A-Za-z][a-z]+\s+[A-Z]{2}\b/.test(t);
+  // "Austin, TX" / "Austin TX" / "San Francisco, CA" style.
+  const cityState =
+    /,\s*[A-Za-z .]+,\s*[A-Za-z]{2}\b/.test(t) ||
+    /,\s*[A-Za-z]{2}\b/.test(t) ||
+    /\b[A-Za-z][a-z]+(?:\s+[A-Za-z][a-z]+)*\s+[A-Z]{2}\b/.test(t);
 
   if (!(hasZip || hasState || cityState)) return false;
 
-  // Require at least one street-ish token after the number.
+  // Require at least one alphabetic street-ish token after the house number.
   const afterNum = t.replace(/^\d{1,6}\s+/, "");
   if (!/[A-Za-z]{2,}/.test(afterNum)) return false;
 

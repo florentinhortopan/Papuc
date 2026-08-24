@@ -19,6 +19,16 @@ describe("detectPropertyLookupIntent", () => {
     });
   });
 
+  it("detects ordinal street names like 22nd Ave", () => {
+    const r = detectPropertyLookupIntent(
+      "548 22nd Ave, San Francisco, CA 94121",
+    );
+    expect(r).toEqual({
+      kind: "address",
+      value: "548 22nd Ave, San Francisco, CA 94121",
+    });
+  });
+
   it("rejects scout-style prompts", () => {
     expect(
       detectPropertyLookupIntent(

@@ -555,6 +555,21 @@ export async function importListingFromQuery(
   const urlText = intent?.kind === "url" ? intent.value : query;
   const parsed = parseListingUrl(urlText);
   if (!parsed.ok) {
+    // Address-shaped text that failed the heuristic still shouldn't get a
+    // "no URL" error — point users at the address format we expect.
+    if (
+      parsed.code === "no_url" ||
+      parsed.code === "empty" ||
+      parsed.code === "invalid_url"
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        error:
+          "Paste a listing URL (Zillow / Redfin / Realtor / Homes) or a full street address with city and state or ZIP (e.g. 548 22nd Ave, San Francisco, CA 94121).",
+        code: "not_property_query",
+      };
+    }
     return {
       ok: false,
       status: 400,
