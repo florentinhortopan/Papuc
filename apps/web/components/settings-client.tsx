@@ -18,6 +18,7 @@ export function SettingsClient({
   autoConditionAnalysis: initialAutoCondition,
   nightlyScoutsPaused: initialNightlyPaused,
   emailDigestsEnabled: initialEmailDigests,
+  isAdmin = false,
 }: {
   email: string | null;
   tier: SubscriptionTier;
@@ -29,6 +30,8 @@ export function SettingsClient({
   nightlyScoutsPaused: boolean;
   /** Default true — digests on unless opted out. */
   emailDigestsEnabled: boolean;
+  /** True when session email is in ADMIN_EMAILS. */
+  isAdmin?: boolean;
 }) {
   const isPro = tier === "pro";
   const [showUpgrade, setShowUpgrade] = useState(false);
@@ -105,6 +108,21 @@ export function SettingsClient({
   return (
     <div className="max-w-md">
       <h1 className="text-3xl font-bold mb-6">Settings</h1>
+
+      {isAdmin ? (
+        <div className="bg-primary/10 border border-primary/30 rounded-2xl p-4 mb-3">
+          <p className="text-text text-sm font-semibold">Admin</p>
+          <p className="text-textMuted text-xs mt-1 leading-5">
+            Grant or revoke Pro and email users.
+          </p>
+          <a
+            href="/admin"
+            className="text-primary text-sm font-semibold hover:underline mt-2 inline-block"
+          >
+            Manage users →
+          </a>
+        </div>
+      ) : null}
 
       <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
         <p className="text-textMuted text-xs">Signed in as</p>

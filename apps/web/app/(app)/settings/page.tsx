@@ -1,4 +1,5 @@
 import { SettingsClient } from "@/components/settings-client";
+import { isAdminEmail } from "@/lib/admin";
 import { getProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 
@@ -21,6 +22,7 @@ export default async function SettingsPage() {
       autoConditionAnalysis={profile?.auto_condition_analysis ?? true}
       nightlyScoutsPaused={profile?.nightly_scouts_paused ?? false}
       emailDigestsEnabled={profile?.email_digests_enabled ?? true}
+      isAdmin={isAdminEmail(user?.email)}
     />
   );
 }

@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 
-const ITEMS = [
+const BASE_ITEMS = [
   { href: "/home", label: "Home" },
   { href: "/projects", label: "Projects" },
   { href: "/import", label: "Import" },
@@ -14,8 +14,16 @@ const ITEMS = [
   { href: "/settings", label: "Settings" },
 ];
 
-export function AppNav() {
+export function AppNav({ showAdmin = false }: { showAdmin?: boolean }) {
   const pathname = usePathname();
+  const items = showAdmin
+    ? [
+        ...BASE_ITEMS.slice(0, -1),
+        { href: "/admin", label: "Admin" },
+        BASE_ITEMS[BASE_ITEMS.length - 1]!,
+      ]
+    : BASE_ITEMS;
+
   return (
     <header className="sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-border">
       <div className="container flex items-center justify-between h-14">
@@ -26,7 +34,7 @@ export function AppNav() {
           Papuc
         </Link>
         <nav className="flex gap-1 overflow-x-auto">
-          {ITEMS.map((item) => {
+          {items.map((item) => {
             const active =
               item.href === "/home"
                 ? pathname === "/home" || pathname === "/"

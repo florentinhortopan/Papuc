@@ -85,6 +85,8 @@ Berkeley.xlsx               Source-of-truth pro-forma model
    - `REALESTATEAPI_KEY`
    - `ANTHROPIC_API_KEY` (and optionally `ANTHROPIC_MODEL`)
    - `CRON_SECRET` (any random string, e.g. `openssl rand -hex 32`)
+   - `ADMIN_EMAILS` (comma-separated operator emails for `/admin`, e.g.
+     `florentinhortopan@gmail.com`)
    - `NEXT_PUBLIC_SITE_URL=http://localhost:3000`
 6. **Install + dev**:
    ```bash
@@ -109,6 +111,9 @@ Berkeley.xlsx               Source-of-truth pro-forma model
    `nightly_scout_enabled` (default on; toggle on project cards / detail).
    After each run, owners with new deals (score ≥ 70) get one **Resend**
    digest (`RESEND_API_KEY` + `EMAIL_FROM`; domain verified in Resend).
+   Set `ADMIN_EMAILS` to your Google sign-in email(s) to unlock **Settings →
+   Manage users** and the **Admin** nav link (`/admin`: grant/revoke Pro,
+   email users via Resend).
 6. Supabase Auth → URL Configuration: Site URL = primary host, and Redirect
    URLs for both apex and www `/auth/callback` (Google Console only needs
    the Supabase callback `https://<project>.supabase.co/auth/v1/callback`).
@@ -116,6 +121,14 @@ Berkeley.xlsx               Source-of-truth pro-forma model
    `20260812000001_project_nightly_scout.sql`).
 
 That's it — no Docker, no Supabase CLI, no `supabase functions deploy`.
+
+## Admin access
+
+1. Sign in with a Google account listed in `ADMIN_EMAILS`.
+2. Local: add `ADMIN_EMAILS=you@example.com` to `apps/web/.env.local` and
+   restart `pnpm dev`. Vercel: same env var → redeploy.
+3. Open **Settings → Manage users**, or go to `/admin`. Non-admins are
+   redirected to Home and never see the links.
 
 ## Test the pro-forma engine
 
