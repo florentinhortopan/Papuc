@@ -631,18 +631,12 @@ export function DealDetailClient({
 
     const priceLabel = deal.price ? "list" : "est. value";
     const priceValue = formatMoney(deal.price ?? deal.est_value);
-    const title = `${dealStreetAddress(deal) ?? "Property"} · ${priceLabel} ${priceValue}`;
-    const lines = [
-      title,
-      `${deal.beds ?? "?"} bd · ${deal.baths ?? "?"} ba · ${
-        deal.sqft ? `${Math.round(Number(deal.sqft))} sqft` : "size unknown"
-      }`,
-      `DSCR ${formatDscr(result.dscr)} (lender 75% rent: ${formatDscr(result.dscrLenderHaircut)})`,
-      `Pre-tax cashflow ${formatMoney(result.annualPreTaxProfit / 12)}/mo`,
-      `Cash-on-cash ${formatPct(result.cashOnCashReturn)}`,
-      `5-yr IRR ${result.irr5Yr !== null ? formatPct(result.irr5Yr) : "—"}`,
-      shareUrl ? `Full analysis: ${shareUrl}` : `Calculated in Papuc.`,
-    ].join("\n");
+    const addr = dealStreetAddress(deal) ?? "Property";
+    const cash = formatMoney(result.annualPreTaxProfit / 12);
+    const title = `${result.annualPreTaxProfit >= 0 ? "+" : ""}${cash}/mo · ${addr}`;
+    // Keep this to one short line — long multi-line dumps make WhatsApp /
+    // Telegram skip or bury the Open Graph image card.
+    const blurb = `${priceLabel} ${priceValue} · DSCR ${formatDscr(result.dscr)} · Papuc`;
 
     const nav = (typeof navigator !== "undefined" ? navigator : null) as
       | (Navigator & {
@@ -653,25 +647,26 @@ export function DealDetailClient({
           }) => Promise<void>;
         })
       | null;
-    if (nav?.share) {
+    if (nav?.share && shareUrl) {
       try {
-        await nav.share(
-          shareUrl ? { title, text: lines, url: shareUrl } : { text: lines },
-        );
+        await nav.share({ title, text: blurb, url: shareUrl });
         return;
       } catch {
         // fall through to clipboard
       }
     }
     try {
-      await navigator.clipboard.writeText(lines);
+      const clipboard = shareUrl
+        ? `${title}\n${blurb}\n${shareUrl}`
+        : `${title}\n${blurb}`;
+      await navigator.clipboard.writeText(clipboard);
       alert(
         shareUrl
-          ? "Deal summary + share link copied to clipboard."
-          : "Deal details copied to clipboard.",
+          ? "Share link copied — paste into WhatsApp, Telegram, or Messages."
+          : "Deal summary copied to clipboard.",
       );
     } catch {
-      alert(lines);
+      alert(shareUrl ?? title);
     }
   }
 

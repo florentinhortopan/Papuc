@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
+import { getSiteUrl } from "@/lib/site-url";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -63,7 +64,6 @@ export async function POST(
     token = (fresh?.share_token as string | null) ?? token;
   }
 
-  const origin =
-    process.env.NEXT_PUBLIC_SITE_URL ?? new URL(_req.url).origin;
+  const origin = getSiteUrl(_req.url);
   return NextResponse.json({ url: `${origin}/share/${token}`, token });
 }

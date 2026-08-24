@@ -45,6 +45,8 @@ export type ProjectsRow = {
   nightly_scout_enabled: boolean;
   /** When true, deals appear on the shared Papuc home feed for all users. */
   is_public: boolean;
+  /** Unguessable slug for /share/p/[token]. Null until first project share. */
+  share_token: string | null;
   /** Deal that inspired this project via Scout like this. */
   source_deal_id: string | null;
   /** Source project when forked via Scout like this. */

@@ -1,10 +1,15 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-// "/share" is the public deal-share landing page — the top of the signup
-// funnel. It must render for anonymous recipients or shared links die at
-// a login wall.
-const PUBLIC_PATHS = ["/sign-in", "/auth/callback", "/api/cron", "/share"];
+// "/share" is the public deal/project share landing — the top of the signup
+// funnel. "/api/og" serves proxied listing photos for WhatsApp/Telegram crawlers.
+const PUBLIC_PATHS = [
+  "/sign-in",
+  "/auth/callback",
+  "/api/cron",
+  "/api/og",
+  "/share",
+];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });

@@ -6,6 +6,7 @@ import { cache } from "react";
 
 import type { DealScoresRow, DealsRow } from "@/lib/database.types";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
+import { getSiteUrl } from "@/lib/site-url";
 import { getCachedMarketStrIntel } from "@/lib/str-intel";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -117,33 +118,54 @@ export async function generateMetadata({
   const { deal, result } = shared;
 
   const cashflow = result.annualPreTaxProfit / 12;
-  const headline = `${cashflow >= 0 ? "+" : ""}${formatMoney(cashflow)}/mo cashflow`;
-  const title = `${headline} · ${addressLine(deal)}`;
+  const addr = addressLine(deal);
+  // Keep OG title/description short — WhatsApp/Telegram truncate aggressively
+  // and long titles crowd out the image card.
+  const cashLabel = `${cashflow >= 0 ? "+" : ""}${formatMoney(cashflow)}/mo`;
+  const title = `${cashLabel} · ${addr}`;
   const description = [
-    deal.price ? `List ${formatMoney(deal.price)}` : null,
+    deal.price ? `${formatMoney(deal.price)} list` : null,
     deal.beds != null ? `${deal.beds} bd` : null,
     deal.baths != null ? `${deal.baths} ba` : null,
     `DSCR ${formatDscr(result.dscr)}`,
-    "Full pro-forma underwriting by Papuc, the AI deal scout.",
+    "Underwritten on Papuc",
   ]
     .filter(Boolean)
     .join(" · ");
-  const image = photosOf(deal)[0];
+
+  const site = getSiteUrl();
+  const hasPhoto =
+    photosOf(deal).length > 0 || Boolean(deal.primary_image_url);
+  const ogImage = `${site}/api/og/deal/${token}`;
 
   return {
     title,
     description,
+    metadataBase: new URL(site),
     openGraph: {
-      title,
-      description,
+      title: cashLabel,
+      description: `${addr} · ${description}`,
       type: "website",
-      ...(image ? { images: [{ url: image }] } : {}),
+      url: `${site}/share/${token}`,
+      siteName: "Papuc",
+      ...(hasPhoto
+        ? {
+            images: [
+              {
+                url: ogImage,
+                width: 1200,
+                height: 800,
+                alt: addr,
+              },
+            ],
+          }
+        : {}),
     },
     twitter: {
-      card: image ? "summary_large_image" : "summary",
-      title,
-      description,
-      ...(image ? { images: [image] } : {}),
+      card: hasPhoto ? "summary_large_image" : "summary",
+      title: cashLabel,
+      description: `${addr} · ${description}`,
+      ...(hasPhoto ? { images: [ogImage] } : {}),
     },
   };
 }

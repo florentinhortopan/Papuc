@@ -8,9 +8,9 @@ import type { ProjectListItem } from "@/lib/projects";
 import { cn } from "@/lib/utils";
 
 /**
- * Share a project the same way deals do: prefer the Web Share API, fall
- * back to clipboard. Uses the live project URL (public projects are
- * readable by other signed-in users via RLS).
+ * Share a project via a public /share/p/[token] link so messengers can
+ * unfurl OG image + compact title. Keep Web Share payload short — long
+ * text (esp. voice transcripts) kills the preview card.
  */
 export function ProjectShareButton({
   project,
@@ -35,31 +35,36 @@ export function ProjectShareButton({
     if (busy) return;
     setBusy(true);
     try {
-      const origin =
-        typeof window !== "undefined" ? window.location.origin : "";
-      const url = `${origin}/projects/${project.id}`;
+      let shareUrl: string | null = null;
+      try {
+        const res = await fetch(`/api/projects/${project.id}/share`, {
+          method: "POST",
+        });
+        if (res.ok) {
+          const body = (await res.json()) as { url?: string };
+          shareUrl = body.url ?? null;
+        }
+      } catch {
+        /* fall through */
+      }
+
       const market = formatMarket(project.constraints.markets[0]);
       const c = project.constraints;
       const title = project.name;
-      const lines = [
-        title,
-        project.raw_prompt.trim(),
-        [
-          project.dealCount === 1
-            ? "1 deal"
-            : `${project.dealCount} deals`,
-          market,
-          c.strategy,
-          c.priceMax ? `≤ ${formatMoney(c.priceMax)}` : null,
-          `DSCR ≥ ${c.minDSCR.toFixed(2)}`,
-        ]
-          .filter(Boolean)
-          .join(" · "),
-        project.is_public
-          ? "Public on Papuc Discover"
-          : "Private project (recipient needs access)",
-        url,
-      ].join("\n");
+      const blurb = [
+        project.dealCount === 1
+          ? "1 deal"
+          : `${project.dealCount} deals`,
+        market,
+        c.strategy,
+        c.priceMax ? `≤ ${formatMoney(c.priceMax)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+      const url =
+        shareUrl ??
+        `${typeof window !== "undefined" ? window.location.origin : ""}/projects/${project.id}`;
 
       const nav = (typeof navigator !== "undefined" ? navigator : null) as
         | (Navigator & {
@@ -73,7 +78,12 @@ export function ProjectShareButton({
 
       if (nav?.share) {
         try {
-          await nav.share({ title, text: lines, url });
+          // Short text + separate url → WhatsApp/Telegram show OG card.
+          await nav.share({
+            title,
+            text: blurb,
+            url,
+          });
           setFlash("Shared");
           return;
         } catch {
@@ -81,7 +91,7 @@ export function ProjectShareButton({
         }
       }
 
-      await navigator.clipboard.writeText(lines);
+      await navigator.clipboard.writeText(`${title}\n${blurb}\n${url}`);
       setFlash("Link copied");
     } catch {
       setFlash("Share failed");
