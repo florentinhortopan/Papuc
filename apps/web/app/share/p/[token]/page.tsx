@@ -7,6 +7,7 @@ import { cache, type ReactNode } from "react";
 
 import { formatMarket, formatMoney } from "@/lib/format";
 import { getSiteUrl } from "@/lib/site-url";
+import { sanitizeShareToken } from "@/lib/share-token";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -23,12 +24,13 @@ type SharedProject = {
 };
 
 const getSharedProject = cache(async (token: string) => {
-  if (!token || token.length < 8 || token.length > 64) return null;
+  const clean = sanitizeShareToken(token);
+  if (!clean) return null;
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("projects")
     .select("id, name, owner_id, raw_prompt, constraints, is_public, last_scout_at")
-    .eq("share_token", token)
+    .eq("share_token", clean)
     .maybeSingle();
   if (error || !data) return null;
   const constraints = ProjectConstraintsSchema.parse(data.constraints);
@@ -68,7 +70,8 @@ export async function generateMetadata({
     .join(" · ");
 
   const site = getSiteUrl();
-  const ogImage = `${site}/api/og/project/${token}`;
+  const cleanToken = sanitizeShareToken(token) ?? token;
+  const ogImage = `${site}/api/og/project/${cleanToken}`;
 
   return {
     title,
@@ -78,7 +81,7 @@ export async function generateMetadata({
       title: project.name,
       description,
       type: "website",
-      url: `${site}/share/p/${token}`,
+      url: `${site}/share/p/${cleanToken}`,
       siteName: "Papuc",
       images: [
         {

@@ -3,7 +3,6 @@
 import { Share2 } from "lucide-react";
 import { useEffect, useState, type MouseEvent } from "react";
 
-import { formatMarket, formatMoney } from "@/lib/format";
 import type { ProjectListItem } from "@/lib/projects";
 import { cn } from "@/lib/utils";
 
@@ -48,19 +47,7 @@ export function ProjectShareButton({
         /* fall through */
       }
 
-      const market = formatMarket(project.constraints.markets[0]);
-      const c = project.constraints;
       const title = project.name;
-      const blurb = [
-        project.dealCount === 1
-          ? "1 deal"
-          : `${project.dealCount} deals`,
-        market,
-        c.strategy,
-        c.priceMax ? `≤ ${formatMoney(c.priceMax)}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ");
 
       const url =
         shareUrl ??
@@ -76,14 +63,10 @@ export function ProjectShareButton({
           })
         | null;
 
-      if (nav?.share) {
+      if (nav?.share && shareUrl) {
         try {
-          // Short text + separate url → WhatsApp/Telegram show OG card.
-          await nav.share({
-            title,
-            text: blurb,
-            url,
-          });
+          // URL only — do not pass `text` (WhatsApp glues it onto the path).
+          await nav.share({ title, url: shareUrl });
           setFlash("Shared");
           return;
         } catch {
@@ -91,7 +74,7 @@ export function ProjectShareButton({
         }
       }
 
-      await navigator.clipboard.writeText(`${title}\n${blurb}\n${url}`);
+      await navigator.clipboard.writeText(url);
       setFlash("Link copied");
     } catch {
       setFlash("Share failed");

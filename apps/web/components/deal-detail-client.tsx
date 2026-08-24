@@ -629,14 +629,9 @@ export function DealDetailClient({
       setBusy(null);
     }
 
-    const priceLabel = deal.price ? "list" : "est. value";
-    const priceValue = formatMoney(deal.price ?? deal.est_value);
     const addr = dealStreetAddress(deal) ?? "Property";
     const cash = formatMoney(result.annualPreTaxProfit / 12);
     const title = `${result.annualPreTaxProfit >= 0 ? "+" : ""}${cash}/mo · ${addr}`;
-    // Keep this to one short line — long multi-line dumps make WhatsApp /
-    // Telegram skip or bury the Open Graph image card.
-    const blurb = `${priceLabel} ${priceValue} · DSCR ${formatDscr(result.dscr)} · Papuc`;
 
     const nav = (typeof navigator !== "undefined" ? navigator : null) as
       | (Navigator & {
@@ -649,17 +644,17 @@ export function DealDetailClient({
       | null;
     if (nav?.share && shareUrl) {
       try {
-        await nav.share({ title, text: blurb, url: shareUrl });
+        // URL only (+ short title). Passing `text` makes WhatsApp/Facebook
+        // glue the blurb onto the path → 404 OG scrapes.
+        await nav.share({ title, url: shareUrl });
         return;
       } catch {
         // fall through to clipboard
       }
     }
     try {
-      const clipboard = shareUrl
-        ? `${title}\n${blurb}\n${shareUrl}`
-        : `${title}\n${blurb}`;
-      await navigator.clipboard.writeText(clipboard);
+      // Clipboard: bare URL so paste-into-chat unfurls cleanly.
+      await navigator.clipboard.writeText(shareUrl ?? title);
       alert(
         shareUrl
           ? "Share link copied — paste into WhatsApp, Telegram, or Messages."

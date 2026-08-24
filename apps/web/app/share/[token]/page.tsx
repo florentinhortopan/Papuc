@@ -7,6 +7,7 @@ import { cache } from "react";
 import type { DealScoresRow, DealsRow } from "@/lib/database.types";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
 import { getSiteUrl } from "@/lib/site-url";
+import { sanitizeShareToken } from "@/lib/share-token";
 import { getCachedMarketStrIntel } from "@/lib/str-intel";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -53,12 +54,13 @@ const getSharedDeal = cache(async (token: string) => {
   // Tokens are 72-bit random slugs minted on first share; possession is
   // authorization, so this read uses the service role (anon RLS would
   // return nothing) but only ever by exact token match.
-  if (!token || token.length < 8 || token.length > 64) return null;
+  const clean = sanitizeShareToken(token);
+  if (!clean) return null;
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("deals")
     .select("*, deal_scores(*), projects(owner_id, constraints)")
-    .eq("share_token", token)
+    .eq("share_token", clean)
     .maybeSingle();
   if (error || !data) return null;
   const deal = data as unknown as SharedDeal;
@@ -136,7 +138,8 @@ export async function generateMetadata({
   const site = getSiteUrl();
   const hasPhoto =
     photosOf(deal).length > 0 || Boolean(deal.primary_image_url);
-  const ogImage = `${site}/api/og/deal/${token}`;
+  const cleanToken = sanitizeShareToken(token) ?? token;
+  const ogImage = `${site}/api/og/deal/${cleanToken}`;
 
   return {
     title,
@@ -146,7 +149,7 @@ export async function generateMetadata({
       title: cashLabel,
       description: `${addr} · ${description}`,
       type: "website",
-      url: `${site}/share/${token}`,
+      url: `${site}/share/${cleanToken}`,
       siteName: "Papuc",
       ...(hasPhoto
         ? {

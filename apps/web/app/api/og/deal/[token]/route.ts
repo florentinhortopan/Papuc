@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { sanitizeShareToken } from "@/lib/share-token";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,8 +15,9 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ token: string }> },
 ) {
-  const { token } = await params;
-  if (!token || token.length < 8 || token.length > 64) {
+  const { token: raw } = await params;
+  const token = sanitizeShareToken(raw);
+  if (!token) {
     return new NextResponse("Not found", { status: 404 });
   }
 
