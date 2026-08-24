@@ -1,9 +1,15 @@
-import type { ProjectConstraints, StrMarketAdrIntel } from "@papuc/core";
+import type {
+  ProjectConstraints,
+  ProFormaResult,
+  StrMarketAdrIntel,
+} from "@papuc/core";
+import { ProjectConstraintsSchema } from "@papuc/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 
+import { ScoutLikeThisButton } from "@/components/scout-like-this-button";
 import type { DealScoresRow, DealsRow } from "@/lib/database.types";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
 import { getSiteUrl } from "@/lib/site-url";
@@ -11,10 +17,10 @@ import { sanitizeShareToken } from "@/lib/share-token";
 import { getCachedMarketStrIntel } from "@/lib/str-intel";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { underwriteDeal } from "@/lib/underwrite";
-import { ScoutLikeThisButton } from "@/components/scout-like-this-button";
+import { underwriteDeal, type UnderwriteSeeds } from "@/lib/underwrite";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 /**
  * Public, no-login share page — the landing surface of the share loop.
@@ -42,50 +48,105 @@ type SharedDeal = DealsRow & {
   } | null;
 };
 
+type SharedPayload = {
+  deal: SharedDeal;
+  seeds: UnderwriteSeeds | null;
+  result: ProFormaResult | null;
+};
+
+function fallbackConstraints(deal: {
+  city?: string | null;
+  state?: string | null;
+}): ProjectConstraints {
+  const state = (deal.state ?? "CA").toString().slice(0, 2).toUpperCase() || "CA";
+  const city = (deal.city ?? "Unknown").toString().trim() || "Unknown";
+  return ProjectConstraintsSchema.parse({
+    markets: [{ kind: "city", city, state }],
+    strategy: "LTR",
+    minDSCR: 1.0,
+    mortgage: {
+      rateAPR: 0.075,
+      termYears: 30,
+      ltv: 0.75,
+      interestOnly: false,
+    },
+  });
+}
+
 /**
- * Fetch the shared deal AND underwrite it live. The stored deal_scores
- * row reflects the cost model at scout time and goes stale whenever the
- * model improves — quoting it here once showed recipients a higher
- * cashflow than the owner's own detail page. Everything numeric on this
- * page comes from `underwriteDeal` (the same helper that seeds the
- * detail editor); the stored score is only used for the rationale text.
+ * Fetch the shared deal AND underwrite it live. Never 404 just because the
+ * project embed/constraints join flakes — OG image proxy already proves the
+ * token exists; the page must render for crawlers.
  */
-const getSharedDeal = cache(async (token: string) => {
-  // Tokens are 72-bit random slugs minted on first share; possession is
-  // authorization, so this read uses the service role (anon RLS would
-  // return nothing) but only ever by exact token match.
+const getSharedDeal = cache(async (token: string): Promise<SharedPayload | null> => {
   const clean = sanitizeShareToken(token);
   if (!clean) return null;
-  const admin = createAdminClient();
-  const { data, error } = await admin
+
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return null;
+  }
+
+  // Keep the primary read simple — nested embeds have 404'd share pages
+  // when the projects join returned null even though the deal existed.
+  const { data: dealRow, error } = await admin
     .from("deals")
-    .select("*, deal_scores(*), projects(owner_id, constraints)")
+    .select("*, deal_scores(*)")
     .eq("share_token", clean)
     .maybeSingle();
-  if (error || !data) return null;
-  const deal = data as unknown as SharedDeal;
+  if (error || !dealRow) return null;
 
-  const constraints = deal.projects?.constraints;
-  if (!constraints) return null;
-
-  // Same cached market ADR intel the scout and detail page underwrite
-  // STR deals with (cache read only — a public page must never trigger
-  // paid research).
-  let marketAdrIntel: StrMarketAdrIntel | null = null;
-  if (constraints.strategy === "STR" && deal.city && deal.state) {
-    const intel = await getCachedMarketStrIntel(admin, deal.city, deal.state);
-    if (intel) {
-      marketAdrIntel = {
-        adrLow: intel.adr_low ?? undefined,
-        adrMedian: intel.adr_median ?? undefined,
-        adrHigh: intel.adr_high ?? undefined,
-        occupancyAvg: intel.occupancy_avg ?? undefined,
-      };
+  let ownerId = "";
+  let constraints: ProjectConstraints = fallbackConstraints(dealRow);
+  if (dealRow.project_id) {
+    const { data: project } = await admin
+      .from("projects")
+      .select("owner_id, constraints")
+      .eq("id", dealRow.project_id as string)
+      .maybeSingle();
+    if (project?.owner_id) ownerId = project.owner_id as string;
+    if (project?.constraints) {
+      try {
+        constraints = ProjectConstraintsSchema.parse(project.constraints);
+      } catch {
+        /* keep fallback */
+      }
     }
   }
 
-  const { seeds, result } = underwriteDeal(deal, constraints, marketAdrIntel);
-  return { deal, seeds, result };
+  const deal = {
+    ...(dealRow as DealsRow),
+    deal_scores: (dealRow as { deal_scores?: SharedDeal["deal_scores"] })
+      .deal_scores,
+    projects: { owner_id: ownerId, constraints },
+  } as SharedDeal;
+
+  let marketAdrIntel: StrMarketAdrIntel | null = null;
+  if (constraints.strategy === "STR" && deal.city && deal.state) {
+    try {
+      const intel = await getCachedMarketStrIntel(admin, deal.city, deal.state);
+      if (intel) {
+        marketAdrIntel = {
+          adrLow: intel.adr_low ?? undefined,
+          adrMedian: intel.adr_median ?? undefined,
+          adrHigh: intel.adr_high ?? undefined,
+          occupancyAvg: intel.occupancy_avg ?? undefined,
+        };
+      }
+    } catch {
+      /* cache miss / error — underwrite without market clamp */
+    }
+  }
+
+  try {
+    const { seeds, result } = underwriteDeal(deal, constraints, marketAdrIntel);
+    return { deal, seeds, result };
+  } catch {
+    // Still serve the page + OG from stored scores / listing fields.
+    return { deal, seeds: null, result: null };
+  }
 });
 
 function pickScore(deal: SharedDeal): DealScoresRow | null {
@@ -109,6 +170,26 @@ function addressLine(deal: SharedDeal): string {
   );
 }
 
+/** Prefer live underwrite; fall back to stored deal_scores for OG/UI. */
+function verdictNumbers(
+  deal: SharedDeal,
+  result: ProFormaResult | null,
+): { cashflow: number; dscr: number; cashOnCash: number } {
+  if (result) {
+    return {
+      cashflow: result.annualPreTaxProfit / 12,
+      dscr: result.dscr,
+      cashOnCash: result.cashOnCashReturn,
+    };
+  }
+  const score = pickScore(deal);
+  return {
+    cashflow: Number(score?.monthly_cashflow ?? 0),
+    dscr: Number(score?.dscr ?? 0),
+    cashOnCash: Number(score?.cash_on_cash ?? 0),
+  };
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -119,7 +200,7 @@ export async function generateMetadata({
   if (!shared) return { title: "Shared deal — Papuc" };
   const { deal, result } = shared;
 
-  const cashflow = result.annualPreTaxProfit / 12;
+  const { cashflow, dscr } = verdictNumbers(deal, result);
   const addr = addressLine(deal);
   // Keep OG title/description short — WhatsApp/Telegram truncate aggressively
   // and long titles crowd out the image card.
@@ -129,7 +210,7 @@ export async function generateMetadata({
     deal.price ? `${formatMoney(deal.price)} list` : null,
     deal.beds != null ? `${deal.beds} bd` : null,
     deal.baths != null ? `${deal.baths} ba` : null,
-    `DSCR ${formatDscr(result.dscr)}`,
+    `DSCR ${formatDscr(dscr)}`,
     "Underwritten on Papuc",
   ]
     .filter(Boolean)
@@ -185,8 +266,9 @@ export default async function SharePage({
 
   const score = pickScore(deal);
   const photos = photosOf(deal).slice(0, 5);
-  const strategy = seeds.strategy;
-  const assumedAdr = seeds.strSchedule?.monthlyADR[0];
+  const strategy = seeds?.strategy ?? "LTR";
+  const assumedAdr = seeds?.strSchedule?.monthlyADR[0];
+  const { cashflow, dscr, cashOnCash } = verdictNumbers(deal, result);
 
   // Signed-in visitors get the underwriting unlocked in place; the deal's
   // owner additionally gets a deep link into the app.
@@ -195,10 +277,10 @@ export default async function SharePage({
     data: { user },
   } = await supabase.auth.getUser();
   const signedIn = user !== null;
-  const isOwner = signedIn && user.id === deal.projects?.owner_id;
-  const signUpHref = `/sign-in?next=${encodeURIComponent(`/share/${token}`)}`;
+  const isOwner = signedIn && Boolean(deal.projects?.owner_id) && user.id === deal.projects?.owner_id;
+  const cleanToken = sanitizeShareToken(token) ?? token;
+  const signUpHref = `/sign-in?next=${encodeURIComponent(`/share/${cleanToken}`)}`;
 
-  const cashflow = result.annualPreTaxProfit / 12;
   const facts = [
     deal.beds != null ? `${deal.beds} bd` : null,
     deal.baths != null ? `${deal.baths} ba` : null,
@@ -295,12 +377,12 @@ export default async function SharePage({
           />
           <VerdictTile
             label="DSCR"
-            value={formatDscr(result.dscr)}
-            tone={result.dscr >= 1.1 ? "good" : "warn"}
+            value={formatDscr(dscr)}
+            tone={dscr >= 1.1 ? "good" : "warn"}
           />
           <VerdictTile
             label="Cash-on-cash"
-            value={formatPct(result.cashOnCashReturn)}
+            value={formatPct(cashOnCash)}
             tone="muted"
           />
         </div>
@@ -325,19 +407,33 @@ export default async function SharePage({
           >
             <LockedRow
               label="5-yr IRR"
-              value={result.irr5Yr !== null ? formatPct(result.irr5Yr) : "—"}
+              value={
+                result?.irr5Yr != null
+                  ? formatPct(result.irr5Yr)
+                  : score?.irr_5yr != null
+                    ? formatPct(Number(score.irr_5yr))
+                    : "—"
+              }
             />
             <LockedRow
               label="Payout (years)"
               value={
-                Number.isFinite(result.payoutYears)
+                result && Number.isFinite(result.payoutYears)
                   ? result.payoutYears.toFixed(1)
-                  : "—"
+                  : score?.payout_years != null
+                    ? Number(score.payout_years).toFixed(1)
+                    : "—"
               }
             />
             <LockedRow
               label="DSCR at lender 75% rent haircut"
-              value={formatDscr(result.dscrLenderHaircut)}
+              value={
+                result
+                  ? formatDscr(result.dscrLenderHaircut)
+                  : score?.dscr_lender_haircut != null
+                    ? formatDscr(Number(score.dscr_lender_haircut))
+                    : "—"
+              }
             />
             <LockedRow label="Monthly PITIA breakdown" value="P&I · taxes · insurance · HOA · PMI" />
             <LockedRow
