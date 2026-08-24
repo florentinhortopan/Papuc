@@ -45,8 +45,40 @@ export type ProjectsRow = {
   nightly_scout_enabled: boolean;
   /** When true, deals appear on the shared Papuc home feed for all users. */
   is_public: boolean;
+  /** Deal that inspired this project via Scout like this. */
+  source_deal_id: string | null;
+  /** Source project when forked via Scout like this. */
+  source_project_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type UserFollowsRow = {
+  follower_id: string;
+  following_id: string;
+  created_at: string;
+};
+
+export type ProjectWatchesRow = {
+  user_id: string;
+  project_id: string;
+  created_at: string;
+};
+
+export type ProjectMemberRole = "owner" | "member" | "viewer";
+
+export type ProjectMembersRow = {
+  project_id: string;
+  user_id: string;
+  role: ProjectMemberRole;
+  created_at: string;
+};
+
+export type PublicProfileRow = {
+  id: string;
+  display_name: string | null;
+  subscription_tier: SubscriptionTier;
+  created_at: string;
 };
 
 export type DealsRow = {

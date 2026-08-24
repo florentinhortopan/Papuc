@@ -13,12 +13,16 @@ import { createClient } from "@/lib/supabase/client";
 export function SettingsClient({
   email,
   tier,
+  userId,
+  displayName: initialDisplayName,
   autoConditionAnalysis: initialAutoCondition,
   nightlyScoutsPaused: initialNightlyPaused,
   emailDigestsEnabled: initialEmailDigests,
 }: {
   email: string | null;
   tier: SubscriptionTier;
+  userId: string | null;
+  displayName: string | null;
   /** Default true when the column is missing / unset. */
   autoConditionAnalysis: boolean;
   /** Default false — nightly scouts run unless paused. */
@@ -28,6 +32,7 @@ export function SettingsClient({
 }) {
   const isPro = tier === "pro";
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [displayName, setDisplayName] = useState(initialDisplayName ?? "");
   const [autoCondition, setAutoCondition] = useState(initialAutoCondition);
   const [nightlyPaused, setNightlyPaused] = useState(initialNightlyPaused);
   const [emailDigests, setEmailDigests] = useState(initialEmailDigests);
@@ -90,6 +95,13 @@ export function SettingsClient({
     );
   }
 
+  async function saveDisplayName() {
+    const next = displayName;
+    await persist("name", { display_name: next }, () =>
+      setDisplayName(initialDisplayName ?? ""),
+    );
+  }
+
   return (
     <div className="max-w-md">
       <h1 className="text-3xl font-bold mb-6">Settings</h1>
@@ -97,6 +109,35 @@ export function SettingsClient({
       <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
         <p className="text-textMuted text-xs">Signed in as</p>
         <p className="text-text text-base mt-1">{email ?? "—"}</p>
+        {userId ? (
+          <a
+            href={`/u/${userId}`}
+            className="text-primary text-xs hover:underline mt-2 inline-block"
+          >
+            View public profile →
+          </a>
+        ) : null}
+      </div>
+
+      <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
+        <p className="text-textMuted text-xs mb-2">Display name</p>
+        <div className="flex gap-2">
+          <input
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            maxLength={80}
+            placeholder="Shown on your investor profile"
+            className="flex-1 h-11 rounded-xl border border-border bg-background px-3 text-sm text-text"
+          />
+          <Button
+            type="button"
+            size="sm"
+            loading={savingKey === "name"}
+            onClick={() => void saveDisplayName()}
+          >
+            Save
+          </Button>
+        </div>
       </div>
 
       <div className="bg-surface border border-border rounded-2xl p-4 mb-3">

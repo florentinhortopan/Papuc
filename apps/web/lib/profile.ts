@@ -31,13 +31,19 @@ export async function updateProfileSettings(
     auto_condition_analysis?: boolean;
     nightly_scouts_paused?: boolean;
     email_digests_enabled?: boolean;
+    display_name?: string | null;
   },
 ): Promise<void> {
   const userId = (await supabase.auth.getUser()).data.user?.id;
   if (!userId) throw new Error("not signed in");
+  const update: Record<string, unknown> = { ...patch };
+  if (patch.display_name !== undefined) {
+    const trimmed = patch.display_name?.trim().slice(0, 80) ?? "";
+    update.display_name = trimmed || null;
+  }
   const { error } = await supabase
     .from("profiles")
-    .update(patch)
+    .update(update)
     .eq("id", userId);
   if (error) throw error;
 }

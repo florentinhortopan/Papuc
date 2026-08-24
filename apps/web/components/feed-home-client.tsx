@@ -452,15 +452,33 @@ export function FeedHomeClient({
                 onSave={onSave}
                 onSkip={onSkip}
                 onUnsave={onUnsave}
-                empty="Coming soon — follow investors and see deals they make public."
+                empty="Follow investors or watch a public scout to fill Friends."
               />
             </div>
           )}
         </>
       ) : chip === "friends" ? (
-        <p className="text-textMuted text-sm py-6">
-          Coming soon — follow investors and see deals they make public.
-        </p>
+        chipDeals.length === 0 ? (
+          <p className="text-textMuted text-sm py-6">
+            Follow investors from public deals on Discover, or watch a public
+            scout — their new finds show up here.
+          </p>
+        ) : (
+          <div className="space-y-4">
+            <h2 className="text-xl font-semibold">Friends</h2>
+            <p className="text-textMuted text-xs">
+              Deals from people you follow and scouts you watch.
+            </p>
+            <DealGrid
+              deals={chipDeals}
+              busyId={busyId}
+              savedIds={savedIds}
+              onSave={onSave}
+              onSkip={onSkip}
+              onUnsave={onUnsave}
+            />
+          </div>
+        )
       ) : chip === "skipped" ? (
         <div className="space-y-4">
           <h2 className="text-xl font-semibold">Skipped</h2>

@@ -26,6 +26,7 @@ import { FinancingFitPanel } from "@/components/financing-fit-panel";
 import { MarketSignalBadges } from "@/components/market-signal-badges";
 import { PhotoCarousel } from "@/components/photo-carousel";
 import { ProLockedPanel } from "@/components/pro-locked-panel";
+import { ScoutLikeThisButton } from "@/components/scout-like-this-button";
 import { StrCashflowMatrix, defaultStrMatrix, type StrMatrixValue } from "@/components/str-matrix";
 import {
   PhotoConditionEstimate,
@@ -110,6 +111,7 @@ export function DealDetailClient({
   autoConditionAnalysis = true,
   isOwner = true,
   subscriptionTier = "free",
+  ownerDisplayName = null,
 }: {
   deal: DealWithScore;
   project: ProjectRow;
@@ -124,6 +126,7 @@ export function DealDetailClient({
   isOwner?: boolean;
   /** Viewer subscription — gates Catch the catch / financing fit. */
   subscriptionTier?: SubscriptionTier;
+  ownerDisplayName?: string | null;
 }) {
   const isPro = subscriptionTier === "pro";
   const router = useRouter();
@@ -1627,8 +1630,26 @@ export function DealDetailClient({
           ) : (
             <>
               <p className="col-span-2 text-textMuted text-xs">
-                Public listing — underwriting is view-only.
+                Public listing — underwriting is view-only
+                {ownerDisplayName ? (
+                  <>
+                    {" "}
+                    · scout by{" "}
+                    <a
+                      href={`/u/${project.owner_id}`}
+                      className="text-primary hover:underline"
+                    >
+                      {ownerDisplayName}
+                    </a>
+                  </>
+                ) : null}
+                .
               </p>
+              <ScoutLikeThisButton
+                dealId={deal.id}
+                className="col-span-2"
+                label="Scout like this"
+              />
               <Button
                 variant="secondary"
                 onClick={exportCsv}

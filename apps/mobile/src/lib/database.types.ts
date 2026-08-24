@@ -37,6 +37,9 @@ export type ProjectsRow = {
   last_scout_at: string | null;
   /** When true and owner is Pro, nightly cron scouts this project. */
   nightly_scout_enabled: boolean;
+  is_public?: boolean;
+  source_deal_id?: string | null;
+  source_project_id?: string | null;
   created_at: string;
   updated_at: string;
 };

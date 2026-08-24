@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { listPersonalizedFeed } from "@/lib/feed";
-import { createClient } from "@/lib/supabase/server";
+import { createRouteClient } from "@/lib/supabase/route-client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const supabase = await createClient();
+export async function GET(req: Request) {
+  const supabase = await createRouteClient(req);
   const {
     data: { user },
   } = await supabase.auth.getUser();

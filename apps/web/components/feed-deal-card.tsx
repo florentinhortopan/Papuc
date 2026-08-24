@@ -130,16 +130,29 @@ export function FeedDealCard({
             .join(" · ")}
         </p>
       </Link>
-      <Link
-        href={`/projects/${deal.project.id}`}
-        className="inline-flex mt-1.5 max-w-full items-center rounded-full border border-border bg-surfaceAlt px-2 py-0.5 text-[11px] text-textMuted hover:text-text hover:border-primary/40 transition-colors"
-        title={`Open project ${deal.project.name}`}
-      >
-        <span className="truncate">
-          {deal.isOwn ? "Your project · " : ""}
-          {deal.project.name}
-        </span>
-      </Link>
+      <div className="flex flex-wrap gap-1.5 mt-1.5">
+        <Link
+          href={`/projects/${deal.project.id}`}
+          className="inline-flex max-w-full items-center rounded-full border border-border bg-surfaceAlt px-2 py-0.5 text-[11px] text-textMuted hover:text-text hover:border-primary/40 transition-colors"
+          title={`Open project ${deal.project.name}`}
+        >
+          <span className="truncate">
+            {deal.isOwn ? "Your project · " : ""}
+            {deal.project.name}
+          </span>
+        </Link>
+        {!deal.isOwn ? (
+          <Link
+            href={`/u/${deal.project.owner_id}`}
+            className="inline-flex max-w-[140px] items-center rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-textMuted hover:text-primary hover:border-primary/40 transition-colors"
+            title="View investor profile"
+          >
+            <span className="truncate">
+              {deal.ownerDisplayName ?? "Investor"}
+            </span>
+          </Link>
+        ) : null}
+      </div>
     </div>
   );
 }

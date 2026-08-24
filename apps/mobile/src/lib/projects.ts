@@ -1,5 +1,6 @@
 import { ProjectConstraintsSchema, type ProjectConstraints } from "@papuc/core";
 
+import { apiFetch } from "./api";
 import { supabase } from "./supabase";
 import type { ProjectsRow, ProjectStatus } from "./database.types";
 
@@ -62,12 +63,16 @@ export async function updateProject(
     name: string;
     constraints: ProjectConstraints;
     status: ProjectStatus;
+    nightly_scout_enabled?: boolean;
   }>,
 ): Promise<void> {
   const update: Record<string, unknown> = {};
   if (patch.name !== undefined) update.name = patch.name;
   if (patch.status !== undefined) update.status = patch.status;
   if (patch.constraints !== undefined) update.constraints = patch.constraints;
+  if (patch.nightly_scout_enabled !== undefined) {
+    update.nightly_scout_enabled = patch.nightly_scout_enabled;
+  }
   const { error } = await (supabase.from("projects") as any)
     .update(update)
     .eq("id", id);
@@ -82,11 +87,18 @@ export async function deleteProject(id: string): Promise<void> {
 export async function parseProjectPrompt(
   prompt: string,
 ): Promise<ProjectConstraints> {
-  const { data, error } = await supabase.functions.invoke<{ constraints: unknown }>(
-    "parse-project-goals",
-    { body: { prompt } },
-  );
-  if (error) throw error;
+  const data = await apiFetch<{ constraints: unknown }>("/api/projects/parse", {
+    method: "POST",
+    body: JSON.stringify({ prompt }),
+  });
   if (!data?.constraints) throw new Error("no constraints returned");
   return ProjectConstraintsSchema.parse(data.constraints);
+}
+
+export async function scoutProject(projectId: string): Promise<{
+  candidatesSeen: number;
+  dealsAdded: number;
+  dealsScored: number;
+}> {
+  return apiFetch(`/api/projects/${projectId}/scout`, { method: "POST" });
 }

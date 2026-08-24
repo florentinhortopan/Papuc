@@ -6,7 +6,7 @@ import {
 } from "@papuc/core/llm";
 import { NextResponse } from "next/server";
 
-import { createClient } from "@/lib/supabase/server";
+import { createRouteClient } from "@/lib/supabase/route-client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,8 +16,8 @@ export const dynamic = "force-dynamic";
  * browser WebRTC Concierge. The long-lived OPENAI_API_KEY never leaves
  * the server.
  */
-export async function POST() {
-  const supabase = await createClient();
+export async function POST(req: Request) {
+  const supabase = await createRouteClient(req);
   const {
     data: { user },
   } = await supabase.auth.getUser();

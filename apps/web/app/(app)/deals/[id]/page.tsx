@@ -5,6 +5,7 @@ import { DealDetailClient } from "@/components/deal-detail-client";
 import { getDeal } from "@/lib/deals";
 import { getProfile } from "@/lib/profile";
 import { getProject } from "@/lib/projects";
+import { getPublicProfile, publicDisplayName } from "@/lib/social";
 import { getCachedMarketStrIntel } from "@/lib/str-intel";
 import { createClient } from "@/lib/supabase/server";
 
@@ -53,15 +54,29 @@ export default async function DealDetailPage({
     data: { user },
   } = await supabase.auth.getUser();
   const isOwner = Boolean(user && user.id === project.owner_id);
+  const ownerProfile = await getPublicProfile(supabase, project.owner_id);
+  const ownerDisplayName = ownerProfile
+    ? publicDisplayName(ownerProfile)
+    : null;
 
   return (
     <div>
-      <Link
-        href={`/projects/${project.id}`}
-        className="text-textMuted text-sm hover:text-text"
-      >
-        ← {project.name}
-      </Link>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-1">
+        <Link
+          href={`/projects/${project.id}`}
+          className="text-textMuted text-sm hover:text-text"
+        >
+          ← {project.name}
+        </Link>
+        {!isOwner ? (
+          <Link
+            href={`/u/${project.owner_id}`}
+            className="text-primary text-sm hover:underline"
+          >
+            {ownerDisplayName ?? "Investor"}
+          </Link>
+        ) : null}
+      </div>
       <DealDetailClient
         deal={deal}
         project={project}
@@ -71,6 +86,7 @@ export default async function DealDetailPage({
         }
         isOwner={isOwner}
         subscriptionTier={profile?.subscription_tier ?? "free"}
+        ownerDisplayName={ownerDisplayName}
       />
     </div>
   );

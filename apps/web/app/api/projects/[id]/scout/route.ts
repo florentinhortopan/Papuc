@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
+import { createRouteClient } from "@/lib/supabase/route-client";
 import { scoutProjectInternal } from "@/lib/scouting";
 
 export const runtime = "nodejs";
@@ -10,11 +10,11 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const supabase = await createClient();
+  const supabase = await createRouteClient(req);
   const {
     data: { user },
   } = await supabase.auth.getUser();

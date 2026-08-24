@@ -20,6 +20,7 @@ import {
 } from "@/components/deal-filters-bar";
 import { NightlyScoutToggle } from "@/components/nightly-scout-toggle";
 import { PublicFeedToggle } from "@/components/public-feed-toggle";
+import { WatchProjectButton } from "@/components/watch-project-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { SubscriptionTier } from "@/lib/database.types";
@@ -89,6 +90,9 @@ export function ProjectDetailClient({
   initialLoadFailed = false,
   subscriptionTier = "free",
   isOwner = true,
+  initialWatching = false,
+  watcherCount = 0,
+  ownerDisplayName = null,
 }: {
   project: ProjectRow;
   initialDeals: DealWithScore[];
@@ -97,6 +101,9 @@ export function ProjectDetailClient({
   subscriptionTier?: SubscriptionTier;
   /** False when viewing someone else's public project (browse mode). */
   isOwner?: boolean;
+  initialWatching?: boolean;
+  watcherCount?: number;
+  ownerDisplayName?: string | null;
 }) {
   const router = useRouter();
   const [deals, setDeals] = useState<DealWithScore[]>(rankByScore(initialDeals));
@@ -637,9 +644,39 @@ export function ProjectDetailClient({
           ) : null}
         </>
       ) : (
-        <p className="text-textMuted text-xs mb-2">
-          Browse mode — you can open deals from this public project.
-        </p>
+        <div className="mb-4 space-y-3">
+          {ownerDisplayName ? (
+            <p className="text-textMuted text-xs">
+              Scout by{" "}
+              <a
+                href={`/u/${project.owner_id}`}
+                className="text-primary hover:underline"
+              >
+                {ownerDisplayName}
+              </a>
+            </p>
+          ) : (
+            <p className="text-textMuted text-xs">
+              Scout by{" "}
+              <a
+                href={`/u/${project.owner_id}`}
+                className="text-primary hover:underline"
+              >
+                investor
+              </a>
+            </p>
+          )}
+          {project.is_public ? (
+            <WatchProjectButton
+              projectId={project.id}
+              initialWatching={initialWatching}
+              watcherCount={watcherCount}
+            />
+          ) : null}
+          <p className="text-textMuted text-xs">
+            Browse mode — you can open deals from this public project.
+          </p>
+        </div>
       )}
 
       <h2 className="text-lg font-semibold mt-8 mb-3">

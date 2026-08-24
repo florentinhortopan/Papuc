@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+import { apiFetch } from "./api";
 
 export interface ComparableListing {
   id: string;
@@ -14,10 +14,16 @@ export interface ComparableListing {
   daysOnMarket?: number;
 }
 
-export async function getComparables(dealId: string): Promise<ComparableListing[]> {
-  const { data, error } = await supabase.functions.invoke<{
-    comparables: ComparableListing[];
-  }>("comparables", { body: { dealId } });
-  if (error) throw error;
-  return data?.comparables ?? [];
+export async function getComparables(
+  dealId: string,
+): Promise<ComparableListing[]> {
+  try {
+    const data = await apiFetch<{ comparables?: ComparableListing[] }>(
+      `/api/deals/${dealId}/comparables`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    return data?.comparables ?? [];
+  } catch {
+    return [];
+  }
 }

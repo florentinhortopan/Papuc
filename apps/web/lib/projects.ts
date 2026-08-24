@@ -12,6 +12,8 @@ function hydrate(row: ProjectsRow): ProjectRow {
     ...row,
     is_public: row.is_public ?? false,
     nightly_scout_enabled: row.nightly_scout_enabled ?? true,
+    source_deal_id: row.source_deal_id ?? null,
+    source_project_id: row.source_project_id ?? null,
     constraints: ProjectConstraintsSchema.parse(row.constraints),
   };
 }
@@ -93,6 +95,20 @@ export async function listProjectsWithPreviews(
   });
 }
 
+export async function listPublicProjectsForOwner(
+  supabase: SupabaseClient,
+  ownerId: string,
+): Promise<ProjectRow[]> {
+  const { data, error } = await supabase
+    .from("projects")
+    .select("*")
+    .eq("owner_id", ownerId)
+    .eq("is_public", true)
+    .order("updated_at", { ascending: false });
+  if (error) throw error;
+  return ((data ?? []) as ProjectsRow[]).map(hydrate);
+}
+
 export async function getProject(
   supabase: SupabaseClient,
   id: string,
@@ -113,17 +129,23 @@ export async function createProject(
     rawPrompt: string;
     constraints: ProjectConstraints;
     status?: ProjectStatus;
+    sourceDealId?: string | null;
+    sourceProjectId?: string | null;
   },
 ): Promise<ProjectRow> {
   const userId = (await supabase.auth.getUser()).data.user?.id;
   if (!userId) throw new Error("not signed in");
-  const insertRow = {
+  const insertRow: Record<string, unknown> = {
     owner_id: userId,
     name: input.name,
     raw_prompt: input.rawPrompt,
     constraints: input.constraints,
     status: input.status ?? "active",
   };
+  if (input.sourceDealId) insertRow.source_deal_id = input.sourceDealId;
+  if (input.sourceProjectId) {
+    insertRow.source_project_id = input.sourceProjectId;
+  }
   const { data, error } = await supabase
     .from("projects")
     .insert(insertRow)

@@ -5,6 +5,12 @@ import { ProjectDetailClient } from "@/components/project-detail-client";
 import { listDeals } from "@/lib/deals";
 import { getProfile } from "@/lib/profile";
 import { getProject } from "@/lib/projects";
+import {
+  countProjectWatchers,
+  getPublicProfile,
+  isWatchingProject,
+  publicDisplayName,
+} from "@/lib/social";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -41,6 +47,17 @@ export default async function ProjectDetailPage({
   } = await supabase.auth.getUser();
   const isOwner = Boolean(user && user.id === project.owner_id);
 
+  const [watcherCount, ownerProfile, initialWatching] = await Promise.all([
+    countProjectWatchers(supabase, project.id),
+    getPublicProfile(supabase, project.owner_id),
+    user && !isOwner
+      ? isWatchingProject(supabase, project.id, user.id)
+      : Promise.resolve(false),
+  ]);
+  const ownerDisplayName = ownerProfile
+    ? publicDisplayName(ownerProfile)
+    : null;
+
   return (
     <div>
       <Link
@@ -55,6 +72,9 @@ export default async function ProjectDetailPage({
         initialLoadFailed={initialLoadFailed}
         subscriptionTier={profile?.subscription_tier ?? "free"}
         isOwner={isOwner}
+        initialWatching={initialWatching}
+        watcherCount={watcherCount}
+        ownerDisplayName={ownerDisplayName}
       />
     </div>
   );

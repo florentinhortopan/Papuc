@@ -7,20 +7,35 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "channel": "development"
+      "channel": "development",
+      "ios": {
+        "simulator": false
+      }
     },
     "preview": {
-      "distribution": "internal",
-      "channel": "preview"
+      "distribution": "store",
+      "channel": "preview",
+      "autoIncrement": true,
+      "ios": {
+        "resourceClass": "m-medium"
+      }
     },
     "production": {
       "channel": "production",
+      "autoIncrement": true,
       "ios": {
         "resourceClass": "m-medium"
       }
     }
   },
   "submit": {
+    "preview": {
+      "ios": {
+        "appleId": "REPLACE_ME",
+        "ascAppId": "REPLACE_ME",
+        "appleTeamId": "REPLACE_ME"
+      }
+    },
     "production": {
       "ios": {
         "appleId": "REPLACE_ME",

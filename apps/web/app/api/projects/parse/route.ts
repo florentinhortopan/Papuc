@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { ClaudeProvider } from "@papuc/core/llm";
 
-import { createClient } from "@/lib/supabase/server";
+import { createRouteClient } from "@/lib/supabase/route-client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
-  const supabase = await createClient();
+  const supabase = await createRouteClient(req);
   const {
     data: { user },
   } = await supabase.auth.getUser();

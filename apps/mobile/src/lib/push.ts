@@ -1,7 +1,9 @@
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
+import * as Linking from "expo-linking";
 import { Platform } from "react-native";
+import { router } from "expo-router";
 
 import { supabase } from "./supabase";
 
@@ -14,6 +16,24 @@ Notifications.setNotificationHandler({
     shouldShowList: true,
   }),
 });
+
+function dealDeepLink(dealId: string): string {
+  return Linking.createURL(`deals/${dealId}`);
+}
+
+/** Wire notification taps → deal route (Home sheet opens via deal page). */
+export function attachNotificationResponseHandler(): () => void {
+  const sub = Notifications.addNotificationResponseReceivedListener((res) => {
+    const data = res.notification.request.content.data as {
+      dealId?: string;
+      projectId?: string;
+    };
+    if (data?.dealId) {
+      router.push(`/(tabs)/deals/${data.dealId}`);
+    }
+  });
+  return () => sub.remove();
+}
 
 export async function registerPushToken(): Promise<string | null> {
   if (!Device.isDevice) return null;
@@ -34,9 +54,14 @@ export async function registerPushToken(): Promise<string | null> {
     });
   }
 
-  const easExtra = (Constants.expoConfig?.extra ?? {}) as { eas?: { projectId?: string } };
+  const easExtra = (Constants.expoConfig?.extra ?? {}) as {
+    eas?: { projectId?: string };
+  };
   const projectId: string | undefined = easExtra.eas?.projectId;
-  const token = projectId
+  if (!projectId || projectId.startsWith("REPLACE")) {
+    console.warn("[push] EAS projectId missing — set app.json extra.eas.projectId");
+  }
+  const token = projectId && !projectId.startsWith("REPLACE")
     ? (await Notifications.getExpoPushTokenAsync({ projectId })).data
     : (await Notifications.getExpoPushTokenAsync()).data;
 
@@ -52,3 +77,5 @@ export async function registerPushToken(): Promise<string | null> {
   });
   return token;
 }
+
+export { dealDeepLink };

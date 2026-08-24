@@ -1,32 +1,39 @@
-# Papuc Mobile (Expo) — PARKED
+# Papuc Mobile (Expo) — iOS first
 
-This Expo app was the original target for Papuc. It has been **parked** in
-favor of the web-first MVP at `apps/web/` (deployed on Vercel) for these
-reasons:
+Airbnb-like, Voice-first discovery app. Stitch designs live in project
+`Papuc iOS` (`projects/3060932858356978304`). See [`DESIGN.md`](./DESIGN.md).
 
-- The web app needs no Docker, no Xcode, and no local Supabase stack.
-- Vercel deploys the Next.js app + API routes + cron in a single push.
-- All shared business logic lives in `packages/core/` and is reused by the
-  web app, so when we revisit native distribution we don't have to redo it.
+## Setup
 
-The screens, components, and lib in this folder are intact. To revive the
-mobile target later:
-
-1. Update SDK + dependencies:
+1. Copy env:
    ```bash
-   pnpm --filter @papuc/mobile install
-   pnpm --filter @papuc/mobile expo install --fix
+   cp .env.example .env
    ```
-2. Replace `src/lib/supabase.ts` calls to old Edge Functions
-   (`supabase.functions.invoke("scout-project", ...)`) with calls to the new
-   `apps/web/app/api/*` routes. The Next API routes accept the same JSON
-   bodies and return the same shapes.
-3. Keep `apps/mobile/.env` pointing at the same Supabase project as
-   `apps/web/.env.local`. Auth tokens issued by Supabase work for both
-   clients.
-4. Re-enable EAS build / submit once you're ready to ship to App Store / Play.
+   Set `EXPO_PUBLIC_SUPABASE_*` (same project as web) and
+   `EXPO_PUBLIC_API_URL` to your Vercel origin (preview or production), e.g.
+   `https://papuc.vercel.app`.
 
-Until then, the web app is the production target. You can still run this app
-locally with the original `pnpm --filter @papuc/mobile start`, but the API
-calls inside it will need to be re-pointed at `https://<your-vercel>/api/*`
-first or they'll fail (the Supabase Edge Functions are no longer deployed).
+2. Install deps from monorepo root:
+   ```bash
+   pnpm install
+   pnpm --filter @papuc/mobile start
+   ```
+
+3. Replace `REPLACE_WITH_EAS_PROJECT_ID` in `app.json` after `eas init`.
+   Fill Apple IDs in `eas.json` submit profiles.
+
+## Debug / redesign loop
+
+| Layer | Command | Use when |
+|-------|---------|----------|
+| Dev Client | `pnpm eas:dev` then Metro `start` | Daily UI / Stitch iteration |
+| OTA | `pnpm eas:update:preview -- "copy"` | JS-only polish on TestFlight binary |
+| TestFlight | `pnpm eas:preview` → `pnpm eas:submit:preview` | Push, Voice shell, soak |
+| App Store | `pnpm eas:prod` + submit production | **Only after TestFlight sign-off** |
+
+Debug footer (dev/preview) shows API URL, channel, build, last error.
+
+## APIs
+
+Mobile calls Vercel `/api/*` with `Authorization: Bearer <supabase access token>`
+(not Supabase Edge Functions).

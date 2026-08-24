@@ -8,9 +8,16 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { attachNotificationResponseHandler } from "@/lib/push";
+import { useEffect } from "react";
 
 function RootNav() {
   const { session, loading } = useAuth();
+
+  useEffect(() => {
+    return attachNotificationResponseHandler();
+  }, []);
+
   if (loading) return null;
   return (
     <>

@@ -6,6 +6,7 @@ import {
   type DigestDeal,
   type DigestProject,
 } from "@/lib/email/scout-digest";
+import { sendExpoPush } from "@/lib/expo-push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { scoutProjectInternal } from "@/lib/scouting";
 
@@ -133,6 +134,11 @@ export async function GET(req: Request) {
 
   /** Accumulate qualifying new deals per owner for a single digest email. */
   const digestsByOwner = new Map<string, OwnerDigestBucket>();
+  /** Expo push payloads per owner (top deals). */
+  const pushByOwner = new Map<
+    string,
+    Array<{ dealId: string; projectId: string; title: string; body: string }>
+  >();
 
   for (const proj of projects ?? []) {
     if (!proj.nightly_scout_enabled) {
@@ -222,6 +228,21 @@ export async function GET(req: Request) {
         });
       }
 
+      if (forDigest.length > 0) {
+        const top = forDigest.slice(0, 3);
+        const existing = pushByOwner.get(proj.owner_id) ?? [];
+        for (const d of top) {
+          const place = [d.city, d.state].filter(Boolean).join(", ");
+          existing.push({
+            dealId: d.id,
+            projectId: proj.id,
+            title: `New deal · score ${Math.round(d.score)}`,
+            body: d.address?.trim() || place || "Open Papuc to peek",
+          });
+        }
+        pushByOwner.set(proj.owner_id, existing);
+      }
+
       summary.push({
         projectId: proj.id,
         ok: true,
@@ -283,5 +304,43 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ summary, emails });
+  const pushes: Array<{
+    ownerId: string;
+    ok: boolean;
+    count?: number;
+    skipped?: boolean;
+    error?: string;
+  }> = [];
+
+  for (const [ownerId, items] of pushByOwner) {
+    const { data: tokens } = await sb
+      .from("device_tokens")
+      .select("token")
+      .eq("user_id", ownerId);
+    const list = (tokens ?? [])
+      .map((t: { token?: string }) => t.token)
+      .filter((t): t is string => typeof t === "string" && t.length > 0);
+    if (list.length === 0) {
+      pushes.push({ ownerId, ok: true, skipped: true, error: "no device tokens" });
+      continue;
+    }
+    const messages = items.flatMap((item) =>
+      list.map((to) => ({
+        to,
+        title: item.title,
+        body: item.body,
+        sound: "default" as const,
+        data: { dealId: item.dealId, projectId: item.projectId },
+      })),
+    );
+    const result = await sendExpoPush(messages);
+    pushes.push({
+      ownerId,
+      ok: result.ok,
+      count: messages.length,
+      error: result.error,
+    });
+  }
+
+  return NextResponse.json({ summary, emails, pushes });
 }

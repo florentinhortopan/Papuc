@@ -38,7 +38,7 @@ export default function ProjectsIndex() {
         <View>
           <Text className="text-text text-3xl font-bold">Projects</Text>
           <Text className="text-textMuted text-sm mt-1">
-            Describe a deal you want; let the agent scout it.
+            Your scouts — or Talk to Papuc from Home.
           </Text>
         </View>
         <Pressable

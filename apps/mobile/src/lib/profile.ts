@@ -20,3 +20,17 @@ export async function markOnboarded(): Promise<void> {
     .update({ onboarded_at: new Date().toISOString() })
     .eq("id", userId);
 }
+
+export async function updateProfile(
+  patch: Partial<
+    Pick<ProfileRow, "email_digests_enabled" | "display_name" | "nightly_scouts_paused">
+  >,
+): Promise<void> {
+  const userId = (await supabase.auth.getUser()).data.user?.id;
+  if (!userId) throw new Error("not signed in");
+  const { error } = await (supabase.from("profiles") as any)
+    .update(patch)
+    .eq("id", userId);
+  if (error) throw error;
+}
+

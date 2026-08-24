@@ -15,6 +15,12 @@ import { DealCard } from "@/components/DealCard";
 import { listDeals, scoutProject, type DealWithScore } from "@/lib/deals";
 import { formatDate, formatMarket, formatMoney } from "@/lib/format";
 import { deleteProject, getProject, type ProjectRow } from "@/lib/projects";
+import {
+  getSessionUserId,
+  isWatchingProject,
+  watchProject,
+  unwatchProject,
+} from "@/lib/social";
 import { supabase } from "@/lib/supabase";
 
 export default function ProjectDetail() {
@@ -26,7 +32,14 @@ export default function ProjectDetail() {
   const [loading, setLoading] = useState(false);
   const [scouting, setScouting] = useState(false);
   const [scoutStatus, setScoutStatus] = useState<string | null>(null);
+  const [viewerId, setViewerId] = useState<string | null>(null);
+  const [watching, setWatching] = useState(false);
+  const [watchBusy, setWatchBusy] = useState(false);
   const projectIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    void getSessionUserId().then(setViewerId);
+  }, []);
 
   const loadAll = useCallback(async () => {
     if (!id) return;
@@ -36,12 +49,16 @@ export default function ProjectDetail() {
       const [p, d] = await Promise.all([getProject(id), listDeals(id)]);
       setProject(p);
       setDeals(rankByScore(d));
+      const uid = (await getSessionUserId()) ?? viewerId;
+      if (uid && p.owner_id !== uid && p.is_public) {
+        setWatching(await isWatchingProject(p.id));
+      }
     } catch (err: any) {
       setError(err?.message ?? String(err));
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, viewerId]);
 
   useEffect(() => {
     void loadAll();
@@ -149,6 +166,23 @@ export default function ProjectDetail() {
 
   const c = project.constraints;
   const marketLabel = formatMarket(c.markets[0]);
+  const isOwner = viewerId != null && project.owner_id === viewerId;
+
+  async function toggleWatch() {
+    if (!project) return;
+    setWatchBusy(true);
+    const next = !watching;
+    setWatching(next);
+    try {
+      if (next) await watchProject(project.id);
+      else await unwatchProject(project.id);
+    } catch (err: any) {
+      setWatching(!next);
+      Alert.alert("Watch failed", err?.message ?? String(err));
+    } finally {
+      setWatchBusy(false);
+    }
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-background">
@@ -159,7 +193,7 @@ export default function ProjectDetail() {
         refreshControl={
           <RefreshControl
             refreshing={loading || scouting}
-            onRefresh={runScout}
+            onRefresh={isOwner ? runScout : loadAll}
             tintColor="#7c5cff"
           />
         }
@@ -167,7 +201,9 @@ export default function ProjectDetail() {
           <View>
             <View className="px-2 pt-2">
               <Pressable onPress={() => router.back()} className="mb-2">
-                <Text className="text-textMuted">← Projects</Text>
+                <Text className="text-textMuted">
+                  ← {isOwner ? "Projects" : "Back"}
+                </Text>
               </Pressable>
               <Text className="text-text text-2xl font-bold">{project.name}</Text>
               <Text className="text-textMuted text-sm mt-1">{marketLabel}</Text>
@@ -196,17 +232,38 @@ export default function ProjectDetail() {
               </Card>
             </View>
 
-            <View className="flex-row gap-2 mb-3">
-              <Pressable
-                onPress={runScout}
-                disabled={scouting}
-                className={`flex-1 rounded-xl py-3 items-center ${scouting ? "bg-primary/40" : "bg-primary active:opacity-80"}`}
-              >
-                <Text className="text-primaryFg font-semibold">
-                  {scouting ? "Scouting…" : "Scout deals"}
+            {isOwner ? (
+              <View className="flex-row gap-2 mb-3">
+                <Pressable
+                  onPress={runScout}
+                  disabled={scouting}
+                  className={`flex-1 rounded-xl py-3 items-center ${scouting ? "bg-primary/40" : "bg-primary active:opacity-80"}`}
+                >
+                  <Text className="text-primaryFg font-semibold">
+                    {scouting ? "Scouting…" : "Scout deals"}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : project.is_public ? (
+              <View className="mb-3">
+                <Pressable
+                  onPress={() => void toggleWatch()}
+                  disabled={watchBusy}
+                  className={`rounded-xl py-3 items-center ${
+                    watching ? "border border-border bg-surface" : "bg-primary"
+                  }`}
+                >
+                  <Text
+                    className={`font-semibold ${watching ? "text-text" : "text-primaryFg"}`}
+                  >
+                    {watching ? "Watching" : "Watch"}
+                  </Text>
+                </Pressable>
+                <Text className="text-textMuted text-xs mt-2">
+                  Watch to see new public deals in Friends.
                 </Text>
-              </Pressable>
-            </View>
+              </View>
+            ) : null}
             {scoutStatus ? (
               <Text className="text-textMuted text-xs mb-3">{scoutStatus}</Text>
             ) : null}
@@ -219,22 +276,26 @@ export default function ProjectDetail() {
         ListEmptyComponent={
           <View className="bg-surface border border-border rounded-2xl p-6 items-center">
             <Text className="text-textMuted text-sm text-center">
-              No deals yet. Tap "Scout deals" to find listings that match your goals.
+              {isOwner
+                ? 'No deals yet. Tap "Scout deals" to find listings that match your goals.'
+                : "No deals in this public scout yet."}
             </Text>
           </View>
         }
         renderItem={({ item }) => <DealCard deal={item} />}
         ListFooterComponent={
-          <View className="mt-6">
-            <Pressable
-              onPress={onDelete}
-              className="border border-border rounded-xl py-3 items-center active:opacity-70"
-            >
-              <Text className="text-danger text-sm font-semibold">
-                Delete project
-              </Text>
-            </Pressable>
-          </View>
+          isOwner ? (
+            <View className="mt-6">
+              <Pressable
+                onPress={onDelete}
+                className="border border-border rounded-xl py-3 items-center active:opacity-70"
+              >
+                <Text className="text-danger text-sm font-semibold">
+                  Delete project
+                </Text>
+              </Pressable>
+            </View>
+          ) : null
         }
       />
     </SafeAreaView>

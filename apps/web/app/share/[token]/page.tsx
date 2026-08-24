@@ -10,6 +10,7 @@ import { getCachedMarketStrIntel } from "@/lib/str-intel";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { underwriteDeal } from "@/lib/underwrite";
+import { ScoutLikeThisButton } from "@/components/scout-like-this-button";
 
 export const dynamic = "force-dynamic";
 
@@ -343,25 +344,42 @@ export default async function SharePage({
         </div>
 
         {/* Turn recipients into senders. */}
-        <div className="bg-primary/10 border border-primary/30 rounded-2xl p-5 text-center">
+        <div className="bg-primary/10 border border-primary/30 rounded-2xl p-5 text-center space-y-3">
           <p className="text-text text-base font-semibold">
             Papuc found and underwrote this deal automatically.
           </p>
-          <p className="text-textMuted text-sm mt-1 leading-6">
-            Describe your goal in plain English — “$500/mo cashflow in Austin
-            under $450k” — and Papuc scouts listings nightly, runs this exact
-            pro-forma on every one, and ranks what clears your bar.
+          <p className="text-textMuted text-sm leading-6">
+            Clone these scout filters into your own project — same markets and
+            strategy — then run nightly finds that clear your bar.
           </p>
-          <Link
-            href={isOwner ? `/deals/${deal.id}` : signedIn ? "/projects" : signUpHref}
-            className="inline-flex items-center justify-center rounded-xl bg-primary text-white text-sm font-semibold px-5 py-2.5 mt-4 hover:opacity-90"
-          >
-            {isOwner
-              ? "Open in your workspace"
-              : signedIn
-                ? "Scout your own market"
-                : "Start scouting free"}
-          </Link>
+          {isOwner ? (
+            <Link
+              href={`/deals/${deal.id}`}
+              className="inline-flex items-center justify-center rounded-xl bg-primary text-white text-sm font-semibold px-5 py-2.5 hover:opacity-90"
+            >
+              Open in your workspace
+            </Link>
+          ) : signedIn ? (
+            <div className="flex flex-col items-center gap-2">
+              <ScoutLikeThisButton
+                dealId={deal.id}
+                label="Scout like this"
+              />
+              <Link
+                href="/projects"
+                className="text-primary text-xs hover:underline"
+              >
+                Or go to my projects
+              </Link>
+            </div>
+          ) : (
+            <Link
+              href={signUpHref}
+              className="inline-flex items-center justify-center rounded-xl bg-primary text-white text-sm font-semibold px-5 py-2.5 hover:opacity-90"
+            >
+              Start scouting free
+            </Link>
+          )}
         </div>
 
         <p className="text-textMuted text-[11px] leading-5 text-center pb-6">

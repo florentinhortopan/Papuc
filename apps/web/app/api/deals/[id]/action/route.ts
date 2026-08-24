@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { actOnDeal, clearDealAction } from "@/lib/deals";
 import type { DealActionKind } from "@/lib/database.types";
-import { createClient } from "@/lib/supabase/server";
+import { createRouteClient } from "@/lib/supabase/route-client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id: dealId } = await ctx.params;
-  const supabase = await createClient();
+  const supabase = await createRouteClient(req);
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -61,7 +61,7 @@ export async function DELETE(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id: dealId } = await ctx.params;
-  const supabase = await createClient();
+  const supabase = await createRouteClient(req);
   const {
     data: { user },
   } = await supabase.auth.getUser();

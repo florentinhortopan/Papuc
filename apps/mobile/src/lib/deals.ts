@@ -1,3 +1,4 @@
+import { apiFetch } from "./api";
 import { supabase } from "./supabase";
 import type {
   DealActionKind,
@@ -64,35 +65,25 @@ export async function actOnDeal(input: {
   action: DealActionKind;
   note?: string;
 }): Promise<void> {
-  const userId = (await supabase.auth.getUser()).data.user?.id;
-  if (!userId) throw new Error("not signed in");
-  const { error } = await (supabase.from("deal_actions") as any)
-    .upsert(
-      {
-        deal_id: input.dealId,
-        project_id: input.projectId,
-        user_id: userId,
-        action: input.action,
-        note: input.note ?? null,
-      },
-      { onConflict: "deal_id,user_id,action" },
-    );
-  if (error) throw error;
+  // Prefer the web action route so save clears dismiss (and vice versa),
+  // matching Home feed / portfolio behavior.
+  await apiFetch<{ ok: boolean }>(`/api/deals/${input.dealId}/action`, {
+    method: "POST",
+    body: JSON.stringify({
+      action: input.action,
+      projectId: input.projectId,
+    }),
+  });
 }
 
 export async function clearDealAction(input: {
   dealId: string;
   action: DealActionKind;
 }): Promise<void> {
-  const userId = (await supabase.auth.getUser()).data.user?.id;
-  if (!userId) throw new Error("not signed in");
-  const { error } = await supabase
-    .from("deal_actions")
-    .delete()
-    .eq("deal_id", input.dealId)
-    .eq("user_id", userId)
-    .eq("action", input.action);
-  if (error) throw error;
+  await apiFetch<{ ok: boolean }>(
+    `/api/deals/${input.dealId}/action?action=${encodeURIComponent(input.action)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function scoutProject(projectId: string): Promise<{
@@ -100,12 +91,6 @@ export async function scoutProject(projectId: string): Promise<{
   dealsAdded: number;
   dealsScored: number;
 }> {
-  const { data, error } = await supabase.functions.invoke<{
-    candidatesSeen: number;
-    dealsAdded: number;
-    dealsScored: number;
-  }>("scout-project", { body: { projectId } });
-  if (error) throw error;
-  if (!data) throw new Error("no data returned");
-  return data;
+  return apiFetch(`/api/projects/${projectId}/scout`, { method: "POST" });
 }
+

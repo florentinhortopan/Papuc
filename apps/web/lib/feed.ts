@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { DealScoresRow, DealsRow } from "./database.types";
 import { formatMarket } from "./format";
+import { listFollowingIds, listWatchedProjectIds, getPublicProfiles, publicDisplayName } from "./social";
 
 const SECTION_LIMIT = 12;
 const POOL_LIMIT = 160;
@@ -48,6 +49,8 @@ export type FeedDeal = DealsRow & {
   isNew?: boolean;
   /** Soft personalization rank used for For you / searches. */
   tasteRank?: number;
+  /** Public display name of project owner (when loaded). */
+  ownerDisplayName?: string | null;
 };
 
 export type FeedTasteSummary = {
@@ -553,11 +556,12 @@ export async function listPersonalizedFeed(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<PersonalizedFeed> {
-  const [pool, taste, saved, skipped] = await Promise.all([
+  const [pool, taste, saved, skipped, friends] = await Promise.all([
     listFeedPool(supabase, userId),
     loadTasteProfile(supabase, userId),
     listSavedFeedDeals(supabase, userId),
     listSkippedFeedDeals(supabase, userId),
+    listFriendsFeedDeals(supabase, userId),
   ]);
 
   const ranked = pool
@@ -588,17 +592,110 @@ export async function listPersonalizedFeed(
         }
       : null;
 
+  const forYou = ranked.slice(0, SECTION_LIMIT);
+  const basedOnSearches = searchMatched.slice(0, SECTION_LIMIT);
+  const bestRated = byScore.slice(0, SECTION_LIMIT);
+  const mostProfitable = byCashflow.slice(0, SECTION_LIMIT);
+
+  const ownerIds = [
+    ...forYou,
+    ...newForYou,
+    ...basedOnSearches,
+    ...bestRated,
+    ...mostProfitable,
+    ...saved,
+    ...skipped,
+    ...friends,
+  ].map((d) => d.project.owner_id);
+  const profiles = await getPublicProfiles(supabase, ownerIds);
+
+  function withOwners(deals: FeedDeal[]): FeedDeal[] {
+    return deals.map((d) => {
+      const profile = profiles.get(d.project.owner_id);
+      return {
+        ...d,
+        ownerDisplayName: profile
+          ? publicDisplayName(profile)
+          : d.ownerDisplayName ?? null,
+      };
+    });
+  }
+
   return {
-    forYou: ranked.slice(0, SECTION_LIMIT),
-    newForYou,
-    basedOnSearches: searchMatched.slice(0, SECTION_LIMIT),
-    bestRated: byScore.slice(0, SECTION_LIMIT),
-    mostProfitable: byCashflow.slice(0, SECTION_LIMIT),
-    saved,
-    skipped,
-    friends: [],
+    forYou: withOwners(forYou),
+    newForYou: withOwners(newForYou),
+    basedOnSearches: withOwners(basedOnSearches),
+    bestRated: withOwners(bestRated),
+    mostProfitable: withOwners(mostProfitable),
+    saved: withOwners(saved),
+    skipped: withOwners(skipped),
+    friends: withOwners(friends),
     taste: tasteSummary,
   };
+}
+
+/** Deals from followed users' public projects ∪ watched public projects. */
+async function listFriendsFeedDeals(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<FeedDeal[]> {
+  const [followingIds, watchedIds] = await Promise.all([
+    listFollowingIds(supabase, userId),
+    listWatchedProjectIds(supabase, userId),
+  ]);
+
+  if (followingIds.length === 0 && watchedIds.length === 0) {
+    return [];
+  }
+
+  const dismissed = await listDismissedListingKeys(supabase, userId);
+  const chunks: FeedDeal[] = [];
+
+  if (followingIds.length > 0) {
+    const { data, error } = await supabase
+      .from("deals")
+      .select(
+        "*, deal_scores(*), projects!inner(id, name, owner_id, is_public)",
+      )
+      .eq("projects.is_public", true)
+      .in("projects.owner_id", followingIds)
+      .neq("projects.owner_id", userId)
+      .order("last_refreshed_at", { ascending: false })
+      .limit(POOL_LIMIT);
+    if (error) throw error;
+    for (const row of (data ?? []) as unknown as RawFeedRow[]) {
+      const mapped = toFeedDeal(row, userId);
+      if (mapped) chunks.push(mapped);
+    }
+  }
+
+  if (watchedIds.length > 0) {
+    const { data, error } = await supabase
+      .from("deals")
+      .select(
+        "*, deal_scores(*), projects!inner(id, name, owner_id, is_public)",
+      )
+      .eq("projects.is_public", true)
+      .in("project_id", watchedIds)
+      .neq("projects.owner_id", userId)
+      .order("last_refreshed_at", { ascending: false })
+      .limit(POOL_LIMIT);
+    if (error) throw error;
+    for (const row of (data ?? []) as unknown as RawFeedRow[]) {
+      const mapped = toFeedDeal(row, userId);
+      if (mapped) chunks.push(mapped);
+    }
+  }
+
+  const filtered = chunks.filter((d) => !dismissed.has(listingKey(d)));
+  return dedupeByListing(
+    filtered.sort(
+      (a, b) =>
+        (b.score?.score ?? 0) - (a.score?.score ?? 0) ||
+        Date.parse(b.last_refreshed_at) - Date.parse(a.last_refreshed_at),
+    ),
+    SECTION_LIMIT,
+  );
 }
 
 /** Legacy sections helper (public-only). Prefer listPersonalizedFeed. */

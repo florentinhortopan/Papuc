@@ -15,6 +15,8 @@ export default async function SettingsPage() {
   return (
     <SettingsClient
       email={user?.email ?? null}
+      userId={user?.id ?? null}
+      displayName={profile?.display_name ?? null}
       tier={profile?.subscription_tier ?? "free"}
       autoConditionAnalysis={profile?.auto_condition_analysis ?? true}
       nightlyScoutsPaused={profile?.nightly_scouts_paused ?? false}
