@@ -134,19 +134,43 @@ export function AdminUsersClient() {
           body,
         }),
       });
-      const json = (await res.json()) as {
+      const raw = await res.text();
+      let json: {
         error?: string;
         sent?: number;
         failed?: number;
-      };
-      if (!res.ok) throw new Error(json.error ?? "send failed");
+        details?: {
+          failed?: Array<{ email: string; error: string }>;
+        };
+      } = {};
+      if (raw.trim()) {
+        try {
+          json = JSON.parse(raw) as typeof json;
+        } catch {
+          throw new Error(
+            raw.slice(0, 280).trim() || `HTTP ${res.status} (non-JSON)`,
+          );
+        }
+      }
+      if (!res.ok) {
+        throw new Error(json.error ?? `send failed (HTTP ${res.status})`);
+      }
+      const failHint =
+        json.details?.failed?.length ?
+          ` · ${json.details.failed
+            .slice(0, 3)
+            .map((f) => `${f.email}: ${f.error}`)
+            .join("; ")}`
+        : "";
       setNote(
         `Sent ${json.sent ?? 0}` +
-          (json.failed ? ` · ${json.failed} failed` : ""),
+          (json.failed ? ` · ${json.failed} failed${failHint}` : ""),
       );
-      setCompose({ open: false, userIds: [] });
-      setSubject("");
-      setBody("");
+      if ((json.failed ?? 0) === 0) {
+        setCompose({ open: false, userIds: [] });
+        setSubject("");
+        setBody("");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

@@ -1,8 +1,4 @@
-import {
-  emailFromAddress,
-  getResendClient,
-  siteOrigin,
-} from "@/lib/email/resend";
+import { emailFromAddress, siteOrigin } from "@/lib/email/resend";
 
 export const ADMIN_EMAIL_MAX_RECIPIENTS = 100;
 
@@ -38,28 +34,64 @@ export function buildAdminMessageContent(body: string): {
   };
 }
 
+function resendApiKey(): string {
+  const key = process.env.RESEND_API_KEY?.trim();
+  if (!key) throw new Error("RESEND_API_KEY missing");
+  return key;
+}
+
+/**
+ * Send via Resend HTTP API (not the SDK) so non-JSON error bodies from
+ * Resend/proxies become readable messages instead of SyntaxError noise.
+ */
 export async function sendAdminMessage(input: {
   to: string;
   subject: string;
   body: string;
 }): Promise<{ id: string }> {
-  const resend = getResendClient();
-  if (!resend) {
-    throw new Error("RESEND_API_KEY missing");
-  }
   const subject = input.subject.trim();
   if (!subject) throw new Error("subject required");
   if (!input.body.trim()) throw new Error("body required");
+  const to = input.to.trim().toLowerCase();
+  if (!to.includes("@")) throw new Error(`invalid recipient: ${input.to}`);
+
   const { html, text } = buildAdminMessageContent(input.body);
-  const { data, error } = await resend.emails.send({
-    from: emailFromAddress(),
-    to: input.to,
-    subject,
-    html,
-    text,
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${resendApiKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: emailFromAddress(),
+      to: [to],
+      subject,
+      html,
+      text,
+    }),
   });
-  if (error) {
-    throw new Error(error.message || "Resend send failed");
+
+  const raw = await res.text();
+  let parsed: { id?: string; message?: string; name?: string; error?: unknown } =
+    {};
+  if (raw.trim()) {
+    try {
+      parsed = JSON.parse(raw) as typeof parsed;
+    } catch {
+      throw new Error(
+        `Resend HTTP ${res.status}: ${raw.slice(0, 240).trim() || "(empty body)"}`,
+      );
+    }
   }
-  return { id: data?.id ?? "unknown" };
+
+  if (!res.ok) {
+    const msg =
+      (typeof parsed.message === "string" && parsed.message) ||
+      (typeof parsed.name === "string" && parsed.name) ||
+      raw.slice(0, 240) ||
+      `Resend HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+
+  return { id: parsed.id ?? "unknown" };
 }

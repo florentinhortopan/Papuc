@@ -10,6 +10,7 @@ import { createRouteClient } from "@/lib/supabase/route-client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const supabase = await createRouteClient(req);
