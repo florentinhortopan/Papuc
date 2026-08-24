@@ -92,20 +92,26 @@ export function ProjectListItemCard({
 
 function ProjectPhotoMosaic({ photos }: { photos: (string | null)[] }) {
   return (
-    <div className="grid grid-cols-3 grid-rows-2 aspect-[3/2] bg-surfaceAlt shrink-0">
+    <div className="grid grid-cols-3 grid-rows-2 aspect-[3/2] bg-surfaceAlt shrink-0 overflow-hidden">
       {photos.map((url, i) =>
         url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          // Cell must be min-h-0 — Safari otherwise sizes the row to the
+          // image's intrinsic height and the mosaic bleeds into the card body.
+          <div
             key={`${url}-${i}`}
-            src={url}
-            alt=""
-            className="w-full h-full object-cover"
-          />
+            className="relative min-h-0 min-w-0 overflow-hidden"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={url}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          </div>
         ) : (
           <div
             key={`empty-${i}`}
-            className="w-full h-full bg-surfaceAlt border border-border/40 flex items-center justify-center"
+            className="min-h-0 min-w-0 bg-surfaceAlt border border-border/40 flex items-center justify-center"
             aria-hidden
           >
             <span className="block w-5 h-5 rounded-sm border border-dashed border-border/70" />
