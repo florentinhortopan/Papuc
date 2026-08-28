@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ExternalLink,
   MapPin,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -312,13 +313,14 @@ export function PortfolioClient({
                 ) : null}
                 <Button
                   size="sm"
-                  variant="ghost"
-                  className="w-full text-danger hover:text-danger hover:bg-danger/10"
+                  variant="secondary"
+                  className="w-full justify-between px-3 font-medium text-danger border-danger/35 hover:bg-danger/10 hover:text-danger hover:border-danger/50"
                   loading={removingId === deal.id}
                   disabled={removingBulk || (removingId != null && removingId !== deal.id)}
                   onClick={() => void removeOne(deal.id)}
                 >
                   Remove
+                  <Trash2 className="h-3.5 w-3.5 shrink-0 opacity-70" />
                 </Button>
               </div>
             </div>
