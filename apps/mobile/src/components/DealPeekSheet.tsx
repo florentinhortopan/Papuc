@@ -23,7 +23,11 @@ import { getDeal, type DealWithScore } from "@/lib/deals";
 import {
   followUser,
   getSessionUserId,
+  isFollowingUser,
+  isWatchingProject,
   scoutLikeThis,
+  unfollowUser,
+  unwatchProject,
   watchProject,
 } from "@/lib/social";
 import { useRouter } from "expo-router";
@@ -47,11 +51,34 @@ export const DealPeekSheet = forwardRef(function DealPeekSheet(
   const [expanded, setExpanded] = useState(false);
   const [viewerId, setViewerId] = useState<string | null>(null);
   const [socialNote, setSocialNote] = useState<string | null>(null);
+  const [following, setFollowing] = useState(false);
+  const [watching, setWatching] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
     void getSessionUserId().then(setViewerId);
   }, []);
+
+  useEffect(() => {
+    setFollowing(false);
+    setWatching(false);
+    setSocialNote(null);
+    if (!deal?.project?.owner_id || !deal.project.id) return;
+    const ownerId = deal.project.owner_id;
+    const projectId = deal.project.id;
+    void (async () => {
+      try {
+        const [f, w] = await Promise.all([
+          isFollowingUser(ownerId),
+          isWatchingProject(projectId),
+        ]);
+        setFollowing(f);
+        setWatching(w);
+      } catch (e) {
+        setLastError(e);
+      }
+    })();
+  }, [deal?.id, deal?.project?.owner_id, deal?.project?.id]);
 
   const isOwn =
     deal?.isOwn === true ||
@@ -152,13 +179,23 @@ export const DealPeekSheet = forwardRef(function DealPeekSheet(
               {[
                 dscr != null ? `${Number(dscr).toFixed(2)}x DSCR` : null,
                 cf != null ? `${formatMoney(Number(cf))}/mo` : null,
-                deal.ownerDisplayName && !isOwn
-                  ? deal.ownerDisplayName
-                  : deal.project.name,
               ]
                 .filter(Boolean)
                 .join(" · ")}
             </Text>
+            {!isOwn && deal.project.owner_id ? (
+              <Pressable
+                onPress={() => {
+                  onClose();
+                  router.push(`/(tabs)/u/${deal.project.owner_id}`);
+                }}
+                className="mt-2 self-start"
+              >
+                <Text className="text-sm text-primary">
+                  {deal.ownerDisplayName ?? "View investor"} →
+                </Text>
+              </Pressable>
+            ) : null}
 
             {!isOwn ? (
               <View className="mt-3 flex-row flex-wrap gap-2">
@@ -169,19 +206,29 @@ export const DealPeekSheet = forwardRef(function DealPeekSheet(
                       if (!deal) return;
                       setBusy("social");
                       setSocialNote(null);
+                      const next = !following;
+                      setFollowing(next);
                       try {
-                        await followUser(deal.project.owner_id);
-                        setSocialNote("Following investor");
+                        if (next) await followUser(deal.project.owner_id);
+                        else await unfollowUser(deal.project.owner_id);
+                        setSocialNote(next ? "Following" : "Unfollowed");
                       } catch (e) {
+                        setFollowing(!next);
                         setLastError(e);
                       } finally {
                         setBusy(null);
                       }
                     })();
                   }}
-                  className="rounded-full border border-border bg-surfaceAlt px-3 py-1.5"
+                  className={`rounded-full px-3 py-1.5 ${
+                    following
+                      ? "border border-border bg-surface"
+                      : "border border-border bg-surfaceAlt"
+                  }`}
                 >
-                  <Text className="text-xs font-semibold text-text">Follow</Text>
+                  <Text className="text-xs font-semibold text-text">
+                    {following ? "Following" : "Follow"}
+                  </Text>
                 </Pressable>
                 <Pressable
                   disabled={busy === "social"}
@@ -190,10 +237,14 @@ export const DealPeekSheet = forwardRef(function DealPeekSheet(
                       if (!deal) return;
                       setBusy("social");
                       setSocialNote(null);
+                      const next = !watching;
+                      setWatching(next);
                       try {
-                        await watchProject(deal.project.id);
-                        setSocialNote("Watching scout");
+                        if (next) await watchProject(deal.project.id);
+                        else await unwatchProject(deal.project.id);
+                        setSocialNote(next ? "Watching scout" : "Unwatched");
                       } catch (e) {
+                        setWatching(!next);
                         setLastError(e);
                       } finally {
                         setBusy(null);
@@ -202,7 +253,9 @@ export const DealPeekSheet = forwardRef(function DealPeekSheet(
                   }}
                   className="rounded-full border border-border bg-surfaceAlt px-3 py-1.5"
                 >
-                  <Text className="text-xs font-semibold text-text">Watch</Text>
+                  <Text className="text-xs font-semibold text-text">
+                    {watching ? "Watching" : "Watch"}
+                  </Text>
                 </Pressable>
                 <Pressable
                   disabled={busy === "social"}

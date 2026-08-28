@@ -33,6 +33,10 @@ import {
 import { exportProFormaCsv } from "@/lib/export";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
 import { getProject, type ProjectRow } from "@/lib/projects";
+import {
+  getSessionUserId,
+  scoutLikeThis,
+} from "@/lib/social";
 
 interface ProFormaState {
   price: string;
@@ -66,9 +70,11 @@ export default function DealDetail() {
   const [busy, setBusy] = useState<string | null>(null);
   const [state, setState] = useState<ProFormaState | null>(null);
   const [strMatrix, setStrMatrix] = useState<StrMatrixValue | null>(null);
+  const [viewerId, setViewerId] = useState<string | null>(null);
 
   useEffect(() => {
     void load();
+    void getSessionUserId().then(setViewerId);
   }, [id]);
 
   async function load() {
@@ -247,6 +253,20 @@ export default function DealDetail() {
   })();
   const cardW = Dimensions.get("window").width - 32;
   const isSaved = deal.action === "saved";
+  const isOwner = Boolean(viewerId && project && viewerId === project.owner_id);
+
+  async function onScoutLikeThis() {
+    if (!deal) return;
+    setBusy("scout-like");
+    try {
+      const { projectId } = await scoutLikeThis(deal.id);
+      router.push(`/(tabs)/projects/${projectId}`);
+    } catch (err: any) {
+      Alert.alert("Couldn't scout", err?.message ?? String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-background">
@@ -254,6 +274,17 @@ export default function DealDetail() {
         <Pressable onPress={() => router.back()} className="mb-3">
           <Text className="text-textMuted">← Back</Text>
         </Pressable>
+
+        {!isOwner && project ? (
+          <Pressable
+            onPress={() => router.push(`/(tabs)/u/${project.owner_id}`)}
+            className="mb-2"
+          >
+            <Text className="text-sm text-primary">
+              Scout by investor →
+            </Text>
+          </Pressable>
+        ) : null}
 
         <PhotoCarousel photos={photos} cardWidth={cardW} />
 
@@ -416,6 +447,15 @@ export default function DealDetail() {
           )}
           <Button label="Share" variant="secondary" onPress={share} className="flex-1" />
         </View>
+        {!isOwner ? (
+          <View className="mt-2">
+            <Button
+              label="Scout like this"
+              onPress={() => void onScoutLikeThis()}
+              loading={busy === "scout-like"}
+            />
+          </View>
+        ) : null}
         <View className="flex-row gap-2 mt-2">
           <Button
             label="Export CSV"

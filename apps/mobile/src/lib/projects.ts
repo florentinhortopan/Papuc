@@ -11,6 +11,7 @@ export type ProjectRow = ProjectsRow & {
 function hydrate(row: ProjectsRow): ProjectRow {
   return {
     ...row,
+    is_public: row.is_public ?? false,
     constraints: ProjectConstraintsSchema.parse(row.constraints),
   };
 }
@@ -64,6 +65,7 @@ export async function updateProject(
     constraints: ProjectConstraints;
     status: ProjectStatus;
     nightly_scout_enabled?: boolean;
+    is_public?: boolean;
   }>,
 ): Promise<void> {
   const update: Record<string, unknown> = {};
@@ -72,6 +74,9 @@ export async function updateProject(
   if (patch.constraints !== undefined) update.constraints = patch.constraints;
   if (patch.nightly_scout_enabled !== undefined) {
     update.nightly_scout_enabled = patch.nightly_scout_enabled;
+  }
+  if (patch.is_public !== undefined) {
+    update.is_public = patch.is_public;
   }
   const { error } = await (supabase.from("projects") as any)
     .update(update)

@@ -1,6 +1,14 @@
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { Linking, Pressable, Switch, Text, View } from "react-native";
+import {
+  Alert,
+  Linking,
+  Pressable,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -25,16 +33,20 @@ const SUPPORT_URL =
 
 export default function Settings() {
   const { user, signOut } = useAuth();
+  const router = useRouter();
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [pushOn, setPushOn] = useState(true);
   const [emailOn, setEmailOn] = useState(true);
+  const [displayName, setDisplayName] = useState("");
+  const [savingName, setSavingName] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       void (async () => {
         const p = await getProfile();
         setProfile(p);
+        setDisplayName(p?.display_name ?? "");
         setEmailOn(p?.email_digests_enabled !== false);
         const stored = await AsyncStorage.getItem(PUSH_PREF_KEY);
         setPushOn(stored !== "0");
@@ -71,6 +83,24 @@ export default function Settings() {
     }
   };
 
+  const saveDisplayName = async () => {
+    setSavingName(true);
+    try {
+      const trimmed = displayName.trim().slice(0, 80);
+      await updateProfile({ display_name: trimmed || null });
+      setDisplayName(trimmed);
+      Alert.alert("Saved", "Display name updated.");
+    } catch (e) {
+      setLastError(e);
+      Alert.alert(
+        "Couldn't save",
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      setSavingName(false);
+    }
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-background">
       <View className="flex-1 px-6 pt-4">
@@ -79,6 +109,35 @@ export default function Settings() {
         <Card className="mb-3">
           <Text className="text-xs text-textMuted">Signed in as</Text>
           <Text className="mt-1 text-base text-text">{user?.email ?? "—"}</Text>
+          {user?.id ? (
+            <Pressable
+              onPress={() => router.push(`/(tabs)/u/${user.id}`)}
+              className="mt-2"
+            >
+              <Text className="text-sm text-primary">View public profile →</Text>
+            </Pressable>
+          ) : null}
+        </Card>
+
+        <Card className="mb-3">
+          <Text className="mb-2 text-xs text-textMuted">Display name</Text>
+          <TextInput
+            value={displayName}
+            onChangeText={setDisplayName}
+            placeholder="Shown on your investor profile"
+            placeholderTextColor="#9aa0aa"
+            maxLength={80}
+            className="mb-2 rounded-xl border border-border bg-background px-3 py-2.5 text-text"
+          />
+          <Pressable
+            onPress={() => void saveDisplayName()}
+            disabled={savingName}
+            className="items-center rounded-xl bg-primary py-2.5"
+          >
+            <Text className="font-semibold text-white">
+              {savingName ? "Saving…" : "Save name"}
+            </Text>
+          </Pressable>
         </Card>
 
         <Card className="mb-3">

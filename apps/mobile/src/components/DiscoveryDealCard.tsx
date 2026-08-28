@@ -1,3 +1,4 @@
+import { useRouter } from "expo-router";
 import { Image, Pressable, Text, View } from "react-native";
 
 import {
@@ -13,11 +14,14 @@ type Props = {
 };
 
 export function DiscoveryDealCard({ deal, onPress }: Props) {
+  const router = useRouter();
   const img = dealImageUrl(deal);
   const score = deal.score?.score;
   const dscr = deal.score?.dscr;
   const cf = deal.score?.monthly_cashflow;
   const price = deal.price ?? deal.est_value;
+  const ownerId = deal.project?.owner_id;
+  const showOwner = Boolean(ownerId && !deal.isOwn);
 
   return (
     <Pressable
@@ -33,18 +37,16 @@ export function DiscoveryDealCard({ deal, onPress }: Props) {
         </View>
       )}
       <View className="absolute inset-0 justify-end">
-        <View
-          className="px-4 pb-4 pt-16"
-          style={{
-            backgroundColor: "transparent",
-          }}
-        >
+        <View className="px-4 pb-4 pt-16">
           <View
             className="rounded-2xl px-3 py-3"
             style={{ backgroundColor: "rgba(11,11,15,0.72)" }}
           >
             <View className="flex-row items-center justify-between gap-2">
-              <Text className="flex-1 text-base font-semibold text-text" numberOfLines={2}>
+              <Text
+                className="flex-1 text-base font-semibold text-text"
+                numberOfLines={2}
+              >
                 {dealLabel(deal)}
               </Text>
               {score != null ? (
@@ -68,6 +70,35 @@ export function DiscoveryDealCard({ deal, onPress }: Props) {
                 .filter(Boolean)
                 .join(" · ")}
             </Text>
+            <View className="mt-2 flex-row flex-wrap gap-1.5">
+              {deal.project?.id ? (
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    router.push(`/(tabs)/projects/${deal.project.id}`);
+                  }}
+                  className="rounded-full border border-border bg-surfaceAlt px-2 py-0.5"
+                >
+                  <Text className="text-[11px] text-textMuted" numberOfLines={1}>
+                    {deal.isOwn ? "Your project · " : ""}
+                    {deal.project.name}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {showOwner ? (
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    router.push(`/(tabs)/u/${ownerId}`);
+                  }}
+                  className="rounded-full border border-border bg-surface px-2 py-0.5"
+                >
+                  <Text className="text-[11px] text-primary" numberOfLines={1}>
+                    {deal.ownerDisplayName ?? "Investor"}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
         </View>
       </View>

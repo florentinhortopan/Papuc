@@ -5,6 +5,7 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
+  Switch,
   Text,
   View,
 } from "react-native";
@@ -14,12 +15,15 @@ import { Card } from "@/components/Card";
 import { DealCard } from "@/components/DealCard";
 import { listDeals, scoutProject, type DealWithScore } from "@/lib/deals";
 import { formatDate, formatMarket, formatMoney } from "@/lib/format";
-import { deleteProject, getProject, type ProjectRow } from "@/lib/projects";
+import { deleteProject, getProject, updateProject, type ProjectRow } from "@/lib/projects";
 import {
+  followUser,
   getSessionUserId,
+  isFollowingUser,
   isWatchingProject,
-  watchProject,
+  unfollowUser,
   unwatchProject,
+  watchProject,
 } from "@/lib/social";
 import { supabase } from "@/lib/supabase";
 
@@ -34,7 +38,9 @@ export default function ProjectDetail() {
   const [scoutStatus, setScoutStatus] = useState<string | null>(null);
   const [viewerId, setViewerId] = useState<string | null>(null);
   const [watching, setWatching] = useState(false);
+  const [following, setFollowing] = useState(false);
   const [watchBusy, setWatchBusy] = useState(false);
+  const [publicBusy, setPublicBusy] = useState(false);
   const projectIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -51,7 +57,12 @@ export default function ProjectDetail() {
       setDeals(rankByScore(d));
       const uid = (await getSessionUserId()) ?? viewerId;
       if (uid && p.owner_id !== uid && p.is_public) {
-        setWatching(await isWatchingProject(p.id));
+        const [w, f] = await Promise.all([
+          isWatchingProject(p.id),
+          isFollowingUser(p.owner_id),
+        ]);
+        setWatching(w);
+        setFollowing(f);
       }
     } catch (err: any) {
       setError(err?.message ?? String(err));
@@ -184,6 +195,36 @@ export default function ProjectDetail() {
     }
   }
 
+  async function toggleFollow() {
+    if (!project) return;
+    setWatchBusy(true);
+    const next = !following;
+    setFollowing(next);
+    try {
+      if (next) await followUser(project.owner_id);
+      else await unfollowUser(project.owner_id);
+    } catch (err: any) {
+      setFollowing(!next);
+      Alert.alert("Follow failed", err?.message ?? String(err));
+    } finally {
+      setWatchBusy(false);
+    }
+  }
+
+  async function togglePublic(next: boolean) {
+    if (!project) return;
+    setPublicBusy(true);
+    setProject({ ...project, is_public: next });
+    try {
+      await updateProject(project.id, { is_public: next });
+    } catch (err: any) {
+      setProject({ ...project, is_public: !next });
+      Alert.alert("Couldn't update", err?.message ?? String(err));
+    } finally {
+      setPublicBusy(false);
+    }
+  }
+
   return (
     <SafeAreaView className="flex-1 bg-background">
       <FlatList
@@ -207,6 +248,14 @@ export default function ProjectDetail() {
               </Pressable>
               <Text className="text-text text-2xl font-bold">{project.name}</Text>
               <Text className="text-textMuted text-sm mt-1">{marketLabel}</Text>
+              {!isOwner ? (
+                <Pressable
+                  onPress={() => router.push(`/(tabs)/u/${project.owner_id}`)}
+                  className="mt-2"
+                >
+                  <Text className="text-sm text-primary">View investor →</Text>
+                </Pressable>
+              ) : null}
             </View>
 
             <View className="mt-3 mb-3">
@@ -233,11 +282,25 @@ export default function ProjectDetail() {
             </View>
 
             {isOwner ? (
-              <View className="flex-row gap-2 mb-3">
+              <View className="mb-3 gap-2">
+                <View className="flex-row items-center justify-between rounded-2xl border border-border bg-surface px-4 py-3">
+                  <View className="flex-1 pr-3">
+                    <Text className="text-text font-medium">Show on Discover</Text>
+                    <Text className="text-textMuted text-xs mt-0.5">
+                      Public deals can appear in Friends feeds
+                    </Text>
+                  </View>
+                  <Switch
+                    value={Boolean(project.is_public)}
+                    onValueChange={(v) => void togglePublic(v)}
+                    disabled={publicBusy}
+                    trackColor={{ true: "#7c5cff", false: "#2a2a36" }}
+                  />
+                </View>
                 <Pressable
                   onPress={runScout}
                   disabled={scouting}
-                  className={`flex-1 rounded-xl py-3 items-center ${scouting ? "bg-primary/40" : "bg-primary active:opacity-80"}`}
+                  className={`rounded-xl py-3 items-center ${scouting ? "bg-primary/40" : "bg-primary active:opacity-80"}`}
                 >
                   <Text className="text-primaryFg font-semibold">
                     {scouting ? "Scouting…" : "Scout deals"}
@@ -245,7 +308,18 @@ export default function ProjectDetail() {
                 </Pressable>
               </View>
             ) : project.is_public ? (
-              <View className="mb-3">
+              <View className="mb-3 gap-2">
+                <Pressable
+                  onPress={() => void toggleFollow()}
+                  disabled={watchBusy}
+                  className={`rounded-xl py-3 items-center ${
+                    following ? "border border-border bg-surface" : "border border-border bg-surfaceAlt"
+                  }`}
+                >
+                  <Text className="font-semibold text-text">
+                    {following ? "Following investor" : "Follow investor"}
+                  </Text>
+                </Pressable>
                 <Pressable
                   onPress={() => void toggleWatch()}
                   disabled={watchBusy}
@@ -259,7 +333,7 @@ export default function ProjectDetail() {
                     {watching ? "Watching" : "Watch"}
                   </Text>
                 </Pressable>
-                <Text className="text-textMuted text-xs mt-2">
+                <Text className="text-textMuted text-xs">
                   Watch to see new public deals in Friends.
                 </Text>
               </View>
