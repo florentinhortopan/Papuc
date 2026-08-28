@@ -136,6 +136,7 @@ export async function fetchDealsForProjectIds(
         "*, deal_scores(*), projects!project_id!inner(id, name, owner_id)",
       )
       .in("project_id", ids)
+      .eq("inventory_status", "live")
       .order("last_refreshed_at", { ascending: false })
       .limit(opts.limit);
     if (error) throw error;

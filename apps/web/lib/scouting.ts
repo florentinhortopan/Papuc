@@ -122,6 +122,12 @@ export async function scoutProjectInternal(
     size?: number;
     /** Owner's subscription tier; defaults to free when omitted. */
     subscriptionTier?: SubscriptionTier;
+    /**
+     * append (default): skip known listings, leave existing live deals.
+     * substitute: archive all live deals, then scout without skipping known
+     * (upserts revive matching listings as live).
+     */
+    mode?: "append" | "substitute";
   } = {},
 ): Promise<ScoutResult> {
   const hasDataKey = process.env.HASDATA_API_KEY;
@@ -132,6 +138,15 @@ export async function scoutProjectInternal(
 
   const triggerKind = options.triggerKind ?? "manual";
   const subscriptionTier: SubscriptionTier = options.subscriptionTier ?? "free";
+  const scoutMode = options.mode ?? "append";
+  if (scoutMode === "substitute") {
+    if (subscriptionTier !== "pro") {
+      throw new Error("Substitute scout requires Pro");
+    }
+    if (triggerKind === "scheduled") {
+      throw new Error("Substitute scout is not allowed for scheduled runs");
+    }
+  }
   const scoutRule = resolveScoutRule(subscriptionTier, triggerKind);
   if (!scoutRule.enabled) {
     throw new Error(
@@ -159,10 +174,27 @@ export async function scoutProjectInternal(
       project_id: project.id,
       triggered_by: options.triggeredBy ?? null,
       trigger_kind: triggerKind,
+      mode: scoutMode,
     })
     .select("id")
     .single();
   if (runErr || !runRow) throw new Error("could not start scout run");
+
+  if (scoutMode === "substitute") {
+    const archivedAt = new Date().toISOString();
+    const { error: archiveErr } = await sb
+      .from("deals")
+      .update({
+        inventory_status: "archived",
+        archived_at: archivedAt,
+        archived_by_scout_run_id: runRow.id,
+      })
+      .eq("project_id", project.id)
+      .eq("inventory_status", "live");
+    if (archiveErr) {
+      throw new Error(`could not archive live deals: ${archiveErr.message}`);
+    }
+  }
 
   const startedAt = Date.now();
   let candidatesSeen = 0;
@@ -247,7 +279,12 @@ export async function scoutProjectInternal(
     // Primary market for STR intel / logging (first expanded).
     const market = markets[0]!;
 
-    if (scoutRule.skipKnownProperties && candidates.length > 0) {
+    // Append only: skip known across all shelves. Substitute refreshes known.
+    if (
+      scoutMode === "append" &&
+      scoutRule.skipKnownProperties &&
+      candidates.length > 0
+    ) {
       const { data: existing } = await sb
         .from("deals")
         .select("source_property_id")
@@ -510,6 +547,9 @@ export async function scoutProjectInternal(
             lot_size: listing.lotSizeSqft ?? null,
             hud_fmr: detail?.hudFairMarketRent ?? null,
             last_refreshed_at: new Date().toISOString(),
+            inventory_status: "live",
+            archived_at: null,
+            archived_by_scout_run_id: null,
           },
           { onConflict: "project_id,source,source_property_id" },
         )
@@ -560,6 +600,7 @@ export async function scoutProjectInternal(
         candidates_seen: candidatesSeen,
         deals_added: dealsAdded,
         deals_scored: dealsScored,
+        mode: scoutMode,
       })
       .eq("id", runRow.id);
 
@@ -1495,6 +1536,9 @@ export async function scoutComparablesForDeal(
             lot_size: listing.lotSizeSqft ?? null,
             hud_fmr: detail.hudFairMarketRent ?? null,
             last_refreshed_at: new Date().toISOString(),
+            inventory_status: "live",
+            archived_at: null,
+            archived_by_scout_run_id: null,
           },
           { onConflict: "project_id,source,source_property_id" },
         )

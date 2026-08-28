@@ -1,3 +1,7 @@
+import {
+  ProjectConstraintsSchema,
+  type ProjectConstraints,
+} from "@papuc/core";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -12,10 +16,18 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Card } from "@/components/Card";
+import { ConstraintEditor } from "@/components/ConstraintEditor";
 import { DealCard } from "@/components/DealCard";
 import { listDeals, scoutProject, type DealWithScore } from "@/lib/deals";
+import type { ScoutMode, SubscriptionTier } from "@/lib/database.types";
 import { formatDate, formatMarket, formatMoney } from "@/lib/format";
-import { deleteProject, getProject, updateProject, type ProjectRow } from "@/lib/projects";
+import { getProfile } from "@/lib/profile";
+import {
+  deleteProject,
+  getProject,
+  updateProject,
+  type ProjectRow,
+} from "@/lib/projects";
 import {
   followUser,
   getSessionUserId,
@@ -27,6 +39,14 @@ import {
 } from "@/lib/social";
 import { supabase } from "@/lib/supabase";
 
+type DealShelf = "live" | "archived" | "all";
+
+const SHELVES: Array<{ id: DealShelf; label: string }> = [
+  { id: "live", label: "Live" },
+  { id: "archived", label: "Archived" },
+  { id: "all", label: "All" },
+];
+
 export default function ProjectDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -37,24 +57,72 @@ export default function ProjectDetail() {
   const [scouting, setScouting] = useState(false);
   const [scoutStatus, setScoutStatus] = useState<string | null>(null);
   const [viewerId, setViewerId] = useState<string | null>(null);
+  const [tier, setTier] = useState<SubscriptionTier>("free");
   const [watching, setWatching] = useState(false);
   const [following, setFollowing] = useState(false);
   const [watchBusy, setWatchBusy] = useState(false);
   const [publicBusy, setPublicBusy] = useState(false);
+  const [shelf, setShelf] = useState<DealShelf>("live");
+  const [shelfCounts, setShelfCounts] = useState({
+    live: 0,
+    archived: 0,
+    all: 0,
+  });
+  const [constraintsOpen, setConstraintsOpen] = useState(false);
+  const [constraintsDraft, setConstraintsDraft] =
+    useState<ProjectConstraints | null>(null);
+  const [savingConstraints, setSavingConstraints] = useState(false);
   const projectIdRef = useRef<string | null>(null);
+  const shelfRef = useRef(shelf);
+  shelfRef.current = shelf;
+
+  const isPro = tier === "pro";
 
   useEffect(() => {
     void getSessionUserId().then(setViewerId);
+    void getProfile()
+      .then((p) => {
+        if (p?.subscription_tier === "pro") setTier("pro");
+      })
+      .catch(() => undefined);
   }, []);
+
+  const refreshShelfCounts = useCallback(async (projectId: string) => {
+    const base = () =>
+      supabase
+        .from("deals")
+        .select("id", { count: "exact", head: true })
+        .eq("project_id", projectId);
+    const [liveRes, archivedRes, allRes] = await Promise.all([
+      base().eq("inventory_status", "live"),
+      base().eq("inventory_status", "archived"),
+      base(),
+    ]);
+    setShelfCounts({
+      live: liveRes.count ?? 0,
+      archived: archivedRes.count ?? 0,
+      all: allRes.count ?? 0,
+    });
+  }, []);
+
+  const loadDeals = useCallback(
+    async (projectId: string, nextShelf: DealShelf = shelfRef.current) => {
+      const d = await listDeals(projectId, { shelf: nextShelf });
+      setDeals(rankByScore(d));
+      await refreshShelfCounts(projectId);
+    },
+    [refreshShelfCounts],
+  );
 
   const loadAll = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     setError(null);
     try {
-      const [p, d] = await Promise.all([getProject(id), listDeals(id)]);
+      const p = await getProject(id);
       setProject(p);
-      setDeals(rankByScore(d));
+      setConstraintsDraft(p.constraints);
+      await loadDeals(id, shelf);
       const uid = (await getSessionUserId()) ?? viewerId;
       if (uid && p.owner_id !== uid && p.is_public) {
         const [w, f] = await Promise.all([
@@ -69,13 +137,12 @@ export default function ProjectDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id, viewerId]);
+  }, [id, viewerId, shelf, loadDeals]);
 
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
 
-  // Realtime: refetch deals when deal_scores in this project change
   useEffect(() => {
     if (!id) return;
     projectIdRef.current = id;
@@ -106,8 +173,7 @@ export default function ProjectDetail() {
     async function refreshDeals(projectId: string) {
       if (projectIdRef.current !== projectId) return;
       try {
-        const d = await listDeals(projectId);
-        setDeals(rankByScore(d));
+        await loadDeals(projectId);
       } catch {
         /* ignore */
       }
@@ -116,17 +182,23 @@ export default function ProjectDetail() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [id]);
+  }, [id, loadDeals]);
 
-  async function runScout() {
+  async function runScout(mode: ScoutMode = "append") {
     if (!id) return;
     setScouting(true);
-    setScoutStatus("Scouting…");
+    setScoutStatus(
+      mode === "substitute" ? "Substituting inventory…" : "Scouting…",
+    );
     try {
-      const res = await scoutProject(id);
+      const res = await scoutProject(id, { mode });
       setScoutStatus(
-        `Saw ${res.candidatesSeen} candidates · ${res.dealsAdded} match your goals`,
+        mode === "substitute"
+          ? `Substituted · saw ${res.candidatesSeen} · ${res.dealsAdded} now live`
+          : `Saw ${res.candidatesSeen} candidates · ${res.dealsAdded} match your goals`,
       );
+      setShelf("live");
+      shelfRef.current = "live";
       await loadAll();
     } catch (err: any) {
       Alert.alert("Scout failed", err?.message ?? String(err));
@@ -136,23 +208,75 @@ export default function ProjectDetail() {
     }
   }
 
+  async function saveConstraints() {
+    if (!project || !constraintsDraft) return;
+    setSavingConstraints(true);
+    try {
+      const validated = ProjectConstraintsSchema.parse(constraintsDraft);
+      await updateProject(project.id, { constraints: validated });
+      setProject({ ...project, constraints: validated });
+      setConstraintsDraft(validated);
+      Alert.alert("Saved", "Constraints updated. Scout to apply them.");
+    } catch (err: any) {
+      Alert.alert("Couldn't save", err?.message ?? String(err));
+    } finally {
+      setSavingConstraints(false);
+    }
+  }
+
+  async function saveAndScout(mode: ScoutMode) {
+    if (!project || !constraintsDraft) return;
+    setSavingConstraints(true);
+    try {
+      const validated = ProjectConstraintsSchema.parse(constraintsDraft);
+      await updateProject(project.id, { constraints: validated });
+      setProject({ ...project, constraints: validated });
+      setConstraintsDraft(validated);
+    } catch (err: any) {
+      Alert.alert("Couldn't save", err?.message ?? String(err));
+      setSavingConstraints(false);
+      return;
+    }
+    setSavingConstraints(false);
+    if (mode === "substitute") {
+      Alert.alert(
+        "Substitute live deals?",
+        "Current live deals move to Archived. They stay searchable. New matches become live.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Substitute & scout",
+            style: "destructive",
+            onPress: () => void runScout("substitute"),
+          },
+        ],
+      );
+      return;
+    }
+    await runScout("append");
+  }
+
   async function onDelete() {
     if (!project) return;
-    Alert.alert("Delete project?", "This removes the project and all scouted deals.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await deleteProject(project.id);
-            router.back();
-          } catch (err: any) {
-            Alert.alert("Couldn't delete", err?.message ?? String(err));
-          }
+    Alert.alert(
+      "Delete project?",
+      "This removes the project and all scouted deals.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteProject(project.id);
+              router.back();
+            } catch (err: any) {
+              Alert.alert("Couldn't delete", err?.message ?? String(err));
+            }
+          },
         },
-      },
-    ]);
+      ],
+    );
   }
 
   if (!project && !error) {
@@ -175,7 +299,7 @@ export default function ProjectDetail() {
     );
   }
 
-  const c = project.constraints;
+  const c = constraintsDraft ?? project.constraints;
   const marketLabel = formatMarket(c.markets[0]);
   const isOwner = viewerId != null && project.owner_id === viewerId;
 
@@ -234,7 +358,9 @@ export default function ProjectDetail() {
         refreshControl={
           <RefreshControl
             refreshing={loading || scouting}
-            onRefresh={isOwner ? runScout : loadAll}
+            onRefresh={
+              isOwner ? () => void runScout("append") : () => void loadAll()
+            }
             tintColor="#7c5cff"
           />
         }
@@ -260,23 +386,94 @@ export default function ProjectDetail() {
 
             <View className="mt-3 mb-3">
               <Card>
-                <Text className="text-textMuted text-xs mb-2">Constraints</Text>
-                <View className="flex-row flex-wrap gap-2">
-                  <Tag label={c.strategy} />
-                  {c.priceMax ? <Tag label={`≤ ${formatMoney(c.priceMax)}`} /> : null}
-                  {c.bedsMin ? <Tag label={`≥ ${c.bedsMin} bd`} /> : null}
-                  {c.bathsMin ? <Tag label={`≥ ${c.bathsMin} ba`} /> : null}
-                  {c.downPayment ? <Tag label={`Down ${formatMoney(c.downPayment)}`} /> : null}
-                  {c.targetMonthlyCashflow ? (
-                    <Tag label={`${formatMoney(c.targetMonthlyCashflow)}/mo`} />
-                  ) : null}
-                  <Tag label={`DSCR ≥ ${c.minDSCR.toFixed(2)}`} />
-                  <Tag label={`${(c.mortgage.rateAPR * 100).toFixed(2)}% APR`} />
-                </View>
+                <Pressable
+                  onPress={() => {
+                    if (isOwner && isPro) setConstraintsOpen((o) => !o);
+                  }}
+                  disabled={!isOwner || !isPro}
+                >
+                  <View className="flex-row items-center justify-between mb-2">
+                    <Text className="text-textMuted text-xs">
+                      {isOwner && isPro
+                        ? "Search constraints"
+                        : "Constraints"}
+                    </Text>
+                    {isOwner && isPro ? (
+                      <Text className="text-primary text-xs font-semibold">
+                        {constraintsOpen ? "Hide" : "Edit"}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View className="flex-row flex-wrap gap-2">
+                    <Tag label={c.strategy} />
+                    {c.priceMax ? (
+                      <Tag label={`≤ ${formatMoney(c.priceMax)}`} />
+                    ) : null}
+                    {c.bedsMin ? <Tag label={`≥ ${c.bedsMin} bd`} /> : null}
+                    {c.bathsMin ? <Tag label={`≥ ${c.bathsMin} ba`} /> : null}
+                    {c.downPayment ? (
+                      <Tag label={`Down ${formatMoney(c.downPayment)}`} />
+                    ) : null}
+                    {c.targetMonthlyCashflow ? (
+                      <Tag
+                        label={`${formatMoney(c.targetMonthlyCashflow)}/mo`}
+                      />
+                    ) : null}
+                    <Tag label={`DSCR ≥ ${c.minDSCR.toFixed(2)}`} />
+                    <Tag
+                      label={`${(c.mortgage.rateAPR * 100).toFixed(2)}% APR`}
+                    />
+                  </View>
+                </Pressable>
                 {project.last_scout_at ? (
                   <Text className="text-textMuted text-xs mt-3">
                     Last scout {formatDate(project.last_scout_at)}
                   </Text>
+                ) : null}
+                {isOwner && !isPro ? (
+                  <Text className="text-textMuted text-xs mt-3 leading-5">
+                    Pro unlocks editing these constraints and Substitute
+                    re-scout (archive live deals, keep them searchable).
+                  </Text>
+                ) : null}
+                {isOwner && isPro && constraintsOpen && constraintsDraft ? (
+                  <View className="mt-4 border-t border-border pt-3">
+                    <ConstraintEditor
+                      constraints={constraintsDraft}
+                      onChange={setConstraintsDraft}
+                    />
+                    <Pressable
+                      onPress={() => void saveConstraints()}
+                      disabled={savingConstraints || scouting}
+                      className="mt-2 rounded-xl border border-border py-3 items-center"
+                    >
+                      <Text className="text-text font-semibold">
+                        {savingConstraints ? "Saving…" : "Save constraints"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => void saveAndScout("append")}
+                      disabled={savingConstraints || scouting}
+                      className="mt-2 rounded-xl bg-primary py-3 items-center"
+                    >
+                      <Text className="text-primaryFg font-semibold">
+                        Scout: Append
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => void saveAndScout("substitute")}
+                      disabled={savingConstraints || scouting}
+                      className="mt-2 rounded-xl border border-primary/50 bg-primary/15 py-3 items-center"
+                    >
+                      <Text className="text-primary font-semibold">
+                        Scout: Substitute
+                      </Text>
+                    </Pressable>
+                    <Text className="text-textMuted text-[11px] mt-2 leading-5">
+                      Append adds new matches. Substitute archives live deals
+                      (still searchable) then scouts a fresh live set.
+                    </Text>
+                  </View>
                 ) : null}
               </Card>
             </View>
@@ -285,7 +482,9 @@ export default function ProjectDetail() {
               <View className="mb-3 gap-2">
                 <View className="flex-row items-center justify-between rounded-2xl border border-border bg-surface px-4 py-3">
                   <View className="flex-1 pr-3">
-                    <Text className="text-text font-medium">Show on Discover</Text>
+                    <Text className="text-text font-medium">
+                      Show on Discover
+                    </Text>
                     <Text className="text-textMuted text-xs mt-0.5">
                       Public deals can appear in Friends feeds
                     </Text>
@@ -297,15 +496,25 @@ export default function ProjectDetail() {
                     trackColor={{ true: "#7c5cff", false: "#2a2a36" }}
                   />
                 </View>
-                <Pressable
-                  onPress={runScout}
-                  disabled={scouting}
-                  className={`rounded-xl py-3 items-center ${scouting ? "bg-primary/40" : "bg-primary active:opacity-80"}`}
-                >
-                  <Text className="text-primaryFg font-semibold">
-                    {scouting ? "Scouting…" : "Scout deals"}
-                  </Text>
-                </Pressable>
+                {!isPro || !constraintsOpen ? (
+                  <Pressable
+                    onPress={() => void runScout("append")}
+                    disabled={scouting}
+                    className={`rounded-xl py-3 items-center ${
+                      scouting
+                        ? "bg-primary/40"
+                        : "bg-primary active:opacity-80"
+                    }`}
+                  >
+                    <Text className="text-primaryFg font-semibold">
+                      {scouting
+                        ? "Scouting…"
+                        : isPro
+                          ? "Scout: Append"
+                          : "Scout deals"}
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
             ) : project.is_public ? (
               <View className="mb-3 gap-2">
@@ -313,7 +522,9 @@ export default function ProjectDetail() {
                   onPress={() => void toggleFollow()}
                   disabled={watchBusy}
                   className={`rounded-xl py-3 items-center ${
-                    following ? "border border-border bg-surface" : "border border-border bg-surfaceAlt"
+                    following
+                      ? "border border-border bg-surface"
+                      : "border border-border bg-surfaceAlt"
                   }`}
                 >
                   <Text className="font-semibold text-text">
@@ -328,7 +539,9 @@ export default function ProjectDetail() {
                   }`}
                 >
                   <Text
-                    className={`font-semibold ${watching ? "text-text" : "text-primaryFg"}`}
+                    className={`font-semibold ${
+                      watching ? "text-text" : "text-primaryFg"
+                    }`}
                   >
                     {watching ? "Watching" : "Watch"}
                   </Text>
@@ -345,13 +558,42 @@ export default function ProjectDetail() {
             <Text className="text-text text-lg font-semibold mb-2">
               Deals {deals.length ? `(${deals.length})` : ""}
             </Text>
+            {isOwner ? (
+              <View className="flex-row gap-2 mb-3">
+                {SHELVES.map((s) => (
+                  <Pressable
+                    key={s.id}
+                    onPress={() => {
+                      setShelf(s.id);
+                      shelfRef.current = s.id;
+                      if (id) void loadDeals(id, s.id);
+                    }}
+                    className={`rounded-full border px-3 py-1.5 ${
+                      shelf === s.id
+                        ? "border-primary bg-primary/20"
+                        : "border-border bg-surface"
+                    }`}
+                  >
+                    <Text
+                      className={`text-xs font-semibold ${
+                        shelf === s.id ? "text-primary" : "text-textMuted"
+                      }`}
+                    >
+                      {s.label} {shelfCounts[s.id]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
           </View>
         }
         ListEmptyComponent={
           <View className="bg-surface border border-border rounded-2xl p-6 items-center">
             <Text className="text-textMuted text-sm text-center">
               {isOwner
-                ? 'No deals yet. Tap "Scout deals" to find listings that match your goals.'
+                ? shelf === "archived"
+                  ? "No archived deals yet. Substitute re-scout moves live deals here."
+                  : 'No deals yet. Tap "Scout deals" to find listings that match your goals.'
                 : "No deals in this public scout yet."}
             </Text>
           </View>
@@ -377,7 +619,9 @@ export default function ProjectDetail() {
 }
 
 function rankByScore(deals: DealWithScore[]): DealWithScore[] {
-  return [...deals].sort((a, b) => (b.score?.score ?? 0) - (a.score?.score ?? 0));
+  return [...deals].sort(
+    (a, b) => (b.score?.score ?? 0) - (a.score?.score ?? 0),
+  );
 }
 
 function Tag({ label }: { label: string }) {

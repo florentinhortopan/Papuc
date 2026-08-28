@@ -9,6 +9,10 @@ export const dynamic = "force-dynamic";
 // Scout calls can take 30-60s when many candidates need PropertyDetail hydration.
 export const maxDuration = 300;
 
+type ScoutBody = {
+  mode?: "append" | "substitute";
+};
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -39,12 +43,29 @@ export async function POST(
   const subscriptionTier =
     profile?.subscription_tier === "pro" ? "pro" : "free";
 
+  let body: ScoutBody = {};
+  try {
+    const text = await req.text();
+    if (text.trim()) body = JSON.parse(text) as ScoutBody;
+  } catch {
+    return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  }
+
+  const mode = body.mode === "substitute" ? "substitute" : "append";
+  if (mode === "substitute" && subscriptionTier !== "pro") {
+    return NextResponse.json(
+      { error: "Substitute scout requires Pro" },
+      { status: 403 },
+    );
+  }
+
   try {
     const admin = createAdminClient();
     const result = await scoutProjectInternal(admin, id, {
       triggerKind: "manual",
       triggeredBy: user.id,
       subscriptionTier,
+      mode,
     });
 
     // Fire-and-forget rank pass so rationales populate after the response returns.

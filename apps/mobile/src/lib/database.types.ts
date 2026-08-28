@@ -3,6 +3,10 @@
 
 export type ProjectStatus = "draft" | "active" | "paused" | "archived";
 
+export type DealInventoryStatus = "live" | "archived";
+
+export type ScoutMode = "append" | "substitute";
+
 export type DealActionKind =
   | "saved"
   | "dismissed"
@@ -65,6 +69,10 @@ export type DealsRow = {
   est_value: number | null;
   est_rent: number | null;
   hud_fmr: unknown;
+  /** live = default project grid; archived = soft-hidden after substitute. */
+  inventory_status?: DealInventoryStatus;
+  archived_at?: string | null;
+  archived_by_scout_run_id?: string | null;
   last_refreshed_at: string;
   created_at: string;
 };
@@ -99,6 +107,7 @@ export type ScoutRunsRow = {
   project_id: string;
   triggered_by: string | null;
   trigger_kind: string;
+  mode?: ScoutMode | null;
   started_at: string;
   finished_at: string | null;
   candidates_seen: number | null;

@@ -100,10 +100,16 @@ export async function parseProjectPrompt(
   return ProjectConstraintsSchema.parse(data.constraints);
 }
 
-export async function scoutProject(projectId: string): Promise<{
+export async function scoutProject(
+  projectId: string,
+  opts?: { mode?: "append" | "substitute" },
+): Promise<{
   candidatesSeen: number;
   dealsAdded: number;
   dealsScored: number;
 }> {
-  return apiFetch(`/api/projects/${projectId}/scout`, { method: "POST" });
+  return apiFetch(`/api/projects/${projectId}/scout`, {
+    method: "POST",
+    body: JSON.stringify({ mode: opts?.mode ?? "append" }),
+  });
 }

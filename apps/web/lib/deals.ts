@@ -58,13 +58,19 @@ function pickAction(row: DealRowWithJoins): DealActionKind | null {
 export async function listDeals(
   supabase: SupabaseClient,
   projectId: string,
+  opts?: { shelf?: "live" | "archived" | "all" },
 ): Promise<DealWithScore[]> {
-  const { data, error } = await supabase
+  const shelf = opts?.shelf ?? "live";
+  let query = supabase
     .from("deals")
     .select("*, deal_scores(*), deal_actions(action)")
     .eq("project_id", projectId)
     .order("created_at", { ascending: false })
-    .limit(100);
+    .limit(shelf === "all" ? 300 : 100);
+  if (shelf === "live" || shelf === "archived") {
+    query = query.eq("inventory_status", shelf);
+  }
+  const { data, error } = await query;
   if (error) throw error;
   const rows = (data ?? []) as unknown as DealRowWithJoins[];
   return rows.map((r) => ({

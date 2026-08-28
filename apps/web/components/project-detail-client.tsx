@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DealCard } from "@/components/deal-card";
+import { ConstraintReview } from "@/components/constraint-review";
 import {
   applyDealFilters,
   DealFiltersBar,
@@ -23,9 +24,23 @@ import { NightlyScoutToggle } from "@/components/nightly-scout-toggle";
 import { PublicFeedToggle } from "@/components/public-feed-toggle";
 import { FollowButton } from "@/components/follow-button";
 import { WatchProjectButton } from "@/components/watch-project-button";
+import { ProLockedPanel } from "@/components/pro-locked-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { SubscriptionTier } from "@/lib/database.types";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import type { ScoutMode, SubscriptionTier } from "@/lib/database.types";
 import {
   deleteDealAction,
   postDealAction,
@@ -39,6 +54,15 @@ import {
 } from "@/lib/scout-freshness";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { ChevronDown } from "lucide-react";
+
+type DealShelf = "live" | "archived" | "all";
+
+const SHELF_CHIPS: Array<{ id: DealShelf; label: string }> = [
+  { id: "live", label: "Live" },
+  { id: "archived", label: "Archived" },
+  { id: "all", label: "All" },
+];
 
 function rankByScore(deals: DealWithScore[]): DealWithScore[] {
   return [...deals].sort(
@@ -135,7 +159,23 @@ export function ProjectDetailClient({
   const [statusChip, setStatusChip] = useState<DealStatusChip>("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
+  const [shelf, setShelf] = useState<DealShelf>("live");
+  const [shelfCounts, setShelfCounts] = useState({
+    live: initialDeals.length,
+    archived: 0,
+    all: initialDeals.length,
+  });
+  const [constraintsDraft, setConstraintsDraft] = useState<ProjectConstraints>(
+    project.constraints,
+  );
+  const [constraintsOpen, setConstraintsOpen] = useState(false);
+  const [savingConstraints, setSavingConstraints] = useState(false);
+  const [constraintsNote, setConstraintsNote] = useState<string | null>(null);
+  const [substituteOpen, setSubstituteOpen] = useState(false);
+  const isPro = subscriptionTier === "pro";
   const projectIdRef = useRef(project.id);
+  const shelfRef = useRef(shelf);
+  shelfRef.current = shelf;
   const scoutFresh = isScoutWithinCooldown(lastScoutAt);
   const scoutedAgo = formatScoutedAgo(lastScoutAt);
 
@@ -233,6 +273,25 @@ export function ProjectDetailClient({
   const dealsCountRef = useRef(deals.length);
   dealsCountRef.current = deals.length;
 
+  const refreshShelfCounts = useCallback(async () => {
+    const supabase = createClient();
+    const base = () =>
+      supabase
+        .from("deals")
+        .select("id", { count: "exact", head: true })
+        .eq("project_id", project.id);
+    const [liveRes, archivedRes, allRes] = await Promise.all([
+      base().eq("inventory_status", "live"),
+      base().eq("inventory_status", "archived"),
+      base(),
+    ]);
+    setShelfCounts({
+      live: liveRes.count ?? 0,
+      archived: archivedRes.count ?? 0,
+      all: allRes.count ?? 0,
+    });
+  }, [project.id]);
+
   const refreshDeals = useCallback(async () => {
     const supabase = createClient();
     try {
@@ -246,12 +305,18 @@ export function ProjectDetailClient({
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) throw new Error("session not ready");
-      const d = await listDeals(supabase, project.id);
-      if (d.length === 0 && dealsCountRef.current > 0) {
+      const currentShelf = shelfRef.current;
+      const d = await listDeals(supabase, project.id, { shelf: currentShelf });
+      if (
+        currentShelf === "live" &&
+        d.length === 0 &&
+        dealsCountRef.current > 0
+      ) {
         throw new Error("empty read while grid populated (RLS/session race)");
       }
       setDeals(rankByScore(d));
       setLoadFailed(false);
+      void refreshShelfCounts();
       return d.length;
     } catch (err) {
       // Keep whatever is currently rendered; flag the failure only when
@@ -261,7 +326,15 @@ export function ProjectDetailClient({
       setLoadFailed(dealsCountRef.current === 0);
       return null;
     }
-  }, [project.id]);
+  }, [project.id, refreshShelfCounts]);
+
+  useEffect(() => {
+    setConstraintsDraft(project.constraints);
+  }, [project.constraints]);
+
+  useEffect(() => {
+    void refreshDeals();
+  }, [shelf, refreshDeals]);
 
   // Always re-read on mount. Deals live in the DB, so navigating back to
   // this page must never depend on a single server-render fetch having
@@ -326,13 +399,19 @@ export function ProjectDetailClient({
     };
   }, [project.id, refreshDeals]);
 
-  async function runScout() {
+  async function runScout(mode: ScoutMode = "append") {
     setError(null);
     setScouting(true);
-    setScoutStatus("Scouting…");
+    setScoutStatus(
+      mode === "substitute"
+        ? "Substituting inventory…"
+        : "Scouting…",
+    );
     try {
       const res = await fetch(`/api/projects/${project.id}/scout`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
       });
       if (!res.ok) {
         const t = await res.text();
@@ -347,20 +426,66 @@ export function ProjectDetailClient({
         };
       };
       const unsupported = json.diagnostics?.unsupportedPropertyTypes ?? [];
-      const baseMessage = `Saw ${json.candidatesSeen} candidates · ${json.dealsAdded} match your goals`;
+      const baseMessage =
+        mode === "substitute"
+          ? `Substituted · saw ${json.candidatesSeen} · ${json.dealsAdded} now live`
+          : `Saw ${json.candidatesSeen} candidates · ${json.dealsAdded} match your goals`;
       setScoutStatus(
         unsupported.length
           ? `${baseMessage} · ${formatUnsupportedHint(unsupported)}`
           : baseMessage,
       );
       setLastScoutAt(new Date().toISOString());
+      setShelf("live");
+      shelfRef.current = "live";
       await refreshDeals();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setScoutStatus(null);
     } finally {
       setScouting(false);
+      setSubstituteOpen(false);
     }
+  }
+
+  async function saveConstraints() {
+    setSavingConstraints(true);
+    setConstraintsNote(null);
+    setError(null);
+    try {
+      const validated = ProjectConstraintsSchema.parse(constraintsDraft);
+      const supabase = createClient();
+      await updateProject(supabase, project.id, { constraints: validated });
+      setConstraintsDraft(validated);
+      setConstraintsNote("Constraints saved. Scout to apply them to inventory.");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingConstraints(false);
+    }
+  }
+
+  async function saveConstraintsAndScout(mode: ScoutMode) {
+    setSavingConstraints(true);
+    setError(null);
+    try {
+      const validated = ProjectConstraintsSchema.parse(constraintsDraft);
+      const supabase = createClient();
+      await updateProject(supabase, project.id, { constraints: validated });
+      setConstraintsDraft(validated);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSavingConstraints(false);
+      return;
+    }
+    setSavingConstraints(false);
+    if (mode === "substitute") {
+      setSubstituteOpen(true);
+      return;
+    }
+    await runScout("append");
   }
 
   /**
@@ -548,41 +673,175 @@ export function ProjectDetailClient({
       )}
       <p className="text-textMuted text-sm mt-1">{marketLabel}</p>
 
-      <div className="bg-surface border border-border rounded-2xl p-4 mt-4 mb-4">
-        <p className="text-textMuted text-xs mb-2">Constraints</p>
-        <div className="flex flex-wrap gap-2">
-          <Badge>{c.strategy}</Badge>
-          {c.propertyTypes
-            .filter((t) => t !== "any")
-            .map((t) => (
-              <Badge key={t}>{PROPERTY_TYPE_LABELS[t]}</Badge>
-            ))}
-          {c.priceMax ? <Badge>≤ {formatMoney(c.priceMax)}</Badge> : null}
-          {c.bedsMin ? <Badge>≥ {c.bedsMin} bd</Badge> : null}
-          {c.bedsMax ? <Badge>≤ {c.bedsMax} bd</Badge> : null}
-          {c.bathsMin ? <Badge>≥ {c.bathsMin} ba</Badge> : null}
-          {c.sqftMin ? <Badge>≥ {c.sqftMin} sqft</Badge> : null}
-          {c.lotSizeMinSqft ? (
-            <Badge>≥ {Math.round((c.lotSizeMinSqft / 43_560) * 100) / 100} ac</Badge>
+      {isOwner && isPro ? (
+        <Collapsible
+          open={constraintsOpen}
+          onOpenChange={setConstraintsOpen}
+          className="bg-surface border border-border rounded-2xl mt-4 mb-4"
+        >
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-3 p-4 text-left"
+            >
+              <div className="min-w-0">
+                <p className="text-textMuted text-xs mb-2">Search constraints</p>
+                <div className="flex flex-wrap gap-2">
+                  <Badge>{constraintsDraft.strategy}</Badge>
+                  {constraintsDraft.propertyTypes
+                    .filter((t) => t !== "any")
+                    .slice(0, 3)
+                    .map((t) => (
+                      <Badge key={t}>{PROPERTY_TYPE_LABELS[t]}</Badge>
+                    ))}
+                  {constraintsDraft.priceMax ? (
+                    <Badge>≤ {formatMoney(constraintsDraft.priceMax)}</Badge>
+                  ) : null}
+                  {constraintsDraft.bedsMin ? (
+                    <Badge>≥ {constraintsDraft.bedsMin} bd</Badge>
+                  ) : null}
+                  <Badge>DSCR ≥ {constraintsDraft.minDSCR.toFixed(2)}</Badge>
+                </div>
+                {lastScoutAt ? (
+                  <p className="text-textMuted text-xs mt-3">
+                    Last scout {formatDate(lastScoutAt)}
+                    {scoutedAgo ? ` · ${scoutedAgo}` : ""}
+                  </p>
+                ) : null}
+              </div>
+              <ChevronDown
+                className={cn(
+                  "h-5 w-5 shrink-0 text-textMuted transition-transform",
+                  constraintsOpen && "rotate-180",
+                )}
+              />
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="border-t border-border px-4 pb-4 pt-2">
+              <ConstraintReview
+                name={name}
+                setName={setName}
+                constraints={constraintsDraft}
+                setConstraints={setConstraintsDraft}
+                showName={false}
+                showFooter={false}
+                compact
+                title="Edit search"
+                subtitle="All fields from your parsed request. Save, then append or substitute deals."
+                error={null}
+              />
+              {constraintsNote ? (
+                <p className="text-textMuted text-xs mt-2">{constraintsNote}</p>
+              ) : null}
+              <div className="flex flex-col sm:flex-row flex-wrap gap-2 mt-4">
+                <Button
+                  variant="secondary"
+                  onClick={() => void saveConstraints()}
+                  loading={savingConstraints}
+                  disabled={scouting}
+                >
+                  Save constraints
+                </Button>
+                <Button
+                  onClick={() => void saveConstraintsAndScout("append")}
+                  loading={scouting}
+                  disabled={savingConstraints}
+                >
+                  Scout: Append
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void saveConstraintsAndScout("substitute")}
+                  loading={scouting}
+                  disabled={savingConstraints}
+                >
+                  Scout: Substitute
+                </Button>
+              </div>
+              <p className="text-textMuted text-[11px] mt-2 leading-5">
+                Append adds new matches and keeps live deals. Substitute moves
+                current live deals to Archived (still searchable), then scouts a
+                fresh live set.
+              </p>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : (
+        <div className="bg-surface border border-border rounded-2xl p-4 mt-4 mb-4 space-y-3">
+          <p className="text-textMuted text-xs mb-2">Constraints</p>
+          <div className="flex flex-wrap gap-2">
+            <Badge>{c.strategy}</Badge>
+            {c.propertyTypes
+              .filter((t) => t !== "any")
+              .map((t) => (
+                <Badge key={t}>{PROPERTY_TYPE_LABELS[t]}</Badge>
+              ))}
+            {c.priceMax ? <Badge>≤ {formatMoney(c.priceMax)}</Badge> : null}
+            {c.bedsMin ? <Badge>≥ {c.bedsMin} bd</Badge> : null}
+            {c.bedsMax ? <Badge>≤ {c.bedsMax} bd</Badge> : null}
+            {c.bathsMin ? <Badge>≥ {c.bathsMin} ba</Badge> : null}
+            {c.sqftMin ? <Badge>≥ {c.sqftMin} sqft</Badge> : null}
+            {c.lotSizeMinSqft ? (
+              <Badge>
+                ≥ {Math.round((c.lotSizeMinSqft / 43_560) * 100) / 100} ac
+              </Badge>
+            ) : null}
+            {c.yearBuiltMin ? <Badge>Built ≥ {c.yearBuiltMin}</Badge> : null}
+            {c.daysOnMarketMax ? (
+              <Badge>Listed ≤ {c.daysOnMarketMax}</Badge>
+            ) : null}
+            {c.downPayment ? (
+              <Badge>Down {formatMoney(c.downPayment)}</Badge>
+            ) : null}
+            {c.targetMonthlyCashflow ? (
+              <Badge>{formatMoney(c.targetMonthlyCashflow)}/mo</Badge>
+            ) : null}
+            <Badge>DSCR ≥ {c.minDSCR.toFixed(2)}</Badge>
+            <Badge>{(c.mortgage.rateAPR * 100).toFixed(2)}% APR</Badge>
+          </div>
+          {lastScoutAt ? (
+            <p className="text-textMuted text-xs mt-3">
+              Last scout {formatDate(lastScoutAt)}
+              {scoutedAgo ? ` · ${scoutedAgo}` : ""}
+            </p>
           ) : null}
-          {c.yearBuiltMin ? <Badge>Built ≥ {c.yearBuiltMin}</Badge> : null}
-          {c.daysOnMarketMax ? <Badge>Listed ≤ {c.daysOnMarketMax}</Badge> : null}
-          {c.downPayment ? (
-            <Badge>Down {formatMoney(c.downPayment)}</Badge>
+          {isOwner && !isPro ? (
+            <ProLockedPanel
+              title="Edit search & substitute"
+              description="Pro unlocks the full constraints editor and Substitute re-scout (archive live deals, keep them searchable)."
+              feature="Edit project constraints and substitute inventory"
+            />
           ) : null}
-          {c.targetMonthlyCashflow ? (
-            <Badge>{formatMoney(c.targetMonthlyCashflow)}/mo</Badge>
-          ) : null}
-          <Badge>DSCR ≥ {c.minDSCR.toFixed(2)}</Badge>
-          <Badge>{(c.mortgage.rateAPR * 100).toFixed(2)}% APR</Badge>
         </div>
-        {lastScoutAt ? (
-          <p className="text-textMuted text-xs mt-3">
-            Last scout {formatDate(lastScoutAt)}
-            {scoutedAgo ? ` · ${scoutedAgo}` : ""}
-          </p>
-        ) : null}
-      </div>
+      )}
+
+      <Dialog open={substituteOpen} onOpenChange={setSubstituteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Substitute live deals?</DialogTitle>
+            <DialogDescription>
+              Current live deals move to Archived. They stay on this project for
+              search and history. New scout matches become the live inventory.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setSubstituteOpen(false)}
+              disabled={scouting}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void runScout("substitute")}
+              loading={scouting}
+            >
+              Substitute & scout
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {isOwner ? (
         <>
@@ -602,7 +861,7 @@ export function ProjectDetailClient({
 
           <div className="flex flex-wrap items-center gap-3">
             <Button
-              onClick={runScout}
+              onClick={() => void runScout("append")}
               loading={scouting}
               disabled={scoutFresh && !scouting}
               className="flex-1 sm:flex-none"
@@ -616,7 +875,9 @@ export function ProjectDetailClient({
                 ? "Scouting…"
                 : scoutFresh
                   ? "Scouted recently"
-                  : "Scout deals"}
+                  : isPro
+                    ? "Scout: Append"
+                    : "Scout deals"}
             </Button>
             <ImportListingPanel
               projects={[project]}
@@ -630,7 +891,7 @@ export function ProjectDetailClient({
               <button
                 type="button"
                 className="text-xs text-textMuted hover:underline"
-                onClick={() => void runScout()}
+                onClick={() => void runScout("append")}
               >
                 Scout anyway
               </button>
@@ -706,6 +967,31 @@ export function ProjectDetailClient({
             : `(${deals.length})`
           : ""}
       </h2>
+      {isOwner ? (
+        <div className="flex gap-2 overflow-x-auto pb-3 mb-1 -mx-1 px-1 scrollbar-none">
+          {SHELF_CHIPS.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => {
+                setShelf(chip.id);
+                setActionNote(null);
+              }}
+              className={cn(
+                "shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
+                shelf === chip.id
+                  ? "border-primary bg-primary/15 text-primary"
+                  : "border-border bg-surface text-textMuted hover:text-text",
+              )}
+            >
+              {chip.label}
+              <span className="ml-1.5 tabular-nums opacity-70">
+                {shelfCounts[chip.id]}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
       {deals.length > 0 ? (
         <div className="flex gap-2 overflow-x-auto pb-3 mb-1 -mx-1 px-1 scrollbar-none">
           {STATUS_CHIPS.map((chip) => (
