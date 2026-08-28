@@ -132,7 +132,7 @@ export async function fetchDealsForProjectIds(
     const { data, error } = await supabase
       .from("deals")
       .select(
-        "*, deal_scores(*), projects!inner(id, name, owner_id, is_public)",
+        "*, deal_scores(*), projects!inner(id, name, owner_id)",
       )
       .in("project_id", ids)
       .order("last_refreshed_at", { ascending: false })
@@ -195,10 +195,11 @@ export async function listOwnFeedPool(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<FeedDeal[]> {
-  const [projectIds, dismissed] = await Promise.all([
-    listOwnProjectIds(supabase, userId),
-    listDismissedListingKeys(supabase, userId),
-  ]);
+  const projectIds = await listOwnProjectIds(supabase, userId);
+  // Dismissals are best-effort — never blank the spine if this join fails.
+  const dismissed = await listDismissedListingKeys(supabase, userId).catch(
+    () => new Set<string>(),
+  );
   const deals = await fetchDealsForProjectIds(supabase, {
     userId,
     projectIds,
