@@ -26,6 +26,7 @@ export default async function HomeFeedPage() {
   const supabase = await createClient();
   let feed: PersonalizedFeed = EMPTY;
   let projectCount = 0;
+  let loadError: string | null = null;
   try {
     const {
       data: { user },
@@ -38,13 +39,17 @@ export default async function HomeFeedPage() {
       feed = feedResult;
       projectCount = projects.length;
     }
-  } catch {
-    /* client can refresh; avoid hard-failing the shell */
+  } catch (err) {
+    loadError = err instanceof Error ? err.message : String(err);
   }
 
   return (
     <Suspense fallback={<p className="text-textMuted text-sm">Loading…</p>}>
-      <FeedHomeClient initialFeed={feed} projectCount={projectCount} />
+      <FeedHomeClient
+        initialFeed={feed}
+        projectCount={projectCount}
+        initialLoadError={loadError}
+      />
     </Suspense>
   );
 }

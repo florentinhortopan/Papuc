@@ -35,9 +35,11 @@ type SearchResult = {
 export function FeedHomeClient({
   initialFeed,
   projectCount = 0,
+  initialLoadError = null,
 }: {
   initialFeed: PersonalizedFeed;
   projectCount?: number;
+  initialLoadError?: string | null;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -52,6 +54,7 @@ export function FeedHomeClient({
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(initialLoadError);
 
   const firstRun = projectCount === 0;
 
@@ -71,11 +74,15 @@ export function FeedHomeClient({
   const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/feed", { cache: "no-store" });
-      if (!res.ok) return;
-      const json = (await res.json()) as PersonalizedFeed;
+      const json = (await res.json()) as PersonalizedFeed & { error?: string };
+      if (!res.ok) {
+        setLoadError(json.error ?? `Feed failed (${res.status})`);
+        return;
+      }
+      setLoadError(null);
       setFeed(json);
-    } catch {
-      /* keep initial */
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : String(err));
     }
   }, []);
 
@@ -264,6 +271,22 @@ export function FeedHomeClient({
           ). X = Skipped (hidden from For you).
         </p>
       </div>
+
+      {loadError ? (
+        <div className="rounded-2xl border border-danger/40 bg-danger/10 px-4 py-3">
+          <p className="text-danger text-sm font-medium">
+            Couldn&apos;t load Discover
+          </p>
+          <p className="text-danger/90 text-xs mt-1 break-all">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="text-primary text-xs mt-2 hover:underline"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
 
       {firstRun ? (
         <div className="rounded-3xl border border-primary/30 bg-primary/10 p-6 sm:p-8 text-center">

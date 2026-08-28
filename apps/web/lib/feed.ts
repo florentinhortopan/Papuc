@@ -147,51 +147,79 @@ function dedupeByListing(deals: FeedDeal[], limit: number): FeedDeal[] {
   return Array.from(best.values()).slice(0, limit);
 }
 
+/**
+ * Resolve project ids for the feed pool, then load deals by project_id.
+ * Nested `.eq("projects.owner_id" | "projects.is_public")` filters are
+ * unreliable across PostgREST versions and can return an empty set even
+ * when RLS would allow the rows — which silently empties Discover.
+ */
+async function listProjectIdsForFeed(
+  supabase: SupabaseClient,
+  opts: { userId: string; mode: "own" | "public" },
+): Promise<string[]> {
+  let query = supabase.from("projects").select("id");
+  if (opts.mode === "own") {
+    query = query.eq("owner_id", opts.userId);
+  } else {
+    // Public inventory from everyone else — own deals come from mode "own".
+    query = query.eq("is_public", true).neq("owner_id", opts.userId);
+  }
+  const { data, error } = await query.limit(200);
+  if (error) throw error;
+  return (data ?? []).map((row) => row.id as string);
+}
+
+async function fetchDealsForProjectIds(
+  supabase: SupabaseClient,
+  opts: { userId: string; projectIds: string[]; limit: number },
+): Promise<FeedDeal[]> {
+  if (opts.projectIds.length === 0) return [];
+
+  // PostgREST `.in()` caps; chunk to stay safe.
+  const chunkSize = 80;
+  const chunks: string[][] = [];
+  for (let i = 0; i < opts.projectIds.length; i += chunkSize) {
+    chunks.push(opts.projectIds.slice(i, i + chunkSize));
+  }
+
+  const rows: RawFeedRow[] = [];
+  for (const ids of chunks) {
+    const { data, error } = await supabase
+      .from("deals")
+      .select(
+        "*, deal_scores(*), projects!inner(id, name, owner_id, is_public)",
+      )
+      .in("project_id", ids)
+      .order("last_refreshed_at", { ascending: false, nullsFirst: false })
+      .limit(opts.limit);
+    if (error) throw error;
+    rows.push(...((data ?? []) as unknown as RawFeedRow[]));
+    if (rows.length >= opts.limit) break;
+  }
+
+  return rows
+    .slice(0, opts.limit)
+    .map((row) => toFeedDeal(row, opts.userId))
+    .filter((d): d is FeedDeal => d !== null);
+}
+
 async function fetchDealSlice(
   supabase: SupabaseClient,
   opts: {
     userId: string;
     mode: "own" | "public";
     limit: number;
-    order?: { column: string; ascending: boolean; foreignTable?: string };
   },
 ): Promise<FeedDeal[]> {
-  let query = supabase
-    .from("deals")
-    .select(
-      "*, deal_scores(*), projects!inner(id, name, owner_id, is_public)",
-    )
-    .limit(opts.limit);
-
-  if (opts.mode === "own") {
-    query = query.eq("projects.owner_id", opts.userId);
-  } else {
-    query = query.eq("projects.is_public", true);
-  }
-
-  const order = opts.order ?? {
-    column: "last_refreshed_at",
-    ascending: false,
-  };
-  if (order.foreignTable) {
-    query = query.order(order.column, {
-      ascending: order.ascending,
-      foreignTable: order.foreignTable,
-      nullsFirst: false,
-    });
-  } else {
-    query = query.order(order.column, {
-      ascending: order.ascending,
-      nullsFirst: false,
-    });
-  }
-
-  const { data, error } = await query;
-  if (error) throw error;
-
-  return ((data ?? []) as unknown as RawFeedRow[])
-    .map((row) => toFeedDeal(row, opts.userId))
-    .filter((d): d is FeedDeal => d !== null);
+  const projectIds = await listProjectIdsForFeed(supabase, {
+    userId: opts.userId,
+    mode: opts.mode,
+  });
+  return fetchDealsForProjectIds(supabase, {
+    userId: opts.userId,
+    projectIds,
+    limit: opts.limit,
+  });
 }
 
 async function listDismissedListingKeys(
@@ -558,9 +586,16 @@ export async function listPersonalizedFeed(
 ): Promise<PersonalizedFeed> {
   const [pool, taste, saved, skipped, friends] = await Promise.all([
     listFeedPool(supabase, userId),
-    loadTasteProfile(supabase, userId),
-    listSavedFeedDeals(supabase, userId),
-    listSkippedFeedDeals(supabase, userId),
+    loadTasteProfile(supabase, userId).catch(
+      (): TasteProfile => ({
+        constraints: [],
+        marketLabels: [],
+        strategies: [],
+        projectCount: 0,
+      }),
+    ),
+    listSavedFeedDeals(supabase, userId).catch(() => [] as FeedDeal[]),
+    listSkippedFeedDeals(supabase, userId).catch(() => [] as FeedDeal[]),
     listFriendsFeedDeals(supabase, userId).catch(() => [] as FeedDeal[]),
   ]);
 
@@ -607,7 +642,9 @@ export async function listPersonalizedFeed(
     ...skipped,
     ...friends,
   ].map((d) => d.project.owner_id);
-  const profiles = await getPublicProfiles(supabase, ownerIds);
+  const profiles = await getPublicProfiles(supabase, ownerIds).catch(
+    () => new Map(),
+  );
 
   function withOwners(deals: FeedDeal[]): FeedDeal[] {
     return deals.map((d) => {
@@ -649,45 +686,32 @@ async function listFriendsFeedDeals(
   }
 
   const dismissed = await listDismissedListingKeys(supabase, userId);
-  const chunks: FeedDeal[] = [];
+  const projectIdSet = new Set<string>(watchedIds);
 
   if (followingIds.length > 0) {
     const { data, error } = await supabase
-      .from("deals")
-      .select(
-        "*, deal_scores(*), projects!inner(id, name, owner_id, is_public)",
-      )
-      .eq("projects.is_public", true)
-      .in("projects.owner_id", followingIds)
-      .neq("projects.owner_id", userId)
-      .order("last_refreshed_at", { ascending: false })
-      .limit(POOL_LIMIT);
+      .from("projects")
+      .select("id")
+      .eq("is_public", true)
+      .in("owner_id", followingIds)
+      .neq("owner_id", userId)
+      .limit(200);
     if (error) throw error;
-    for (const row of (data ?? []) as unknown as RawFeedRow[]) {
-      const mapped = toFeedDeal(row, userId);
-      if (mapped) chunks.push(mapped);
-    }
+    for (const row of data ?? []) projectIdSet.add(row.id as string);
   }
 
-  if (watchedIds.length > 0) {
-    const { data, error } = await supabase
-      .from("deals")
-      .select(
-        "*, deal_scores(*), projects!inner(id, name, owner_id, is_public)",
-      )
-      .eq("projects.is_public", true)
-      .in("project_id", watchedIds)
-      .neq("projects.owner_id", userId)
-      .order("last_refreshed_at", { ascending: false })
-      .limit(POOL_LIMIT);
-    if (error) throw error;
-    for (const row of (data ?? []) as unknown as RawFeedRow[]) {
-      const mapped = toFeedDeal(row, userId);
-      if (mapped) chunks.push(mapped);
-    }
-  }
+  const projectIds = [...projectIdSet];
+  if (projectIds.length === 0) return [];
 
-  const filtered = chunks.filter((d) => !dismissed.has(listingKey(d)));
+  const deals = await fetchDealsForProjectIds(supabase, {
+    userId,
+    projectIds,
+    limit: POOL_LIMIT,
+  });
+
+  const filtered = deals.filter(
+    (d) => !d.isOwn && !dismissed.has(listingKey(d)),
+  );
   return dedupeByListing(
     filtered.sort(
       (a, b) =>
