@@ -250,6 +250,8 @@ export function FeedHomeClient({
     feed.forYou.length === 0 &&
     feed.bestRated.length === 0 &&
     feed.saved.length === 0;
+  // Friends empty must never count as Discover empty.
+  const socialNote = feed.socialError ?? null;
 
   const tasteLine =
     feed.taste && feed.taste.marketLabels.length
@@ -285,6 +287,15 @@ export function FeedHomeClient({
           >
             Retry
           </button>
+        </div>
+      ) : null}
+
+      {socialNote && !loadError ? (
+        <div className="rounded-2xl border border-border bg-surfaceAlt/60 px-4 py-2">
+          <p className="text-textMuted text-xs">
+            Your deals loaded; Friends/public enrichment had an issue:{" "}
+            <span className="break-all">{socialNote}</span>
+          </p>
         </div>
       ) : null}
 
@@ -581,21 +592,15 @@ export function FeedHomeClient({
 function EmptyFeed() {
   return (
     <div className="bg-surface border border-border rounded-2xl p-8 text-center">
-      <p className="text-text font-semibold mb-1">Your feed is empty</p>
+      <p className="text-text font-semibold mb-1">No scouted deals yet</p>
       <p className="text-textMuted text-sm mb-4 max-w-md mx-auto">
-        Discover shows your scouted deals plus other investors&apos;{" "}
-        <span className="text-text">Show on Discover</span> projects. Friends
-        fills after you Follow someone or Watch a public scout.
+        Discover is built from <span className="text-text">your</span> projects
+        first. Scout a project and deals land here automatically — Friends is a
+        separate rail after you Follow or Watch someone.
       </p>
-      <div className="flex flex-col sm:flex-row gap-2 justify-center items-center">
-        <Link href="/projects" className="text-primary text-sm hover:underline">
-          Scout a project →
-        </Link>
-        <span className="text-textMuted text-xs hidden sm:inline">·</span>
-        <Link href="/settings" className="text-primary text-sm hover:underline">
-          Open your profile →
-        </Link>
-      </div>
+      <Link href="/projects" className="text-primary text-sm hover:underline">
+        Go to projects →
+      </Link>
     </div>
   );
 }

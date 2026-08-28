@@ -20,6 +20,7 @@ const EMPTY: PersonalizedFeed = {
   skipped: [],
   friends: [],
   taste: null,
+  socialError: null,
 };
 
 export default async function HomeFeedPage() {

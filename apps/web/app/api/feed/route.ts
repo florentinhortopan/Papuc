@@ -19,6 +19,7 @@ export async function GET(req: Request) {
     const feed = await listPersonalizedFeed(supabase, user.id);
     return NextResponse.json(feed);
   } catch (err) {
+    // Spine failure only — social soft-fails inside listPersonalizedFeed.
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
       { status: 500 },

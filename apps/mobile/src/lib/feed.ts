@@ -41,6 +41,8 @@ export type PersonalizedFeed = {
   saved: FeedDeal[];
   skipped: FeedDeal[];
   friends: FeedDeal[];
+  /** Soft social enrichment error; spine deals still present when set. */
+  socialError?: string | null;
 };
 
 export const FEED_CHIPS: Array<{ id: FeedRailId; label: string }> = [
