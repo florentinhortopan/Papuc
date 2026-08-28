@@ -132,7 +132,8 @@ export async function fetchDealsForProjectIds(
     const { data, error } = await supabase
       .from("deals")
       .select(
-        "*, deal_scores(*), projects!inner(id, name, owner_id)",
+        // Disambiguate: projects.source_deal_id also FKs to deals (PGRST201).
+        "*, deal_scores(*), projects!project_id!inner(id, name, owner_id)",
       )
       .in("project_id", ids)
       .order("last_refreshed_at", { ascending: false })
@@ -479,7 +480,7 @@ async function listActionFeedDeals(
   const { data, error } = await supabase
     .from("deal_actions")
     .select(
-      "deal_id, deals!inner(*, deal_scores(*), projects!inner(id, name, owner_id))",
+      "deal_id, deals!inner(*, deal_scores(*), projects!project_id!inner(id, name, owner_id))",
     )
     .eq("user_id", userId)
     .eq("action", action)
