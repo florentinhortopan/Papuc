@@ -561,7 +561,7 @@ export async function listPersonalizedFeed(
     loadTasteProfile(supabase, userId),
     listSavedFeedDeals(supabase, userId),
     listSkippedFeedDeals(supabase, userId),
-    listFriendsFeedDeals(supabase, userId),
+    listFriendsFeedDeals(supabase, userId).catch(() => [] as FeedDeal[]),
   ]);
 
   const ranked = pool

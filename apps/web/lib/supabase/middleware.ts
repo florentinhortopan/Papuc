@@ -3,11 +3,13 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // "/share" is the public deal/project share landing — the top of the signup
 // funnel. "/api/og" serves proxied listing photos for WhatsApp/Telegram crawlers.
+// "/api/*" is intentionally not cookie-gated: mobile sends Bearer tokens and
+// each route handler enforces auth (redirecting APIs to /sign-in HTML empties
+// the iOS Discover feed).
 const PUBLIC_PATHS = [
   "/sign-in",
   "/auth/callback",
-  "/api/cron",
-  "/api/og",
+  "/api",
   "/share",
 ];
 
