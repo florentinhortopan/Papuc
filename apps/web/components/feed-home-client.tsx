@@ -459,10 +459,26 @@ export function FeedHomeClient({
         </>
       ) : chip === "friends" ? (
         chipDeals.length === 0 ? (
-          <p className="text-textMuted text-sm py-6">
-            Follow investors from public deals on Discover, or watch a public
-            scout — their new finds show up here.
-          </p>
+          <div className="py-6 space-y-3 max-w-lg">
+            <p className="text-text font-semibold">No friends deals yet</p>
+            <p className="text-textMuted text-sm">
+              Friends only shows deals from investors you Follow or scouts you
+              Watch — and only when those projects have{" "}
+              <span className="text-text">Show on Discover</span> on.
+            </p>
+            <ol className="text-textMuted text-sm list-decimal pl-5 space-y-1">
+              <li>
+                Open a public deal on Discover (or someone&apos;s shared project
+                link).
+              </li>
+              <li>Tap Follow on the investor, or Watch on the project.</li>
+              <li>New public finds from them land in this Friends chip.</li>
+            </ol>
+            <p className="text-textMuted text-xs">
+              Tip: turn on Show on Discover on your own projects so others can
+              follow you back.
+            </p>
+          </div>
         ) : (
           <div className="space-y-4">
             <h2 className="text-xl font-semibold">Friends</h2>
@@ -543,13 +559,20 @@ function EmptyFeed() {
   return (
     <div className="bg-surface border border-border rounded-2xl p-8 text-center">
       <p className="text-text font-semibold mb-1">Your feed is empty</p>
-      <p className="text-textMuted text-sm mb-4">
-        Scout a project to pull deals that match your goals — they show up here
-        automatically. Public projects from other investors expand the shelf.
+      <p className="text-textMuted text-sm mb-4 max-w-md mx-auto">
+        Discover shows your scouted deals plus other investors&apos;{" "}
+        <span className="text-text">Show on Discover</span> projects. Friends
+        fills after you Follow someone or Watch a public scout.
       </p>
-      <Link href="/projects" className="text-primary text-sm hover:underline">
-        Go to projects →
-      </Link>
+      <div className="flex flex-col sm:flex-row gap-2 justify-center items-center">
+        <Link href="/projects" className="text-primary text-sm hover:underline">
+          Scout a project →
+        </Link>
+        <span className="text-textMuted text-xs hidden sm:inline">·</span>
+        <Link href="/settings" className="text-primary text-sm hover:underline">
+          Open your profile →
+        </Link>
+      </div>
     </div>
   );
 }

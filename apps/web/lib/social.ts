@@ -148,6 +148,22 @@ export async function listFollowingIds(
   return (data ?? []).map((r) => r.following_id as string);
 }
 
+export async function isFollowingUser(
+  supabase: SupabaseClient,
+  followerId: string,
+  followingId: string,
+): Promise<boolean> {
+  if (followerId === followingId) return false;
+  const { data, error } = await supabase
+    .from("user_follows")
+    .select("following_id")
+    .eq("follower_id", followerId)
+    .eq("following_id", followingId)
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
+}
+
 export async function watchProject(
   supabase: SupabaseClient,
   projectId: string,

@@ -8,6 +8,7 @@ import { getProject } from "@/lib/projects";
 import {
   countProjectWatchers,
   getPublicProfile,
+  isFollowingUser,
   isWatchingProject,
   publicDisplayName,
 } from "@/lib/social";
@@ -47,13 +48,17 @@ export default async function ProjectDetailPage({
   } = await supabase.auth.getUser();
   const isOwner = Boolean(user && user.id === project.owner_id);
 
-  const [watcherCount, ownerProfile, initialWatching] = await Promise.all([
-    countProjectWatchers(supabase, project.id),
-    getPublicProfile(supabase, project.owner_id),
-    user && !isOwner
-      ? isWatchingProject(supabase, project.id, user.id)
-      : Promise.resolve(false),
-  ]);
+  const [watcherCount, ownerProfile, initialWatching, initialFollowing] =
+    await Promise.all([
+      countProjectWatchers(supabase, project.id),
+      getPublicProfile(supabase, project.owner_id),
+      user && !isOwner
+        ? isWatchingProject(supabase, project.id, user.id)
+        : Promise.resolve(false),
+      user && !isOwner
+        ? isFollowingUser(supabase, user.id, project.owner_id)
+        : Promise.resolve(false),
+    ]);
   const ownerDisplayName = ownerProfile
     ? publicDisplayName(ownerProfile)
     : null;
@@ -73,6 +78,7 @@ export default async function ProjectDetailPage({
         subscriptionTier={profile?.subscription_tier ?? "free"}
         isOwner={isOwner}
         initialWatching={initialWatching}
+        initialFollowing={initialFollowing}
         watcherCount={watcherCount}
         ownerDisplayName={ownerDisplayName}
       />

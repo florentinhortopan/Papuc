@@ -21,6 +21,7 @@ import {
 import { ImportListingPanel } from "@/components/import-listing-panel";
 import { NightlyScoutToggle } from "@/components/nightly-scout-toggle";
 import { PublicFeedToggle } from "@/components/public-feed-toggle";
+import { FollowButton } from "@/components/follow-button";
 import { WatchProjectButton } from "@/components/watch-project-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -92,6 +93,7 @@ export function ProjectDetailClient({
   subscriptionTier = "free",
   isOwner = true,
   initialWatching = false,
+  initialFollowing = false,
   watcherCount = 0,
   ownerDisplayName = null,
 }: {
@@ -103,6 +105,7 @@ export function ProjectDetailClient({
   /** False when viewing someone else's public project (browse mode). */
   isOwner?: boolean;
   initialWatching?: boolean;
+  initialFollowing?: boolean;
   watcherCount?: number;
   ownerDisplayName?: string | null;
 }) {
@@ -676,14 +679,20 @@ export function ProjectDetailClient({
             </p>
           )}
           {project.is_public ? (
-            <WatchProjectButton
-              projectId={project.id}
-              initialWatching={initialWatching}
-              watcherCount={watcherCount}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <FollowButton
+                userId={project.owner_id}
+                initialFollowing={initialFollowing}
+              />
+              <WatchProjectButton
+                projectId={project.id}
+                initialWatching={initialWatching}
+                watcherCount={watcherCount}
+              />
+            </div>
           ) : null}
           <p className="text-textMuted text-xs">
-            Browse mode — you can open deals from this public project.
+            Browse mode — Follow the investor or Watch this scout to fill Friends.
           </p>
         </div>
       )}
