@@ -23,6 +23,7 @@ import {
   deleteDealAction,
   postDealAction,
 } from "@/lib/deal-actions-client";
+import { errorMessage } from "@/lib/error-message";
 import { formatMarket } from "@/lib/format";
 import type { ProjectConstraints } from "@papuc/core";
 
@@ -74,15 +75,15 @@ export function FeedHomeClient({
   const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/feed", { cache: "no-store" });
-      const json = (await res.json()) as PersonalizedFeed & { error?: string };
+      const json = (await res.json()) as PersonalizedFeed & { error?: unknown };
       if (!res.ok) {
-        setLoadError(json.error ?? `Feed failed (${res.status})`);
+        setLoadError(errorMessage(json.error ?? `Feed failed (${res.status})`));
         return;
       }
       setLoadError(null);
       setFeed(json);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : String(err));
+      setLoadError(errorMessage(err));
     }
   }, []);
 

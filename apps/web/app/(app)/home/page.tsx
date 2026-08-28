@@ -5,6 +5,7 @@ import {
   listPersonalizedFeed,
   type PersonalizedFeed,
 } from "@/lib/feed";
+import { errorMessage } from "@/lib/error-message";
 import { listProjects } from "@/lib/projects";
 import { createClient } from "@/lib/supabase/server";
 
@@ -33,15 +34,19 @@ export default async function HomeFeedPage() {
       data: { user },
     } = await supabase.auth.getUser();
     if (user) {
-      const [feedResult, projects] = await Promise.all([
-        listPersonalizedFeed(supabase, user.id),
-        listProjects(supabase),
-      ]);
-      feed = feedResult;
-      projectCount = projects.length;
+      try {
+        feed = await listPersonalizedFeed(supabase, user.id);
+      } catch (err) {
+        loadError = errorMessage(err);
+      }
+      try {
+        projectCount = (await listProjects(supabase)).length;
+      } catch {
+        /* project count is advisory; don't blank Discover for it */
+      }
     }
   } catch (err) {
-    loadError = err instanceof Error ? err.message : String(err);
+    loadError = loadError ?? errorMessage(err);
   }
 
   return (

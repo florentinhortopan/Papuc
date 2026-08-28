@@ -135,7 +135,7 @@ export async function fetchDealsForProjectIds(
         "*, deal_scores(*), projects!inner(id, name, owner_id, is_public)",
       )
       .in("project_id", ids)
-      .order("last_refreshed_at", { ascending: false, nullsFirst: false })
+      .order("last_refreshed_at", { ascending: false })
       .limit(opts.limit);
     if (error) throw error;
     rows.push(...((data ?? []) as unknown as RawFeedRow[]));

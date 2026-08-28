@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { listPersonalizedFeed } from "@/lib/feed";
+import { errorMessage } from "@/lib/error-message";
 import { createRouteClient } from "@/lib/supabase/route-client";
 
 export const runtime = "nodejs";
@@ -20,9 +21,6 @@ export async function GET(req: Request) {
     return NextResponse.json(feed);
   } catch (err) {
     // Spine failure only — social soft-fails inside listPersonalizedFeed.
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
   }
 }

@@ -19,6 +19,7 @@ import {
   type FeedDeal,
   type FeedTasteSummary,
 } from "./feed-spine";
+import { errorMessage } from "./error-message";
 
 export type {
   FeedDeal,
@@ -102,19 +103,13 @@ export async function listPersonalizedFeed(
   if (publicResult.status === "fulfilled") {
     chips = mergePublicIntoSpine(chips, publicResult.value);
   } else {
-    socialError =
-      publicResult.reason instanceof Error
-        ? publicResult.reason.message
-        : String(publicResult.reason);
+    socialError = errorMessage(publicResult.reason);
   }
 
   if (friendsResult.status === "fulfilled") {
     friends = friendsResult.value;
   } else {
-    const msg =
-      friendsResult.reason instanceof Error
-        ? friendsResult.reason.message
-        : String(friendsResult.reason);
+    const msg = errorMessage(friendsResult.reason);
     socialError = socialError ? `${socialError}; ${msg}` : msg;
   }
 
@@ -123,7 +118,7 @@ export async function listPersonalizedFeed(
     try {
       return await attachOwnerDisplayNames(supabase, deals);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       socialError = socialError ? `${socialError}; ${msg}` : msg;
       return deals;
     }
