@@ -1,16 +1,23 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-// "/share" is the public deal/project share landing — the top of the signup
-// funnel. "/api/*" is intentionally not cookie-gated: mobile sends Bearer tokens
-// and each route handler enforces auth (redirecting APIs to /sign-in HTML
-// empties the iOS Discover feed).
-const PUBLIC_PATHS = [
+// Public marketing + share funnel. "/api/*" is not cookie-gated: mobile sends
+// Bearer tokens and each route handler enforces auth.
+const PUBLIC_PREFIXES = [
   "/sign-in",
   "/auth/callback",
   "/api",
   "/share",
+  "/privacy",
+  "/support",
 ];
+
+const PUBLIC_EXACT = new Set(["/"]);
+
+function isPublicPath(path: string): boolean {
+  if (PUBLIC_EXACT.has(path)) return true;
+  return PUBLIC_PREFIXES.some((p) => path.startsWith(p));
+}
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -51,7 +58,7 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  const isPublic = PUBLIC_PATHS.some((p) => path.startsWith(p));
+  const isPublic = isPublicPath(path);
 
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();

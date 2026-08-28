@@ -10,6 +10,10 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 * {
   border-color: #2a2a36;
 }

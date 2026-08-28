@@ -8,8 +8,16 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       {
         userAgent: "*",
-        allow: ["/", "/sign-in", "/share/", "/privacy", "/support"],
-        disallow: ["/admin", "/api/", "/auth/"],
+        allow: [
+          "/",
+          "/sign-in",
+          "/share/",
+          "/privacy",
+          "/support",
+          "/opengraph-image",
+          "/twitter-image",
+        ],
+        disallow: ["/admin", "/api/", "/auth/", "/home", "/projects", "/portfolio", "/settings"],
       },
     ],
     sitemap: `${site}/sitemap.xml`,

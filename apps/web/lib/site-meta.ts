@@ -39,6 +39,12 @@ export const TWITTER_DESCRIPTION =
 
 export const SITE_TAGLINE = "Scenarios with your investor friends.";
 
+export const SITE_H1 =
+  "Evaluate rental deals together — scenarios, not spreadsheets alone";
+
+export const SITE_HERO_SUPPORT =
+  "Papuc is an evaluation tool and real estate social investing platform. Run what-if deal scenarios, then collaborate with a pool of investor friends on ranked DSCR rentals.";
+
 export const PAGE_DESCRIPTIONS = {
   signIn:
     "Sign in to evaluate rentals with scenarios, follow investor friends, and share ranked deals on Papuc.",
