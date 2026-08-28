@@ -27,6 +27,7 @@ import { MarketSignalBadges } from "@/components/market-signal-badges";
 import { PhotoCarousel } from "@/components/photo-carousel";
 import { ProLockedPanel } from "@/components/pro-locked-panel";
 import { ScoutLikeThisButton } from "@/components/scout-like-this-button";
+import { FollowButton } from "@/components/follow-button";
 import { StrCashflowMatrix, defaultStrMatrix, type StrMatrixValue } from "@/components/str-matrix";
 import {
   PhotoConditionEstimate,
@@ -112,6 +113,7 @@ export function DealDetailClient({
   isOwner = true,
   subscriptionTier = "free",
   ownerDisplayName = null,
+  initialFollowing = false,
 }: {
   deal: DealWithScore;
   project: ProjectRow;
@@ -127,6 +129,7 @@ export function DealDetailClient({
   /** Viewer subscription — gates Catch the catch / financing fit. */
   subscriptionTier?: SubscriptionTier;
   ownerDisplayName?: string | null;
+  initialFollowing?: boolean;
 }) {
   const isPro = subscriptionTier === "pro";
   const router = useRouter();
@@ -1635,9 +1638,14 @@ export function DealDetailClient({
                 ) : null}
                 .
               </p>
+              <FollowButton
+                userId={project.owner_id}
+                initialFollowing={initialFollowing}
+                className="col-span-2 sm:col-span-1"
+              />
               <ScoutLikeThisButton
                 dealId={deal.id}
-                className="col-span-2"
+                className="col-span-2 sm:col-span-1"
                 label="Scout like this"
               />
               <Button

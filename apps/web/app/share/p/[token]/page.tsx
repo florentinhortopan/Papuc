@@ -114,12 +114,14 @@ export default async function ProjectSharePage({
   const { count } = await admin
     .from("deals")
     .select("id", { count: "exact", head: true })
-    .eq("project_id", project.id);
+    .eq("project_id", project.id)
+    .eq("inventory_status", "live");
 
   const { data: sampleDeals } = await admin
     .from("deals")
     .select("primary_image_url, photos, address, city, state, price")
     .eq("project_id", project.id)
+    .eq("inventory_status", "live")
     .order("last_refreshed_at", { ascending: false })
     .limit(3);
 

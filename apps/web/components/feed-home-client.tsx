@@ -23,6 +23,7 @@ import {
   deleteDealAction,
   postDealAction,
 } from "@/lib/deal-actions-client";
+import { errorMessage } from "@/lib/error-message";
 import { formatMarket } from "@/lib/format";
 import type { ProjectConstraints } from "@papuc/core";
 
@@ -35,9 +36,11 @@ type SearchResult = {
 export function FeedHomeClient({
   initialFeed,
   projectCount = 0,
+  initialLoadError = null,
 }: {
   initialFeed: PersonalizedFeed;
   projectCount?: number;
+  initialLoadError?: string | null;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -52,6 +55,7 @@ export function FeedHomeClient({
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(initialLoadError);
 
   const firstRun = projectCount === 0;
 
@@ -71,11 +75,15 @@ export function FeedHomeClient({
   const refresh = useCallback(async () => {
     try {
       const res = await fetch("/api/feed", { cache: "no-store" });
-      if (!res.ok) return;
-      const json = (await res.json()) as PersonalizedFeed;
+      const json = (await res.json()) as PersonalizedFeed & { error?: unknown };
+      if (!res.ok) {
+        setLoadError(errorMessage(json.error ?? `Feed failed (${res.status})`));
+        return;
+      }
+      setLoadError(null);
       setFeed(json);
-    } catch {
-      /* keep initial */
+    } catch (err) {
+      setLoadError(errorMessage(err));
     }
   }, []);
 
@@ -243,6 +251,8 @@ export function FeedHomeClient({
     feed.forYou.length === 0 &&
     feed.bestRated.length === 0 &&
     feed.saved.length === 0;
+  // Friends empty must never count as Discover empty.
+  const socialNote = feed.socialError ?? null;
 
   const tasteLine =
     feed.taste && feed.taste.marketLabels.length
@@ -264,6 +274,31 @@ export function FeedHomeClient({
           ). X = Skipped (hidden from For you).
         </p>
       </div>
+
+      {loadError ? (
+        <div className="rounded-2xl border border-danger/40 bg-danger/10 px-4 py-3">
+          <p className="text-danger text-sm font-medium">
+            Couldn&apos;t load Discover
+          </p>
+          <p className="text-danger/90 text-xs mt-1 break-all">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="text-primary text-xs mt-2 hover:underline"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
+
+      {socialNote && !loadError ? (
+        <div className="rounded-2xl border border-border bg-surfaceAlt/60 px-4 py-2">
+          <p className="text-textMuted text-xs">
+            Your deals loaded; Friends/public enrichment had an issue:{" "}
+            <span className="break-all">{socialNote}</span>
+          </p>
+        </div>
+      ) : null}
 
       {firstRun ? (
         <div className="rounded-3xl border border-primary/30 bg-primary/10 p-6 sm:p-8 text-center">
@@ -459,10 +494,26 @@ export function FeedHomeClient({
         </>
       ) : chip === "friends" ? (
         chipDeals.length === 0 ? (
-          <p className="text-textMuted text-sm py-6">
-            Follow investors from public deals on Discover, or watch a public
-            scout — their new finds show up here.
-          </p>
+          <div className="py-6 space-y-3 max-w-lg">
+            <p className="text-text font-semibold">No friends deals yet</p>
+            <p className="text-textMuted text-sm">
+              Friends only shows deals from investors you Follow or scouts you
+              Watch — and only when those projects have{" "}
+              <span className="text-text">Show on Discover</span> on.
+            </p>
+            <ol className="text-textMuted text-sm list-decimal pl-5 space-y-1">
+              <li>
+                Open a public deal on Discover (or someone&apos;s shared project
+                link).
+              </li>
+              <li>Tap Follow on the investor, or Watch on the project.</li>
+              <li>New public finds from them land in this Friends chip.</li>
+            </ol>
+            <p className="text-textMuted text-xs">
+              Tip: turn on Show on Discover on your own projects so others can
+              follow you back.
+            </p>
+          </div>
         ) : (
           <div className="space-y-4">
             <h2 className="text-xl font-semibold">Friends</h2>
@@ -542,10 +593,11 @@ export function FeedHomeClient({
 function EmptyFeed() {
   return (
     <div className="bg-surface border border-border rounded-2xl p-8 text-center">
-      <p className="text-text font-semibold mb-1">Your feed is empty</p>
-      <p className="text-textMuted text-sm mb-4">
-        Scout a project to pull deals that match your goals — they show up here
-        automatically. Public projects from other investors expand the shelf.
+      <p className="text-text font-semibold mb-1">No scouted deals yet</p>
+      <p className="text-textMuted text-sm mb-4 max-w-md mx-auto">
+        Discover is built from <span className="text-text">your</span> projects
+        first. Scout a project and deals land here automatically — Friends is a
+        separate rail after you Follow or Watch someone.
       </p>
       <Link href="/projects" className="text-primary text-sm hover:underline">
         Go to projects →

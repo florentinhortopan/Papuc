@@ -1,5 +1,9 @@
 export type ProjectStatus = "draft" | "active" | "paused" | "archived";
 
+export type DealInventoryStatus = "live" | "archived";
+
+export type ScoutMode = "append" | "substitute";
+
 export type DealActionKind =
   | "saved"
   | "dismissed"
@@ -155,6 +159,10 @@ export type DealsRow = {
   /** Unguessable slug for the public /share/[token] page. Null until the
    *  owner shares the deal for the first time. */
   share_token: string | null;
+  /** live = default project grid / Discover; archived = soft-hidden after substitute. */
+  inventory_status: DealInventoryStatus;
+  archived_at: string | null;
+  archived_by_scout_run_id: string | null;
   hud_fmr: unknown;
   last_refreshed_at: string;
   created_at: string;
@@ -216,6 +224,8 @@ export type ScoutRunsRow = {
   project_id: string;
   triggered_by: string | null;
   trigger_kind: string;
+  /** append | substitute; null on legacy runs. */
+  mode: ScoutMode | null;
   started_at: string;
   finished_at: string | null;
   candidates_seen: number | null;

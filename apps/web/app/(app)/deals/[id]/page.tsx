@@ -5,7 +5,11 @@ import { DealDetailClient } from "@/components/deal-detail-client";
 import { getDeal } from "@/lib/deals";
 import { getProfile } from "@/lib/profile";
 import { getProject } from "@/lib/projects";
-import { getPublicProfile, publicDisplayName } from "@/lib/social";
+import {
+  getPublicProfile,
+  isFollowingUser,
+  publicDisplayName,
+} from "@/lib/social";
 import { getCachedMarketStrIntel } from "@/lib/str-intel";
 import { createClient } from "@/lib/supabase/server";
 
@@ -54,7 +58,12 @@ export default async function DealDetailPage({
     data: { user },
   } = await supabase.auth.getUser();
   const isOwner = Boolean(user && user.id === project.owner_id);
-  const ownerProfile = await getPublicProfile(supabase, project.owner_id);
+  const [ownerProfile, initialFollowing] = await Promise.all([
+    getPublicProfile(supabase, project.owner_id),
+    user && !isOwner
+      ? isFollowingUser(supabase, user.id, project.owner_id)
+      : Promise.resolve(false),
+  ]);
   const ownerDisplayName = ownerProfile
     ? publicDisplayName(ownerProfile)
     : null;
@@ -87,6 +96,7 @@ export default async function DealDetailPage({
         isOwner={isOwner}
         subscriptionTier={profile?.subscription_tier ?? "free"}
         ownerDisplayName={ownerDisplayName}
+        initialFollowing={initialFollowing}
       />
     </div>
   );

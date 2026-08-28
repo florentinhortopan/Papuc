@@ -54,6 +54,7 @@ export default async function InvestorProfilePage({
         "id, primary_image_url, photos, address, city, state, price, last_refreshed_at, project_id, source, source_property_id, deal_scores(score, monthly_cashflow)",
       )
       .in("project_id", projectIds)
+      .eq("inventory_status", "live")
       .order("last_refreshed_at", { ascending: false })
       .limit(24);
     recentDeals = (data ?? []) as typeof recentDeals;

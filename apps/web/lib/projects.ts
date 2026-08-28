@@ -58,6 +58,7 @@ export async function listProjectsWithPreviews(
     .from("deals")
     .select("project_id, primary_image_url, photos, last_refreshed_at")
     .in("project_id", ids)
+    .eq("inventory_status", "live")
     .order("last_refreshed_at", { ascending: false });
   if (error) throw error;
 

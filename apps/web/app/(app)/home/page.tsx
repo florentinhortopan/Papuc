@@ -5,6 +5,7 @@ import {
   listPersonalizedFeed,
   type PersonalizedFeed,
 } from "@/lib/feed";
+import { errorMessage } from "@/lib/error-message";
 import { listProjects } from "@/lib/projects";
 import { createClient } from "@/lib/supabase/server";
 
@@ -20,31 +21,41 @@ const EMPTY: PersonalizedFeed = {
   skipped: [],
   friends: [],
   taste: null,
+  socialError: null,
 };
 
 export default async function HomeFeedPage() {
   const supabase = await createClient();
   let feed: PersonalizedFeed = EMPTY;
   let projectCount = 0;
+  let loadError: string | null = null;
   try {
     const {
       data: { user },
     } = await supabase.auth.getUser();
     if (user) {
-      const [feedResult, projects] = await Promise.all([
-        listPersonalizedFeed(supabase, user.id),
-        listProjects(supabase),
-      ]);
-      feed = feedResult;
-      projectCount = projects.length;
+      try {
+        feed = await listPersonalizedFeed(supabase, user.id);
+      } catch (err) {
+        loadError = errorMessage(err);
+      }
+      try {
+        projectCount = (await listProjects(supabase)).length;
+      } catch {
+        /* project count is advisory; don't blank Discover for it */
+      }
     }
-  } catch {
-    /* client can refresh; avoid hard-failing the shell */
+  } catch (err) {
+    loadError = loadError ?? errorMessage(err);
   }
 
   return (
     <Suspense fallback={<p className="text-textMuted text-sm">Loading…</p>}>
-      <FeedHomeClient initialFeed={feed} projectCount={projectCount} />
+      <FeedHomeClient
+        initialFeed={feed}
+        projectCount={projectCount}
+        initialLoadError={loadError}
+      />
     </Suspense>
   );
 }

@@ -32,7 +32,7 @@ export function SignInForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(() =>
     params.get("error") === "auth_callback_failed"
-      ? "Google sign-in could not finish. Ask an admin to allow this site’s /auth/callback URL in Supabase Auth (www and non-www are different)."
+      ? "Google sign-in could not finish. In Supabase → Authentication → URL Configuration, add this host’s /auth/callback (and the Vercel preview pattern https://*-florentin-hortopans-projects.vercel.app/**). Otherwise Supabase bounces you to production."
       : null,
   );
 

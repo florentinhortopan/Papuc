@@ -30,15 +30,21 @@ function pickAction(row: DealRowWithJoins): DealActionKind | null {
   return arr[0]?.action ?? null;
 }
 
-export async function listDeals(projectId: string): Promise<DealWithScore[]> {
-  const { data, error } = await supabase
+export async function listDeals(
+  projectId: string,
+  opts?: { shelf?: "live" | "archived" | "all" },
+): Promise<DealWithScore[]> {
+  const shelf = opts?.shelf ?? "live";
+  let query = supabase
     .from("deals")
-    .select(
-      "*, deal_scores(*), deal_actions(action)",
-    )
+    .select("*, deal_scores(*), deal_actions(action)")
     .eq("project_id", projectId)
     .order("created_at", { ascending: false })
-    .limit(100);
+    .limit(shelf === "all" ? 300 : 100);
+  if (shelf === "live" || shelf === "archived") {
+    query = query.eq("inventory_status", shelf);
+  }
+  const { data, error } = await query;
   if (error) throw error;
   const rows = (data ?? []) as unknown as DealRowWithJoins[];
   return rows.map((r) => ({
@@ -86,11 +92,17 @@ export async function clearDealAction(input: {
   );
 }
 
-export async function scoutProject(projectId: string): Promise<{
+export async function scoutProject(
+  projectId: string,
+  opts?: { mode?: "append" | "substitute" },
+): Promise<{
   candidatesSeen: number;
   dealsAdded: number;
   dealsScored: number;
 }> {
-  return apiFetch(`/api/projects/${projectId}/scout`, { method: "POST" });
+  return apiFetch(`/api/projects/${projectId}/scout`, {
+    method: "POST",
+    body: JSON.stringify({ mode: opts?.mode ?? "append" }),
+  });
 }
 

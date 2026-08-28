@@ -40,3 +40,4 @@ secrets.txt
 
 .vercel
 .env*.local
+.env*
