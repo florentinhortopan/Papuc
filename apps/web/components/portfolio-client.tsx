@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ExternalLink,
   MapPin,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -12,6 +13,7 @@ import { useState } from "react";
 import { CashflowBadge } from "@/components/cashflow-badge";
 import { DscrBadge } from "@/components/dscr-badge";
 import { Button } from "@/components/ui/button";
+import { deleteDealAction } from "@/lib/deal-actions-client";
 import { dealStreetAddress } from "@/lib/deal-address";
 import type { DealWithPortfolioMetrics } from "@/lib/deals";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
@@ -23,18 +25,66 @@ export function PortfolioClient({
 }: {
   initialDeals: DealWithPortfolioMetrics[];
 }) {
+  const [deals, setDeals] = useState(initialDeals);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [comparing, setComparing] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removingBulk, setRemovingBulk] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   function toggle(id: string) {
     setSelectedIds((s) =>
-      s.includes(id) ? s.filter((x) => x !== id) : s.length >= 3 ? s : [...s, id],
+      s.includes(id) ? s.filter((x) => x !== id) : [...s, id],
     );
   }
 
-  const selectedDeals = initialDeals.filter((d) => selectedIds.includes(d.id));
+  const selectedDeals = deals.filter((d) => selectedIds.includes(d.id));
+  const canCompare = selectedIds.length >= 2 && selectedIds.length <= 3;
 
-  if (initialDeals.length === 0) {
+  async function removeOne(dealId: string) {
+    setRemovingId(dealId);
+    setError(null);
+    setNote(null);
+    try {
+      // Unsave only — deletes the user's `deal_actions` row (`saved`).
+      // Never deletes `deals` or changes inventory_status (live/archived).
+      await deleteDealAction(dealId, "saved");
+      setDeals((prev) => prev.filter((d) => d.id !== dealId));
+      setSelectedIds((s) => s.filter((id) => id !== dealId));
+      setNote("Removed from portfolio.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
+  async function removeSelected() {
+    if (selectedIds.length === 0) return;
+    const ids = [...selectedIds];
+    setRemovingBulk(true);
+    setError(null);
+    setNote(null);
+    try {
+      // Same as removeOne: clears `saved` actions only, not scout inventory.
+      await Promise.all(ids.map((id) => deleteDealAction(id, "saved")));
+      const removed = new Set(ids);
+      setDeals((prev) => prev.filter((d) => !removed.has(d.id)));
+      setSelectedIds([]);
+      setNote(
+        ids.length === 1
+          ? "Removed from portfolio."
+          : `Removed ${ids.length} deals from portfolio.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRemovingBulk(false);
+    }
+  }
+
+  if (deals.length === 0) {
     return (
       <div className="bg-surface border border-border rounded-2xl p-10 text-center">
         <p className="text-textMuted">
@@ -44,7 +94,7 @@ export function PortfolioClient({
     );
   }
 
-  if (comparing && selectedDeals.length >= 2) {
+  if (comparing && selectedDeals.length >= 2 && selectedDeals.length <= 3) {
     return (
       <ComparePane
         deals={selectedDeals}
@@ -55,24 +105,45 @@ export function PortfolioClient({
 
   return (
     <div>
+      {note ? (
+        <p className="text-textMuted text-xs mb-3">{note}</p>
+      ) : null}
+      {error ? (
+        <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 mb-3">
+          <p className="text-danger text-xs">{error}</p>
+        </div>
+      ) : null}
+
       {selectedIds.length >= 1 ? (
         <div className="mb-4 sticky top-0 z-10 -mx-1 px-1 py-2 bg-background/95 backdrop-blur-sm border-b border-border/60">
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
             <Button
               onClick={() => setComparing(true)}
-              disabled={selectedIds.length < 2}
+              disabled={!canCompare}
               className="shrink-0"
             >
-              {selectedIds.length >= 2
+              {canCompare
                 ? `Compare ${selectedIds.length} deals`
                 : "Compare"}
             </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => void removeSelected()}
+              loading={removingBulk}
+              disabled={removingId != null}
+              className="shrink-0"
+            >
+              {selectedIds.length === 1
+                ? "Remove from portfolio"
+                : `Remove ${selectedIds.length} from portfolio`}
+            </Button>
             <p className="text-textMuted text-sm leading-snug">
               {selectedIds.length === 1
-                ? "1 selected — tap another deal to compare side by side (up to 3)."
-                : selectedIds.length >= 3
-                  ? "3 selected (max). Open compare when you’re ready."
-                  : `${selectedIds.length} selected — open compare, or pick one more (up to 3).`}
+                ? "1 selected — pick more to compare (2–3) or remove."
+                : selectedIds.length > 3
+                  ? `${selectedIds.length} selected — remove any number, or deselect down to 2–3 to compare.`
+                  : `${selectedIds.length} selected — compare or remove.`}
             </p>
             <button
               type="button"
@@ -85,13 +156,13 @@ export function PortfolioClient({
         </div>
       ) : (
         <p className="text-textMuted text-sm mb-4">
-          Tap the checkmark on a deal to select it, then add at least one more to
-          compare.
+          Tap the checkmark to select deals for compare (2–3) or bulk remove.
+          Or remove a deal with the button on each card.
         </p>
       )}
 
       <div className="grid gap-3">
-        {initialDeals.map((deal) => {
+        {deals.map((deal) => {
           const selected = selectedIds.includes(deal.id);
           const photo =
             deal.primary_image_url ??
@@ -120,7 +191,9 @@ export function PortfolioClient({
                 type="button"
                 onClick={() => toggle(deal.id)}
                 aria-pressed={selected}
-                aria-label={selected ? "Deselect deal" : "Select deal for compare"}
+                aria-label={
+                  selected ? "Deselect deal" : "Select deal for compare or remove"
+                }
                 className="flex items-start sm:items-center gap-3 flex-1 min-w-0 text-left"
               >
                 <span
@@ -238,6 +311,17 @@ export function PortfolioClient({
                     </a>
                   </Button>
                 ) : null}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="w-full justify-between px-3 font-medium text-danger border-danger/35 hover:bg-danger/10 hover:text-danger hover:border-danger/50"
+                  loading={removingId === deal.id}
+                  disabled={removingBulk || (removingId != null && removingId !== deal.id)}
+                  onClick={() => void removeOne(deal.id)}
+                >
+                  Remove
+                  <Trash2 className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                </Button>
               </div>
             </div>
           );

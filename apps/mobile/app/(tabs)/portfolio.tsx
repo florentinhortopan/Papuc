@@ -1,6 +1,7 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
+  Alert,
   FlatList,
   Image,
   Pressable,
@@ -13,7 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Button } from "@/components/Button";
 import { Card } from "@/components/Card";
 import { DSCRBadge } from "@/components/DSCRBadge";
-import type { DealWithScore } from "@/lib/deals";
+import { clearDealAction, type DealWithScore } from "@/lib/deals";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
 import { listSavedDeals } from "@/lib/portfolio";
 
@@ -24,6 +25,7 @@ export default function Portfolio() {
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [comparing, setComparing] = useState(false);
+  const [removing, setRemoving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,13 +47,49 @@ export default function Portfolio() {
 
   function toggleSelect(id: string) {
     setSelectedIds((s) =>
-      s.includes(id) ? s.filter((x) => x !== id) : s.length >= 3 ? s : [...s, id],
+      s.includes(id) ? s.filter((x) => x !== id) : [...s, id],
     );
   }
 
   const selectedDeals = deals.filter((d) => selectedIds.includes(d.id));
+  const canCompare = selectedIds.length >= 2 && selectedIds.length <= 3;
 
-  if (comparing && selectedDeals.length >= 2) {
+  async function removeIds(ids: string[]) {
+    if (ids.length === 0) return;
+    setRemoving(true);
+    setError(null);
+    try {
+      // Unsave only — clears `deal_actions.saved`. Does not delete scouted
+      // deals or change live/archived inventory on the project.
+      await Promise.all(
+        ids.map((id) => clearDealAction({ dealId: id, action: "saved" })),
+      );
+      const removed = new Set(ids);
+      setDeals((prev) => prev.filter((d) => !removed.has(d.id)));
+      setSelectedIds((s) => s.filter((id) => !removed.has(id)));
+    } catch (err: any) {
+      setError(err?.message ?? String(err));
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  function confirmRemove(ids: string[]) {
+    const label =
+      ids.length === 1
+        ? "Remove this deal from your portfolio?"
+        : `Remove ${ids.length} deals from your portfolio?`;
+    Alert.alert("Remove from portfolio", label, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: () => void removeIds(ids),
+      },
+    ]);
+  }
+
+  if (comparing && selectedDeals.length >= 2 && selectedDeals.length <= 3) {
     return (
       <ComparePane
         deals={selectedDeals}
@@ -65,7 +103,7 @@ export default function Portfolio() {
       <View className="px-6 pt-4 pb-2">
         <Text className="text-text text-3xl font-bold">Portfolio</Text>
         <Text className="text-textMuted text-sm mt-1">
-          Saved deals. Tap to select 2-3 and compare side-by-side.
+          Saved deals. Select to compare (2–3) or remove. Long-press to open.
         </Text>
       </View>
 
@@ -75,12 +113,35 @@ export default function Portfolio() {
         </View>
       ) : null}
 
-      {selectedIds.length >= 2 ? (
-        <View className="px-4 pb-2">
-          <Button
-            label={`Compare ${selectedIds.length} deals`}
-            onPress={() => setComparing(true)}
-          />
+      {selectedIds.length >= 1 ? (
+        <View className="px-4 pb-2 gap-2">
+          {canCompare ? (
+            <Button
+              label={`Compare ${selectedIds.length} deals`}
+              onPress={() => setComparing(true)}
+            />
+          ) : null}
+          <Pressable
+            onPress={() => confirmRemove(selectedIds)}
+            disabled={removing}
+            className={`rounded-xl border border-danger/40 py-3 items-center ${
+              removing ? "opacity-50" : "active:opacity-80"
+            }`}
+          >
+            <Text className="text-danger font-semibold">
+              {removing
+                ? "Removing…"
+                : selectedIds.length === 1
+                  ? "Remove from portfolio"
+                  : `Remove ${selectedIds.length} from portfolio`}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setSelectedIds([])}
+            className="items-center py-1"
+          >
+            <Text className="text-textMuted text-xs">Clear selection</Text>
+          </Pressable>
         </View>
       ) : null}
 
@@ -106,16 +167,24 @@ export default function Portfolio() {
             item.primary_image_url ??
             (Array.isArray(item.photos) ? (item.photos as string[])[0] : undefined);
           return (
-            <Pressable
-              onPress={() => toggleSelect(item.id)}
-              onLongPress={() =>
-                router.push({ pathname: "/(tabs)/deals/[id]", params: { id: item.id } })
-              }
-              className={`bg-surface border ${selected ? "border-primary" : "border-border"} rounded-2xl p-3 active:opacity-90`}
+            <View
+              className={`bg-surface border ${selected ? "border-primary" : "border-border"} rounded-2xl p-3 flex-row gap-2`}
             >
-              <View className="flex-row gap-3 items-center">
+              <Pressable
+                onPress={() => toggleSelect(item.id)}
+                onLongPress={() =>
+                  router.push({
+                    pathname: "/(tabs)/deals/[id]",
+                    params: { id: item.id },
+                  })
+                }
+                className="flex-1 flex-row gap-3 items-center active:opacity-90"
+              >
                 {photo ? (
-                  <Image source={{ uri: photo }} style={{ width: 72, height: 72, borderRadius: 8 }} />
+                  <Image
+                    source={{ uri: photo }}
+                    style={{ width: 72, height: 72, borderRadius: 8 }}
+                  />
                 ) : (
                   <View className="w-[72px] h-[72px] bg-surfaceAlt rounded-lg" />
                 )}
@@ -127,7 +196,9 @@ export default function Portfolio() {
                     {[
                       item.beds ? `${item.beds} bd` : null,
                       item.baths ? `${item.baths} ba` : null,
-                      item.sqft ? `${Math.round(Number(item.sqft))} sqft` : null,
+                      item.sqft
+                        ? `${Math.round(Number(item.sqft))} sqft`
+                        : null,
                     ]
                       .filter(Boolean)
                       .join(" · ")}
@@ -138,14 +209,22 @@ export default function Portfolio() {
                     </Text>
                     <DSCRBadge dscr={item.score?.dscr ?? null} />
                   </View>
-                </View>
-                <View className="ml-1">
-                  <Text className="text-textMuted text-xs">
+                  <Text className="text-textMuted text-xs mt-1">
                     {selected ? "Selected" : "Tap to select"}
                   </Text>
                 </View>
-              </View>
-            </Pressable>
+              </Pressable>
+              <Pressable
+                onPress={() => confirmRemove([item.id])}
+                disabled={removing}
+                hitSlop={8}
+                className="px-2 py-2 self-center"
+              >
+                <Text className="text-danger text-xs font-semibold">
+                  Remove
+                </Text>
+              </Pressable>
+            </View>
           );
         }}
       />

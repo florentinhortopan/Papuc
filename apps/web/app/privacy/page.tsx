@@ -1,3 +1,12 @@
+import type { Metadata } from "next";
+
+import { PAGE_DESCRIPTIONS } from "@/lib/site-meta";
+
+export const metadata: Metadata = {
+  title: "Privacy",
+  description: PAGE_DESCRIPTIONS.privacy,
+};
+
 export default function PrivacyPage() {
   return (
     <main className="mx-auto max-w-2xl px-6 py-16 text-zinc-200">
@@ -5,7 +14,8 @@ export default function PrivacyPage() {
       <p className="mt-4 text-sm text-zinc-400">Last updated: August 23, 2026</p>
       <div className="mt-8 space-y-4 text-sm leading-relaxed text-zinc-300">
         <p>
-          Papuc (“we”) helps you scout investment real estate. We collect account
+          Papuc (“we”) helps you evaluate investment real estate with deal
+          scenarios and collaborate with investor friends. We collect account
           information (email), project preferences you enter, listing data we
           fetch from third-party providers on your behalf, and optional device
           push tokens so we can notify you about new high-score deals.

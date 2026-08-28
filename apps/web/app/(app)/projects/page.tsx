@@ -1,13 +1,20 @@
+import type { Metadata } from "next";
+
 import { ProjectsPageClient } from "@/components/projects-page-client";
 import {
   listProjectsWithPreviews,
   type ProjectListItem,
 } from "@/lib/projects";
 import { getProfile } from "@/lib/profile";
+import { PAGE_DESCRIPTIONS } from "@/lib/site-meta";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+export const metadata: Metadata = {
+  title: "Projects",
+  description: PAGE_DESCRIPTIONS.projects,
+};
 export default async function ProjectsPage({
   searchParams,
 }: {

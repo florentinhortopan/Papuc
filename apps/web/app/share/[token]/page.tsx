@@ -211,7 +211,7 @@ export async function generateMetadata({
     deal.beds != null ? `${deal.beds} bd` : null,
     deal.baths != null ? `${deal.baths} ba` : null,
     `DSCR ${formatDscr(dscr)}`,
-    "Underwritten on Papuc",
+    "Deal scenario shared on Papuc",
   ]
     .filter(Boolean)
     .join(" · ");

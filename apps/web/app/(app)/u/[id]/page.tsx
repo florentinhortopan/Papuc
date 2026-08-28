@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { FollowButton } from "@/components/follow-button";
@@ -13,6 +14,22 @@ import {
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const supabase = await createClient();
+  const profile = await getInvestorProfile(supabase, id, null);
+  if (!profile) return { title: "Investor" };
+  const name = publicDisplayName(profile);
+  return {
+    title: name,
+    description: `${name} on Papuc — projects and social investing with investor friends.`,
+  };
+}
 
 export default async function InvestorProfilePage({
   params,

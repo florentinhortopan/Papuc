@@ -1,7 +1,13 @@
+import type { Metadata } from "next";
+
 import { Button } from "@/components/ui/button";
 import { LENDERS } from "@/lib/lenders";
+import { PAGE_DESCRIPTIONS } from "@/lib/site-meta";
 
-export const metadata = { title: "DSCR lenders — Papuc" };
+export const metadata: Metadata = {
+  title: "DSCR lenders",
+  description: PAGE_DESCRIPTIONS.lenders,
+};
 
 export default function LendersPage() {
   return (
