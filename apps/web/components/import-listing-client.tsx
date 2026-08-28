@@ -26,10 +26,16 @@ export function ImportListingClient({
   projects,
   initialUrl = "",
   initialProjectId = "",
+  lockProject = false,
+  compact = false,
 }: {
   projects: ProjectRow[];
   initialUrl?: string;
   initialProjectId?: string;
+  /** When true, project select is hidden and initialProjectId is used. */
+  lockProject?: boolean;
+  /** Tighter layout for sheet / panel embedding. */
+  compact?: boolean;
 }) {
   const router = useRouter();
   const [url, setUrl] = useState(initialUrl);
@@ -59,6 +65,7 @@ export function ImportListingClient({
         throw new Error(body.error ?? `Import failed (${res.status})`);
       }
       setResult(body);
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -68,7 +75,12 @@ export function ImportListingClient({
 
   if (projects.length === 0) {
     return (
-      <div className="bg-surface border border-border rounded-2xl p-6 max-w-lg">
+      <div
+        className={cn(
+          "bg-surface border border-border rounded-2xl p-6",
+          !compact && "max-w-lg",
+        )}
+      >
         <p className="text-text text-sm font-semibold mb-2">Create a project first</p>
         <p className="text-textMuted text-sm mb-4 leading-6">
           Imports attach the listing to one of your projects so underwriting
@@ -81,9 +93,21 @@ export function ImportListingClient({
     );
   }
 
+  const lockedName =
+    lockProject && projectId
+      ? projects.find((p) => p.id === projectId)?.name
+      : null;
+
   return (
-    <div className="max-w-lg space-y-4">
-      <div className="bg-surface border border-border rounded-2xl p-4 space-y-3">
+    <div className={cn("space-y-4", !compact && "max-w-lg")}>
+      <div
+        className={cn(
+          "space-y-3",
+          compact
+            ? ""
+            : "bg-surface border border-border rounded-2xl p-4",
+        )}
+      >
         <Textarea
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -95,20 +119,29 @@ export function ImportListingClient({
           We resolve via Zillow (HasData) — never fetch arbitrary sites.
         </p>
 
-        <div>
-          <label className="text-textMuted text-xs">Add to project</label>
-          <select
-            value={projectId}
-            onChange={(e) => setProjectId(e.target.value)}
-            className="mt-1 w-full bg-surface border border-border rounded-xl px-3 py-2 text-sm"
-          >
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        {lockProject ? (
+          lockedName ? (
+            <p className="text-textMuted text-xs">
+              Adding to{" "}
+              <span className="text-text font-medium">{lockedName}</span>
+            </p>
+          ) : null
+        ) : (
+          <div>
+            <label className="text-textMuted text-xs">Add to project</label>
+            <select
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              className="mt-1 w-full bg-surface border border-border rounded-xl px-3 py-2 text-sm"
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {error ? (
           <div className="bg-danger/10 border border-danger/30 rounded-xl p-3">
@@ -129,7 +162,7 @@ export function ImportListingClient({
       {result ? (
         <div
           className={cn(
-            "bg-surface border rounded-2xl p-4 space-y-3",
+            "bg-surfaceAlt border rounded-2xl p-4 space-y-3",
             "border-primary/40",
           )}
         >
@@ -140,13 +173,13 @@ export function ImportListingClient({
             {result.address ?? "Address pending"}
           </p>
           <div className="flex flex-wrap gap-2 text-xs">
-            <span className="rounded-lg border border-border bg-surfaceAlt px-2 py-1">
+            <span className="rounded-lg border border-border bg-surface px-2 py-1">
               Score {result.score}
             </span>
-            <span className="rounded-lg border border-border bg-surfaceAlt px-2 py-1">
+            <span className="rounded-lg border border-border bg-surface px-2 py-1">
               DSCR {formatDscr(result.dscr)}
             </span>
-            <span className="rounded-lg border border-border bg-surfaceAlt px-2 py-1">
+            <span className="rounded-lg border border-border bg-surface px-2 py-1">
               {result.monthlyCashflow >= 0 ? "+" : ""}
               {formatMoney(result.monthlyCashflow)}/mo
             </span>
@@ -158,9 +191,11 @@ export function ImportListingClient({
             >
               Open deal
             </Button>
-            <Button asChild variant="secondary" className="flex-1">
-              <Link href={`/projects/${result.projectId}`}>Project</Link>
-            </Button>
+            {!lockProject ? (
+              <Button asChild variant="secondary" className="flex-1">
+                <Link href={`/projects/${result.projectId}`}>Project</Link>
+              </Button>
+            ) : null}
           </div>
         </div>
       ) : null}

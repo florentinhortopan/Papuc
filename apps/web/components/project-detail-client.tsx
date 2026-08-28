@@ -18,6 +18,7 @@ import {
   isAnyFilterActive,
   type DealFilters,
 } from "@/components/deal-filters-bar";
+import { ImportListingPanel } from "@/components/import-listing-panel";
 import { NightlyScoutToggle } from "@/components/nightly-scout-toggle";
 import { PublicFeedToggle } from "@/components/public-feed-toggle";
 import { WatchProjectButton } from "@/components/watch-project-button";
@@ -614,6 +615,14 @@ export function ProjectDetailClient({
                   ? "Scouted recently"
                   : "Scout deals"}
             </Button>
+            <ImportListingPanel
+              projects={[project]}
+              initialProjectId={project.id}
+              lockProject
+              triggerLabel="Import listing"
+              triggerVariant="secondary"
+              triggerClassName="flex-1 sm:flex-none"
+            />
             {scoutFresh && !scouting ? (
               <button
                 type="button"
@@ -768,8 +777,8 @@ export function ProjectDetailClient({
             </>
           ) : (
             <p className="text-textMuted text-sm">
-              No deals yet. Click "Scout deals" to find listings that match
-              your goals.
+              No deals yet. Click &quot;Scout deals&quot; to find matches, or
+              &quot;Import listing&quot; to paste a URL or address.
             </p>
           )}
         </div>
