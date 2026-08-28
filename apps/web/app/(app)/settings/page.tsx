@@ -1,9 +1,15 @@
+import type { Metadata } from "next";
+
 import { SettingsClient } from "@/components/settings-client";
 import { isAdminEmail } from "@/lib/admin";
 import { getProfile } from "@/lib/profile";
+import { PAGE_DESCRIPTIONS } from "@/lib/site-meta";
 import { createClient } from "@/lib/supabase/server";
 
-export const metadata = { title: "Settings — Papuc" };
+export const metadata: Metadata = {
+  title: "Settings",
+  description: PAGE_DESCRIPTIONS.settings,
+};
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {

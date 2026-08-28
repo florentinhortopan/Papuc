@@ -64,7 +64,7 @@ export async function generateMetadata({
     market,
     c.priceMax ? `≤ ${formatMoney(c.priceMax)}` : null,
     `DSCR ≥ ${c.minDSCR.toFixed(2)}`,
-    "AI deal scout project on Papuc",
+    "Public scout project — collaborate on scenario-ranked deals",
   ]
     .filter(Boolean)
     .join(" · ");

@@ -1,8 +1,13 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 
 import { NewProjectForm } from "@/components/new-project-form";
+import { PAGE_DESCRIPTIONS } from "@/lib/site-meta";
 
-export const metadata = { title: "New project — Papuc" };
+export const metadata: Metadata = {
+  title: "New project",
+  description: PAGE_DESCRIPTIONS.projectsNew,
+};
 
 export default function NewProjectPage() {
   return (

@@ -1,9 +1,16 @@
+import type { Metadata } from "next";
+
 import { PortfolioClient } from "@/components/portfolio-client";
 import { listSavedDeals } from "@/lib/deals";
+import { PAGE_DESCRIPTIONS } from "@/lib/site-meta";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+export const metadata: Metadata = {
+  title: "Portfolio",
+  description: PAGE_DESCRIPTIONS.portfolio,
+};
 export default async function PortfolioPage() {
   const supabase = await createClient();
   const deals = await listSavedDeals(supabase).catch(() => []);

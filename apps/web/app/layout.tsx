@@ -1,21 +1,17 @@
 import type { Metadata } from "next";
 
-import { getSiteUrl } from "@/lib/site-url";
+import {
+  buildRootMetadata,
+  faqPageJsonLd,
+  jsonLdScriptProps,
+  organizationJsonLd,
+  softwareApplicationJsonLd,
+  websiteJsonLd,
+} from "@/lib/site-meta";
 
 import "./globals.css";
 
-const site = getSiteUrl();
-
-export const metadata: Metadata = {
-  metadataBase: new URL(site),
-  title: "Papuc — DSCR Deal Scout",
-  description:
-    "Describe a rental investment goal in plain English. Papuc scouts MLS, runs a full pro-forma, and ranks DSCR-loan-friendly deals.",
-  openGraph: {
-    siteName: "Papuc",
-    type: "website",
-  },
-};
+export const metadata: Metadata = buildRootMetadata();
 
 export default function RootLayout({
   children,
@@ -24,6 +20,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
+      <head>
+        <script {...jsonLdScriptProps(organizationJsonLd())} />
+        <script {...jsonLdScriptProps(websiteJsonLd())} />
+        <script {...jsonLdScriptProps(softwareApplicationJsonLd())} />
+        <script {...jsonLdScriptProps(faqPageJsonLd())} />
+      </head>
       <body className="bg-background text-text font-sans antialiased min-h-screen">
         {children}
       </body>

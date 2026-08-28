@@ -1,3 +1,12 @@
+import type { Metadata } from "next";
+
+import { PAGE_DESCRIPTIONS, SITE_FAQ } from "@/lib/site-meta";
+
+export const metadata: Metadata = {
+  title: "Support",
+  description: PAGE_DESCRIPTIONS.support,
+};
+
 export default function SupportPage() {
   return (
     <main className="mx-auto max-w-2xl px-6 py-16 text-zinc-200">
@@ -17,6 +26,18 @@ export default function SupportPage() {
         For App Store / account deletion requests, include the email on your
         Papuc account.
       </p>
+
+      <section className="mt-12 space-y-6">
+        <h2 className="text-xl font-semibold text-white">FAQ</h2>
+        {SITE_FAQ.map((item) => (
+          <div key={item.question}>
+            <h3 className="text-sm font-semibold text-white">{item.question}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-zinc-300">
+              {item.answer}
+            </p>
+          </div>
+        ))}
+      </section>
     </main>
   );
 }

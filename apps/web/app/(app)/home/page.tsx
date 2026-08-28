@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import type { Metadata } from "next";
 
 import { FeedHomeClient } from "@/components/feed-home-client";
 import {
@@ -7,10 +8,15 @@ import {
 } from "@/lib/feed";
 import { errorMessage } from "@/lib/error-message";
 import { listProjects } from "@/lib/projects";
+import { PAGE_DESCRIPTIONS } from "@/lib/site-meta";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+export const metadata: Metadata = {
+  title: "Discover",
+  description: PAGE_DESCRIPTIONS.home,
+};
 const EMPTY: PersonalizedFeed = {
   forYou: [],
   newForYou: [],

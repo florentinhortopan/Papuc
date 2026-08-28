@@ -1,8 +1,13 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 
 import { SignInForm } from "@/components/sign-in-form";
+import { PAGE_DESCRIPTIONS, SITE_TAGLINE } from "@/lib/site-meta";
 
-export const metadata = { title: "Sign in — Papuc" };
+export const metadata: Metadata = {
+  title: "Sign in",
+  description: PAGE_DESCRIPTIONS.signIn,
+};
 
 export default function SignInPage() {
   return (
@@ -10,8 +15,10 @@ export default function SignInPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <h1 className="text-4xl font-bold mb-2">Papuc</h1>
-          <p className="text-textMuted text-sm">
-            DSCR-loan rental deals on autopilot.
+          <p className="text-textMuted text-sm">{SITE_TAGLINE}</p>
+          <p className="text-textMuted text-xs mt-2 leading-5">
+            Evaluate rentals with deal scenarios. Collaborate with investor
+            friends.
           </p>
         </div>
 
@@ -26,8 +33,8 @@ export default function SignInPage() {
         </div>
 
         <p className="text-textMuted text-[11px] text-center mt-6 leading-5">
-          DSCR estimates shown in the app are investor underwriting estimates,
-          not lender quotes.
+          Deal scenarios on Papuc are evaluation estimates, not lender quotes.
+          Always verify with a licensed DSCR lender before offering.
         </p>
       </div>
     </main>
