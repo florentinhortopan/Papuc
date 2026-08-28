@@ -1,6 +1,11 @@
 /**
  * Nightly scout digest — light, email-client-safe HTML (tables + inline CSS).
- * Design tokens from Stitch Papuc digest + UX Pro newsletter palette.
+ *
+ * Apple Mail / iOS Mail inherit `align="center"` from the outer wrapper onto
+ * nested tables. Without explicit `align="left"` + `text-align:left` on content
+ * cells (and `width:100%` on nested tables), those blocks shrink-wrap and sit
+ * in the right half of the card — the broken digest layout after the photo
+ * redesign.
  */
 
 import {
@@ -77,7 +82,7 @@ export function safeHttpsImageUrl(url: string | null | undefined): string | null
 
 function metricCell(label: string, value: string, emphasize = false): string {
   const valueColor = emphasize ? "#7C5CFF" : "#1A1A1A";
-  return `<td width="33%" valign="top" style="padding:0 4px;text-align:center;">
+  return `<td width="33%" align="center" valign="top" style="padding:0 4px;text-align:center;">
   <div style="font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:#64748B;line-height:16px;margin:0 0 4px;">${label}</div>
   <div style="font-size:18px;font-weight:700;color:${valueColor};line-height:24px;">${escapeHtml(value)}</div>
 </td>`;
@@ -98,21 +103,21 @@ function dealCardHtml(d: DigestDeal, origin: string): string {
     ? `<img src="${escapeHtml(img)}" width="552" alt="${escapeHtml(label)}" style="display:block;width:100%;max-width:552px;height:auto;border:0;border-radius:4px 4px 0 0;" />`
     : `<div style="background:#F1F5F9;color:#64748B;font-size:13px;text-align:center;padding:48px 16px;border-radius:4px 4px 0 0;">No photo</div>`;
 
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;border:1px solid #E2E8F0;border-radius:4px;overflow:hidden;background:#FFFFFF;">
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 24px;border-collapse:collapse;border:1px solid #E2E8F0;border-radius:4px;background:#FFFFFF;">
   <tr>
-    <td style="padding:0;line-height:0;font-size:0;">
-      <a href="${href}" style="text-decoration:none;">${media}</a>
+    <td align="left" style="padding:0;line-height:0;font-size:0;text-align:left;">
+      <a href="${href}" style="text-decoration:none;display:block;">${media}</a>
     </td>
   </tr>
   <tr>
-    <td style="padding:16px 20px 20px;">
+    <td align="left" style="padding:16px 20px 20px;text-align:left;">
       <a href="${href}" style="color:#7C5CFF;font-size:16px;font-weight:600;line-height:24px;text-decoration:none;">${escapeHtml(label)}</a>
       ${
         place
-          ? `<div style="color:#64748B;font-size:13px;line-height:20px;margin:4px 0 12px;">${escapeHtml(place)}</div>`
+          ? `<div style="color:#64748B;font-size:13px;line-height:20px;margin:4px 0 12px;text-align:left;">${escapeHtml(place)}</div>`
           : `<div style="margin:0 0 12px;"></div>`
       }
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 16px;border-collapse:collapse;">
         <tr>
           ${metricCell("Score", score, true)}
           ${metricCell("DSCR", dscr)}
@@ -152,19 +157,19 @@ export function buildScoutDigestContent(input: ScoutDigestInput): {
         .join("");
       const more =
         p.deals.length > 5
-          ? `<p style="color:#64748B;font-size:13px;line-height:20px;margin:0 0 8px;">+${p.deals.length - 5} more on this project</p>`
+          ? `<p style="color:#64748B;font-size:13px;line-height:20px;margin:0 0 8px;text-align:left;">+${p.deals.length - 5} more on this project</p>`
           : "";
-      return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 32px;">
+      return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:0 0 32px;border-collapse:collapse;">
   <tr>
-    <td style="padding:0 0 12px;border-bottom:3px solid #001F3F;">
+    <td align="left" style="padding:0 0 12px;border-bottom:3px solid #001F3F;text-align:left;">
       <a href="${origin}/projects/${p.projectId}" style="color:#001F3F;font-size:16px;font-weight:600;line-height:24px;text-decoration:none;">${escapeHtml(p.projectName)}</a>
     </td>
   </tr>
   <tr>
-    <td style="padding:16px 0 0;">
+    <td align="left" style="padding:16px 0 0;text-align:left;">
       ${cards}
       ${more}
-      <p style="margin:8px 0 0;">
+      <p style="margin:8px 0 0;text-align:left;">
         <a href="${origin}/projects/${p.projectId}" style="color:#7C5CFF;font-size:13px;font-weight:600;text-decoration:none;">Open project →</a>
       </p>
     </td>
@@ -176,43 +181,44 @@ export function buildScoutDigestContent(input: ScoutDigestInput): {
   const hostPath = `${origin.replace(/^https?:\/\//, "")}/projects`;
 
   const html = `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light" />
   <meta name="supported-color-schemes" content="light" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>${escapeHtml(subject)}</title>
 </head>
-<body style="margin:0;padding:0;background:#FCF9F8;font-family:${FONT};">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FCF9F8;">
+<body style="margin:0;padding:0;background:#FCF9F8;font-family:${FONT};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FCF9F8;width:100%;border-collapse:collapse;">
     <tr>
       <td align="center" style="padding:32px 16px;">
-        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:4px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:4px;border-collapse:collapse;margin:0 auto;">
           <tr>
-            <td style="padding:24px 24px 8px;">
-              <div style="font-size:24px;font-weight:700;line-height:32px;letter-spacing:-0.02em;color:#001F3F;margin:0;">Papuc</div>
-              <div style="font-size:13px;line-height:20px;color:#64748B;margin:4px 0 0;">Nightly scout digest</div>
+            <td align="left" style="padding:24px 24px 8px;text-align:left;">
+              <div style="font-size:24px;font-weight:700;line-height:32px;letter-spacing:-0.02em;color:#001F3F;margin:0;text-align:left;">Papuc</div>
+              <div style="font-size:13px;line-height:20px;color:#64748B;margin:4px 0 0;text-align:left;">Nightly scout digest</div>
             </td>
           </tr>
           <tr>
-            <td style="padding:16px 24px 8px;font-size:15px;line-height:24px;color:#1A1A1A;">
+            <td align="left" style="padding:16px 24px 8px;font-size:15px;line-height:24px;color:#1A1A1A;text-align:left;">
               ${escapeHtml(greeting)}
             </td>
           </tr>
           <tr>
-            <td style="padding:0 24px 24px;font-size:15px;line-height:24px;color:#1A1A1A;">
+            <td align="left" style="padding:0 24px 24px;font-size:15px;line-height:24px;color:#1A1A1A;text-align:left;">
               Your overnight scout found <strong>${totalDeals}</strong> new
               deal${totalDeals === 1 ? "" : "s"} (score ≥ ${minScore}).
             </td>
           </tr>
           <tr>
-            <td style="padding:0 24px 8px;">
+            <td align="left" style="padding:0 24px 8px;text-align:left;">
               ${projectBlocksHtml}
             </td>
           </tr>
           <tr>
-            <td style="padding:16px 24px 28px;font-size:12px;line-height:18px;color:#64748B;">
+            <td align="left" style="padding:16px 24px 28px;font-size:12px;line-height:18px;color:#64748B;text-align:left;">
               You're receiving this because Nightly scout is on for these projects.
               Manage projects at
               <a href="${origin}/projects" style="color:#7C5CFF;text-decoration:none;">${escapeHtml(hostPath)}</a>.
