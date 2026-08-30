@@ -72,11 +72,12 @@ function rankByScore(deals: DealWithScore[]): DealWithScore[] {
 
 type DealStatusChip = "all" | "saved" | "skipped";
 
-const STATUS_CHIPS: Array<{ id: DealStatusChip; label: string }> = [
-  { id: "all", label: "All" },
-  { id: "saved", label: "Saved" },
-  { id: "skipped", label: "Skipped" },
-];
+/** Saved / Skipped only — default "all" when neither is selected (avoids a second All chip). */
+const STATUS_CHIPS: Array<{ id: Exclude<DealStatusChip, "all">; label: string }> =
+  [
+    { id: "saved", label: "Saved" },
+    { id: "skipped", label: "Skipped" },
+  ];
 
 function dealsForStatusChip(
   deals: DealWithScore[],
@@ -652,7 +653,9 @@ export function ProjectDetailClient({
         </div>
       ) : (
         <div className="flex items-start gap-1 min-w-0">
-          <h1 className="text-3xl font-bold min-w-0 break-words">{name}</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold min-w-0 break-words">
+            {name}
+          </h1>
           {isOwner ? (
             <button
               type="button"
@@ -671,150 +674,510 @@ export function ProjectDetailClient({
           )}
         </div>
       )}
-      <p className="text-textMuted text-sm mt-1">{marketLabel}</p>
+      <p className="text-textMuted text-sm mt-1">
+        {marketLabel}
+        {c.strategy ? ` · ${c.strategy}` : ""}
+      </p>
 
-      {isOwner && isPro ? (
-        <Collapsible
-          open={constraintsOpen}
-          onOpenChange={setConstraintsOpen}
-          className="bg-surface border border-border rounded-2xl mt-4 mb-4"
-        >
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="flex w-full items-center justify-between gap-3 p-4 text-left"
+      <div className="mt-4 lg:grid lg:grid-cols-[minmax(340px,400px)_minmax(0,1fr)] lg:gap-6 lg:items-start">
+        {/* Control panel: sticky on desktop, stacked above deals on mobile */}
+        <aside className="bg-surface border border-border rounded-2xl p-4 lg:p-5 space-y-4 mb-6 lg:mb-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-5.5rem)] lg:overflow-y-auto">
+          {isOwner ? (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-textMuted">
+                Project
+              </p>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <NightlyScoutToggle
+                  projectId={project.id}
+                  enabled={nightlyEnabled}
+                  onEnabledChange={setNightlyEnabled}
+                  subscriptionTier={subscriptionTier}
+                  compact
+                />
+                <PublicFeedToggle
+                  projectId={project.id}
+                  enabled={isPublic}
+                  onEnabledChange={setIsPublic}
+                  compact
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {isOwner && isPro ? (
+            <Collapsible
+              open={constraintsOpen}
+              onOpenChange={setConstraintsOpen}
+              className="rounded-xl border border-border bg-surfaceAlt/40"
             >
-              <div className="min-w-0">
-                <p className="text-textMuted text-xs mb-2">Search constraints</p>
-                <div className="flex flex-wrap gap-2">
-                  <Badge>{constraintsDraft.strategy}</Badge>
-                  {constraintsDraft.propertyTypes
-                    .filter((t) => t !== "any")
-                    .slice(0, 3)
-                    .map((t) => (
-                      <Badge key={t}>{PROPERTY_TYPE_LABELS[t]}</Badge>
-                    ))}
-                  {constraintsDraft.priceMax ? (
-                    <Badge>≤ {formatMoney(constraintsDraft.priceMax)}</Badge>
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left"
+                >
+                  <div className="min-w-0 flex flex-wrap items-center gap-2">
+                    <Badge className="text-sm px-2.5 py-1">
+                      {constraintsDraft.strategy}
+                    </Badge>
+                    {constraintsDraft.propertyTypes
+                      .filter((t) => t !== "any")
+                      .slice(0, 3)
+                      .map((t) => (
+                        <Badge key={t} className="text-sm px-2.5 py-1">
+                          {PROPERTY_TYPE_LABELS[t]}
+                        </Badge>
+                      ))}
+                    {constraintsDraft.priceMax ? (
+                      <Badge className="text-sm px-2.5 py-1">
+                        ≤ {formatMoney(constraintsDraft.priceMax)}
+                      </Badge>
+                    ) : null}
+                    {constraintsDraft.bedsMin ? (
+                      <Badge className="text-sm px-2.5 py-1">
+                        ≥ {constraintsDraft.bedsMin} bd
+                      </Badge>
+                    ) : null}
+                    <Badge className="text-sm px-2.5 py-1">
+                      DSCR ≥ {constraintsDraft.minDSCR.toFixed(2)}
+                    </Badge>
+                    {lastScoutAt ? (
+                      <span className="text-textMuted text-xs">
+                        Last scout {formatDate(lastScoutAt)}
+                        {scoutedAgo ? ` · ${scoutedAgo}` : ""}
+                      </span>
+                    ) : null}
+                  </div>
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 shrink-0 text-textMuted transition-transform",
+                      constraintsOpen && "rotate-180",
+                    )}
+                  />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="border-t border-border px-3.5 pb-3.5 pt-2">
+                  <ConstraintReview
+                    name={name}
+                    setName={setName}
+                    constraints={constraintsDraft}
+                    setConstraints={setConstraintsDraft}
+                    showName={false}
+                    showFooter={false}
+                    compact
+                    title="Edit search"
+                    subtitle="All fields from your parsed request. Save, then append or substitute deals."
+                    error={null}
+                  />
+                  {constraintsNote ? (
+                    <p className="text-textMuted text-xs mt-2">
+                      {constraintsNote}
+                    </p>
                   ) : null}
-                  {constraintsDraft.bedsMin ? (
-                    <Badge>≥ {constraintsDraft.bedsMin} bd</Badge>
-                  ) : null}
-                  <Badge>DSCR ≥ {constraintsDraft.minDSCR.toFixed(2)}</Badge>
+                  <div className="flex flex-col gap-2 mt-4">
+                    <Button
+                      variant="secondary"
+                      onClick={() => void saveConstraints()}
+                      loading={savingConstraints}
+                      disabled={scouting}
+                    >
+                      Save constraints
+                    </Button>
+                    <Button
+                      onClick={() => void saveConstraintsAndScout("append")}
+                      loading={scouting}
+                      disabled={savingConstraints}
+                    >
+                      Scout: Append
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => void saveConstraintsAndScout("substitute")}
+                      loading={scouting}
+                      disabled={savingConstraints}
+                    >
+                      Scout: Substitute
+                    </Button>
+                  </div>
+                  <p className="text-textMuted text-xs mt-2 leading-5">
+                    Append adds new matches and keeps live deals. Substitute
+                    moves current live deals to Archived (still searchable),
+                    then scouts a fresh live set.
+                  </p>
                 </div>
+              </CollapsibleContent>
+            </Collapsible>
+          ) : (
+            <div className="rounded-xl border border-border bg-surfaceAlt/40 px-3.5 py-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge className="text-sm px-2.5 py-1">{c.strategy}</Badge>
+                {c.propertyTypes
+                  .filter((t) => t !== "any")
+                  .map((t) => (
+                    <Badge key={t} className="text-sm px-2.5 py-1">
+                      {PROPERTY_TYPE_LABELS[t]}
+                    </Badge>
+                  ))}
+                {c.priceMax ? (
+                  <Badge className="text-sm px-2.5 py-1">
+                    ≤ {formatMoney(c.priceMax)}
+                  </Badge>
+                ) : null}
+                {c.bedsMin ? (
+                  <Badge className="text-sm px-2.5 py-1">
+                    ≥ {c.bedsMin} bd
+                  </Badge>
+                ) : null}
+                {c.bedsMax ? (
+                  <Badge className="text-sm px-2.5 py-1">
+                    ≤ {c.bedsMax} bd
+                  </Badge>
+                ) : null}
+                {c.bathsMin ? (
+                  <Badge className="text-sm px-2.5 py-1">
+                    ≥ {c.bathsMin} ba
+                  </Badge>
+                ) : null}
+                {c.sqftMin ? (
+                  <Badge className="text-sm px-2.5 py-1">
+                    ≥ {c.sqftMin} sqft
+                  </Badge>
+                ) : null}
+                {c.lotSizeMinSqft ? (
+                  <Badge className="text-sm px-2.5 py-1">
+                    ≥ {Math.round((c.lotSizeMinSqft / 43_560) * 100) / 100} ac
+                  </Badge>
+                ) : null}
+                {c.yearBuiltMin ? (
+                  <Badge className="text-sm px-2.5 py-1">
+                    Built ≥ {c.yearBuiltMin}
+                  </Badge>
+                ) : null}
+                {c.daysOnMarketMax ? (
+                  <Badge className="text-sm px-2.5 py-1">
+                    Listed ≤ {c.daysOnMarketMax}
+                  </Badge>
+                ) : null}
+                {c.downPayment ? (
+                  <Badge className="text-sm px-2.5 py-1">
+                    Down {formatMoney(c.downPayment)}
+                  </Badge>
+                ) : null}
+                {c.targetMonthlyCashflow ? (
+                  <Badge className="text-sm px-2.5 py-1">
+                    {formatMoney(c.targetMonthlyCashflow)}/mo
+                  </Badge>
+                ) : null}
+                <Badge className="text-sm px-2.5 py-1">
+                  DSCR ≥ {c.minDSCR.toFixed(2)}
+                </Badge>
+                <Badge className="text-sm px-2.5 py-1">
+                  {(c.mortgage.rateAPR * 100).toFixed(2)}% APR
+                </Badge>
                 {lastScoutAt ? (
-                  <p className="text-textMuted text-xs mt-3">
+                  <span className="text-textMuted text-xs">
                     Last scout {formatDate(lastScoutAt)}
                     {scoutedAgo ? ` · ${scoutedAgo}` : ""}
-                  </p>
+                  </span>
                 ) : null}
               </div>
-              <ChevronDown
-                className={cn(
-                  "h-5 w-5 shrink-0 text-textMuted transition-transform",
-                  constraintsOpen && "rotate-180",
-                )}
-              />
-            </button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="border-t border-border px-4 pb-4 pt-2">
-              <ConstraintReview
-                name={name}
-                setName={setName}
-                constraints={constraintsDraft}
-                setConstraints={setConstraintsDraft}
-                showName={false}
-                showFooter={false}
-                compact
-                title="Edit search"
-                subtitle="All fields from your parsed request. Save, then append or substitute deals."
-                error={null}
-              />
-              {constraintsNote ? (
-                <p className="text-textMuted text-xs mt-2">{constraintsNote}</p>
+              {isOwner && !isPro ? (
+                <ProLockedPanel
+                  title="Edit search & substitute"
+                  description="Pro unlocks the full constraints editor and Substitute re-scout (archive live deals, keep them searchable)."
+                  feature="Edit project constraints and substitute inventory"
+                />
               ) : null}
-              <div className="flex flex-col sm:flex-row flex-wrap gap-2 mt-4">
+            </div>
+          )}
+
+          {isOwner ? (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
-                  variant="secondary"
-                  onClick={() => void saveConstraints()}
-                  loading={savingConstraints}
-                  disabled={scouting}
-                >
-                  Save constraints
-                </Button>
-                <Button
-                  onClick={() => void saveConstraintsAndScout("append")}
+                  onClick={() => void runScout("append")}
                   loading={scouting}
-                  disabled={savingConstraints}
+                  disabled={scoutFresh && !scouting}
+                  className="shrink-0"
+                  title={
+                    scoutFresh
+                      ? "Scouted in the last 24 hours — use Scout anyway if you changed filters"
+                      : undefined
+                  }
                 >
-                  Scout: Append
+                  {scouting
+                    ? "Scouting…"
+                    : scoutFresh
+                      ? "Scouted recently"
+                      : isPro
+                        ? "Scout: Append"
+                        : "Scout deals"}
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void saveConstraintsAndScout("substitute")}
-                  loading={scouting}
-                  disabled={savingConstraints}
-                >
-                  Scout: Substitute
-                </Button>
+                <ImportListingPanel
+                  projects={[project]}
+                  initialProjectId={project.id}
+                  lockProject
+                  triggerLabel="Import listing"
+                  triggerVariant="secondary"
+                  triggerClassName="shrink-0"
+                />
+                {scoutFresh && !scouting ? (
+                  <button
+                    type="button"
+                    className="text-xs text-textMuted hover:underline"
+                    onClick={() => void runScout("append")}
+                  >
+                    Scout anyway
+                  </button>
+                ) : null}
               </div>
-              <p className="text-textMuted text-[11px] mt-2 leading-5">
-                Append adds new matches and keeps live deals. Substitute moves
-                current live deals to Archived (still searchable), then scouts a
-                fresh live set.
+              {scoutFresh && !scouting ? (
+                <p className="text-textMuted text-xs leading-4">
+                  Prefers last-day listings. Nightly Pro catch-up runs overnight
+                  {nightlyEnabled && subscriptionTier === "pro"
+                    ? " for this project"
+                    : ""}
+                  .
+                </p>
+              ) : null}
+              {scoutStatus ? (
+                <p className="text-textMuted text-xs">{scoutStatus}</p>
+              ) : null}
+              {error ? (
+                <div className="bg-danger/10 border border-danger/30 rounded-xl p-3">
+                  <p className="text-danger text-xs">{error}</p>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {ownerDisplayName ? (
+                <p className="text-textMuted text-xs">
+                  Scout by{" "}
+                  <a
+                    href={`/u/${project.owner_id}`}
+                    className="text-primary hover:underline"
+                  >
+                    {ownerDisplayName}
+                  </a>
+                </p>
+              ) : (
+                <p className="text-textMuted text-xs">
+                  Scout by{" "}
+                  <a
+                    href={`/u/${project.owner_id}`}
+                    className="text-primary hover:underline"
+                  >
+                    investor
+                  </a>
+                </p>
+              )}
+              {project.is_public ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <FollowButton
+                    userId={project.owner_id}
+                    initialFollowing={initialFollowing}
+                  />
+                  <WatchProjectButton
+                    projectId={project.id}
+                    initialWatching={initialWatching}
+                    watcherCount={watcherCount}
+                  />
+                </div>
+              ) : null}
+              <p className="text-textMuted text-xs">
+                Browse mode — Follow the investor or Watch this scout to fill
+                Friends.
               </p>
             </div>
-          </CollapsibleContent>
-        </Collapsible>
-      ) : (
-        <div className="bg-surface border border-border rounded-2xl p-4 mt-4 mb-4 space-y-3">
-          <p className="text-textMuted text-xs mb-2">Constraints</p>
-          <div className="flex flex-wrap gap-2">
-            <Badge>{c.strategy}</Badge>
-            {c.propertyTypes
-              .filter((t) => t !== "any")
-              .map((t) => (
-                <Badge key={t}>{PROPERTY_TYPE_LABELS[t]}</Badge>
-              ))}
-            {c.priceMax ? <Badge>≤ {formatMoney(c.priceMax)}</Badge> : null}
-            {c.bedsMin ? <Badge>≥ {c.bedsMin} bd</Badge> : null}
-            {c.bedsMax ? <Badge>≤ {c.bedsMax} bd</Badge> : null}
-            {c.bathsMin ? <Badge>≥ {c.bathsMin} ba</Badge> : null}
-            {c.sqftMin ? <Badge>≥ {c.sqftMin} sqft</Badge> : null}
-            {c.lotSizeMinSqft ? (
-              <Badge>
-                ≥ {Math.round((c.lotSizeMinSqft / 43_560) * 100) / 100} ac
-              </Badge>
-            ) : null}
-            {c.yearBuiltMin ? <Badge>Built ≥ {c.yearBuiltMin}</Badge> : null}
-            {c.daysOnMarketMax ? (
-              <Badge>Listed ≤ {c.daysOnMarketMax}</Badge>
-            ) : null}
-            {c.downPayment ? (
-              <Badge>Down {formatMoney(c.downPayment)}</Badge>
-            ) : null}
-            {c.targetMonthlyCashflow ? (
-              <Badge>{formatMoney(c.targetMonthlyCashflow)}/mo</Badge>
-            ) : null}
-            <Badge>DSCR ≥ {c.minDSCR.toFixed(2)}</Badge>
-            <Badge>{(c.mortgage.rateAPR * 100).toFixed(2)}% APR</Badge>
-          </div>
-          {lastScoutAt ? (
-            <p className="text-textMuted text-xs mt-3">
-              Last scout {formatDate(lastScoutAt)}
-              {scoutedAgo ? ` · ${scoutedAgo}` : ""}
-            </p>
+          )}
+
+          {/* Shelf + status on one wrapping line; no second "All" chip */}
+          {(isOwner || deals.length > 0) && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-border">
+              {isOwner
+                ? SHELF_CHIPS.map((chip) => (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      onClick={() => {
+                        setShelf(chip.id);
+                        setActionNote(null);
+                      }}
+                      className={cn(
+                        "rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
+                        shelf === chip.id
+                          ? "border-primary bg-primary/15 text-primary"
+                          : "border-border bg-surfaceAlt text-textMuted hover:text-text",
+                      )}
+                    >
+                      {chip.label}
+                      <span className="ml-1.5 tabular-nums opacity-70">
+                        {shelfCounts[chip.id]}
+                      </span>
+                    </button>
+                  ))
+                : null}
+              {deals.length > 0
+                ? STATUS_CHIPS.map((chip) => (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      onClick={() => {
+                        setStatusChip((prev) =>
+                          prev === chip.id ? "all" : chip.id,
+                        );
+                        setActionNote(null);
+                      }}
+                      className={cn(
+                        "rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
+                        statusChip === chip.id
+                          ? "border-primary bg-primary/15 text-primary"
+                          : "border-border bg-surfaceAlt text-textMuted hover:text-text",
+                      )}
+                    >
+                      {chip.label}
+                      <span className="ml-1.5 tabular-nums opacity-70">
+                        {statusCounts[chip.id]}
+                      </span>
+                    </button>
+                  ))
+                : null}
+            </div>
+          )}
+
+          {deals.length > 0 ? (
+            <div className="pt-1 border-t border-border">
+              <DealFiltersBar
+                deals={statusPool}
+                filters={filters}
+                onChange={(next) => {
+                  setFilters(next);
+                  setFilterSavedNote(null);
+                }}
+                shownCount={visibleDeals.length}
+                onSaveToProject={
+                  isOwner ? () => void saveFiltersToProject() : undefined
+                }
+                saving={savingFilters}
+                savedNote={filterSavedNote}
+                layout="rail"
+              />
+            </div>
           ) : null}
-          {isOwner && !isPro ? (
-            <ProLockedPanel
-              title="Edit search & substitute"
-              description="Pro unlocks the full constraints editor and Substitute re-scout (archive live deals, keep them searchable)."
-              feature="Edit project constraints and substitute inventory"
-            />
+        </aside>
+
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold mb-3">
+            Deals{" "}
+            {deals.length
+              ? visibleDeals.length !== statusPool.length ||
+                statusPool.length !== deals.length
+                ? `(${visibleDeals.length} of ${deals.length})`
+                : `(${deals.length})`
+              : ""}
+          </h2>
+          {actionNote ? (
+            <p className="text-textMuted text-xs mb-3">{actionNote}</p>
           ) : null}
+          {!isOwner && error ? (
+            <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 mb-3">
+              <p className="text-danger text-xs">{error}</p>
+            </div>
+          ) : null}
+          {deals.length > 0 && deals.every((d) => !d.price) ? (
+            <div className="bg-surface border border-border rounded-xl p-3 mb-3">
+              <p className="text-textMuted text-xs leading-5">
+                <span className="text-text font-semibold">
+                  Off-market data only.
+                </span>{" "}
+                None of these candidates are currently listed on MLS —
+                you&apos;re seeing property records ranked by AVM-based DSCR
+                fit. Active for-sale data requires upgrading RealEstateAPI from
+                pay-as-you-go to Starter, or switching providers.
+              </p>
+            </div>
+          ) : null}
+          {deals.length === 0 ? (
+            <div className="bg-surface border border-border rounded-2xl p-6 text-center">
+              {loadFailed || lastScoutAt ? (
+                <>
+                  <p className="text-textMuted text-sm">
+                    {loadFailed
+                      ? "Couldn't load your scouted deals — they're still saved, this is just a connection hiccup. No need to re-scout."
+                      : "This project has scouted before and deals never expire, so if you expected results here, refresh instead of re-scouting. (An empty grid is also normal when the last scout matched nothing.)"}
+                  </p>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => void refreshDeals()}
+                  >
+                    Refresh deals
+                  </Button>
+                </>
+              ) : (
+                <p className="text-textMuted text-sm">
+                  No deals yet. Click &quot;Scout deals&quot; to find matches, or
+                  &quot;Import listing&quot; to paste a URL or address.
+                </p>
+              )}
+            </div>
+          ) : statusPool.length === 0 ? (
+            <div className="bg-surface border border-border rounded-2xl p-6 text-center">
+              <p className="text-textMuted text-sm">
+                {statusChip === "saved"
+                  ? "No saved deals yet — tap the heart on a listing."
+                  : statusChip === "skipped"
+                    ? "No skipped deals yet."
+                    : "No deals in this view."}
+              </p>
+            </div>
+          ) : visibleDeals.length === 0 && isAnyFilterActive(filters) ? (
+            <div className="bg-surface border border-border rounded-2xl p-6 text-center">
+              <p className="text-textMuted text-sm">
+                No deals match the current filters ({statusPool.length} hidden).
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-3"
+                onClick={() =>
+                  setFilters({ ...DEFAULT_DEAL_FILTERS, sort: filters.sort })
+                }
+              >
+                Clear filters
+              </Button>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {visibleDeals.map((deal) => {
+                const isSkipped = statusChip === "skipped";
+                const isSaved = deal.action === "saved";
+                return (
+                  <DealCard
+                    key={deal.id}
+                    deal={deal}
+                    strategy={project.constraints.strategy}
+                    busy={busyId === deal.id}
+                    saved={isSaved}
+                    onSave={
+                      isSkipped
+                        ? undefined
+                        : () => void (isSaved ? onUnsave(deal) : onSave(deal))
+                    }
+                    onSkip={() =>
+                      void (isSkipped ? onUnskip(deal) : onSkip(deal))
+                    }
+                    skipLabel={isSkipped ? "Restore" : undefined}
+                  />
+                );
+              })}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       <Dialog open={substituteOpen} onOpenChange={setSubstituteOpen}>
         <DialogContent>
@@ -842,293 +1205,6 @@ export function ProjectDetailClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {isOwner ? (
-        <>
-          <div className="mb-3 space-y-2">
-            <NightlyScoutToggle
-              projectId={project.id}
-              enabled={nightlyEnabled}
-              onEnabledChange={setNightlyEnabled}
-              subscriptionTier={subscriptionTier}
-            />
-            <PublicFeedToggle
-              projectId={project.id}
-              enabled={isPublic}
-              onEnabledChange={setIsPublic}
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              onClick={() => void runScout("append")}
-              loading={scouting}
-              disabled={scoutFresh && !scouting}
-              className="flex-1 sm:flex-none"
-              title={
-                scoutFresh
-                  ? "Scouted in the last 24 hours — use Scout anyway if you changed filters"
-                  : undefined
-              }
-            >
-              {scouting
-                ? "Scouting…"
-                : scoutFresh
-                  ? "Scouted recently"
-                  : isPro
-                    ? "Scout: Append"
-                    : "Scout deals"}
-            </Button>
-            <ImportListingPanel
-              projects={[project]}
-              initialProjectId={project.id}
-              lockProject
-              triggerLabel="Import listing"
-              triggerVariant="secondary"
-              triggerClassName="flex-1 sm:flex-none"
-            />
-            {scoutFresh && !scouting ? (
-              <button
-                type="button"
-                className="text-xs text-textMuted hover:underline"
-                onClick={() => void runScout("append")}
-              >
-                Scout anyway
-              </button>
-            ) : null}
-          </div>
-          {scoutFresh && !scouting ? (
-            <p className="text-textMuted text-xs mt-2 leading-5">
-              Scouted recently — the search already prefers listings from the
-              last day. Nightly Pro catch-up runs overnight
-              {nightlyEnabled && subscriptionTier === "pro"
-                ? " for this project"
-                : ""}
-              , or use Scout anyway if you changed filters.
-            </p>
-          ) : null}
-          {scoutStatus ? (
-            <p className="text-textMuted text-xs mt-2">{scoutStatus}</p>
-          ) : null}
-          {error ? (
-            <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 mt-3">
-              <p className="text-danger text-xs">{error}</p>
-            </div>
-          ) : null}
-        </>
-      ) : (
-        <div className="mb-4 space-y-3">
-          {ownerDisplayName ? (
-            <p className="text-textMuted text-xs">
-              Scout by{" "}
-              <a
-                href={`/u/${project.owner_id}`}
-                className="text-primary hover:underline"
-              >
-                {ownerDisplayName}
-              </a>
-            </p>
-          ) : (
-            <p className="text-textMuted text-xs">
-              Scout by{" "}
-              <a
-                href={`/u/${project.owner_id}`}
-                className="text-primary hover:underline"
-              >
-                investor
-              </a>
-            </p>
-          )}
-          {project.is_public ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <FollowButton
-                userId={project.owner_id}
-                initialFollowing={initialFollowing}
-              />
-              <WatchProjectButton
-                projectId={project.id}
-                initialWatching={initialWatching}
-                watcherCount={watcherCount}
-              />
-            </div>
-          ) : null}
-          <p className="text-textMuted text-xs">
-            Browse mode — Follow the investor or Watch this scout to fill Friends.
-          </p>
-        </div>
-      )}
-
-      <h2 className="text-lg font-semibold mt-8 mb-3">
-        Deals{" "}
-        {deals.length
-          ? visibleDeals.length !== statusPool.length ||
-            statusPool.length !== deals.length
-            ? `(${visibleDeals.length} of ${deals.length})`
-            : `(${deals.length})`
-          : ""}
-      </h2>
-      {isOwner ? (
-        <div className="flex gap-2 overflow-x-auto pb-3 mb-1 -mx-1 px-1 scrollbar-none">
-          {SHELF_CHIPS.map((chip) => (
-            <button
-              key={chip.id}
-              type="button"
-              onClick={() => {
-                setShelf(chip.id);
-                setActionNote(null);
-              }}
-              className={cn(
-                "shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
-                shelf === chip.id
-                  ? "border-primary bg-primary/15 text-primary"
-                  : "border-border bg-surface text-textMuted hover:text-text",
-              )}
-            >
-              {chip.label}
-              <span className="ml-1.5 tabular-nums opacity-70">
-                {shelfCounts[chip.id]}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {deals.length > 0 ? (
-        <div className="flex gap-2 overflow-x-auto pb-3 mb-1 -mx-1 px-1 scrollbar-none">
-          {STATUS_CHIPS.map((chip) => (
-            <button
-              key={chip.id}
-              type="button"
-              onClick={() => {
-                setStatusChip(chip.id);
-                setActionNote(null);
-              }}
-              className={cn(
-                "shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors",
-                statusChip === chip.id
-                  ? "border-primary bg-primary/15 text-primary"
-                  : "border-border bg-surface text-textMuted hover:text-text",
-              )}
-            >
-              {chip.label}
-              <span className="ml-1.5 tabular-nums opacity-70">
-                {statusCounts[chip.id]}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {actionNote ? (
-        <p className="text-textMuted text-xs mb-3">{actionNote}</p>
-      ) : null}
-      {!isOwner && error ? (
-        <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 mb-3">
-          <p className="text-danger text-xs">{error}</p>
-        </div>
-      ) : null}
-      {deals.length > 0 ? (
-        <DealFiltersBar
-          deals={statusPool}
-          filters={filters}
-          onChange={(next) => {
-            setFilters(next);
-            setFilterSavedNote(null);
-          }}
-          shownCount={visibleDeals.length}
-          onSaveToProject={
-            isOwner ? () => void saveFiltersToProject() : undefined
-          }
-          saving={savingFilters}
-          savedNote={filterSavedNote}
-        />
-      ) : null}
-      {deals.length > 0 && deals.every((d) => !d.price) ? (
-        <div className="bg-surface border border-border rounded-xl p-3 mb-3">
-          <p className="text-textMuted text-xs leading-5">
-            <span className="text-text font-semibold">Off-market data only.</span>{" "}
-            None of these candidates are currently listed on MLS — you're seeing
-            property records ranked by AVM-based DSCR fit. Active for-sale data
-            requires upgrading RealEstateAPI from pay-as-you-go to Starter, or
-            switching providers.
-          </p>
-        </div>
-      ) : null}
-      {deals.length === 0 ? (
-        <div className="bg-surface border border-border rounded-2xl p-6 text-center">
-          {loadFailed || lastScoutAt ? (
-            <>
-              <p className="text-textMuted text-sm">
-                {loadFailed
-                  ? "Couldn't load your scouted deals — they're still saved, this is just a connection hiccup. No need to re-scout."
-                  : "This project has scouted before and deals never expire, so if you expected results here, refresh instead of re-scouting. (An empty grid is also normal when the last scout matched nothing.)"}
-              </p>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="mt-3"
-                onClick={() => void refreshDeals()}
-              >
-                Refresh deals
-              </Button>
-            </>
-          ) : (
-            <p className="text-textMuted text-sm">
-              No deals yet. Click &quot;Scout deals&quot; to find matches, or
-              &quot;Import listing&quot; to paste a URL or address.
-            </p>
-          )}
-        </div>
-      ) : statusPool.length === 0 ? (
-        <div className="bg-surface border border-border rounded-2xl p-6 text-center">
-          <p className="text-textMuted text-sm">
-            {statusChip === "saved"
-              ? "No saved deals yet — tap the heart on a listing."
-              : statusChip === "skipped"
-                ? "No skipped deals yet."
-                : "No deals in this view."}
-          </p>
-        </div>
-      ) : visibleDeals.length === 0 && isAnyFilterActive(filters) ? (
-        <div className="bg-surface border border-border rounded-2xl p-6 text-center">
-          <p className="text-textMuted text-sm">
-            No deals match the current filters ({statusPool.length} hidden).
-          </p>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="mt-3"
-            onClick={() =>
-              setFilters({ ...DEFAULT_DEAL_FILTERS, sort: filters.sort })
-            }
-          >
-            Clear filters
-          </Button>
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {visibleDeals.map((deal) => {
-            const isSkipped = statusChip === "skipped";
-            const isSaved = deal.action === "saved";
-            return (
-              <DealCard
-                key={deal.id}
-                deal={deal}
-                strategy={project.constraints.strategy}
-                busy={busyId === deal.id}
-                saved={isSaved}
-                onSave={
-                  isSkipped
-                    ? undefined
-                    : () => void (isSaved ? onUnsave(deal) : onSave(deal))
-                }
-                onSkip={() =>
-                  void (isSkipped ? onUnskip(deal) : onSkip(deal))
-                }
-                skipLabel={isSkipped ? "Restore" : undefined}
-              />
-            );
-          })}
-        </div>
-      )}
 
       {isOwner ? (
         <div className="mt-12">
