@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CashflowBadge } from "@/components/cashflow-badge";
 import { CashflowChart } from "@/components/cashflow-chart";
 import { ComparablesPanel } from "@/components/comparables-panel";
+import { DealStickyFooter } from "@/components/deal-sticky-footer";
 import { DscrBadge } from "@/components/dscr-badge";
 import { FinancingFitPanel } from "@/components/financing-fit-panel";
 import { MarketSignalBadges } from "@/components/market-signal-badges";
@@ -923,8 +924,11 @@ export function DealDetailClient({
 
   // Mobile stacks as one column via `contents` + order-*; desktop keeps the
   // two-column layout (media/charts left, editor/actions right).
+  // pb clears the sticky footer (metrics + save/share).
+  const monthlyCashflow = result.annualPreTaxProfit / 12;
+
   return (
-    <div className="mt-2 flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+    <div className="mt-2 flex flex-col gap-6 pb-24 lg:grid lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:pb-28">
       {/* min-w-0: grid items default to min-width:auto and will grow to fit
           the STR matrix table instead of scrolling it horizontally. */}
       <div className="contents lg:flex lg:flex-col lg:gap-6 lg:min-w-0">
@@ -1589,22 +1593,6 @@ export function DealDetailClient({
         <div className="grid grid-cols-2 gap-2 order-[15] lg:order-none">
           {isOwner ? (
             <>
-              {isSaved ? (
-                <Button variant="secondary" onClick={unsave}>
-                  Unsave
-                </Button>
-              ) : (
-                <Button onClick={save} loading={busy === "save"}>
-                  Save
-                </Button>
-              )}
-              <Button
-                variant="secondary"
-                onClick={shareDeal}
-                loading={busy === "share"}
-              >
-                Share
-              </Button>
               <Button
                 variant="secondary"
                 onClick={exportCsv}
@@ -1659,6 +1647,19 @@ export function DealDetailClient({
           )}
         </div>
       </div>
+
+      <DealStickyFooter
+        price={derived.price}
+        monthlyCashflow={monthlyCashflow}
+        downPayment={derived.downPayment}
+        isSaved={isSaved}
+        showActions={isOwner}
+        saveBusy={busy === "save"}
+        shareBusy={busy === "share"}
+        onSave={() => void save()}
+        onUnsave={() => void unsave()}
+        onShare={() => void shareDeal()}
+      />
     </div>
   );
 }

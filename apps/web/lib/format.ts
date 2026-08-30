@@ -14,6 +14,24 @@ export function formatMoney(
   });
 }
 
+/** Compact money for sticky bars / native footers ($229k, $1.2M). */
+export function formatMoneyCompact(
+  n: number | null | undefined,
+): string {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) {
+    const m = abs / 1_000_000;
+    const digits = m >= 10 ? 0 : 1;
+    return `${sign}$${m.toFixed(digits)}M`;
+  }
+  if (abs >= 10_000) {
+    return `${sign}$${Math.round(abs / 1000)}k`;
+  }
+  return formatMoney(n);
+}
+
 export function formatPct(
   n: number | null | undefined,
   fractionDigits = 1,
