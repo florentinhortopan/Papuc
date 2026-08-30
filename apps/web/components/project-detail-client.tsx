@@ -651,42 +651,65 @@ export function ProjectDetailClient({
           </div>
         </div>
       ) : (
-        <div className="flex items-start gap-1 min-w-0">
-          <h1 className="text-3xl font-bold min-w-0 break-words">{name}</h1>
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="flex items-start gap-1 min-w-0 flex-1">
+            <h1 className="text-2xl sm:text-3xl font-bold min-w-0 break-words">
+              {name}
+            </h1>
+            {isOwner ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setNameDraft(name);
+                  setEditingName(true);
+                }}
+                title="Rename project"
+                aria-label="Rename project"
+                className="text-textMuted hover:text-text shrink-0 p-2.5 mt-0.5 rounded-lg hover:bg-surface transition-colors"
+              >
+                ✎
+              </button>
+            ) : (
+              <Badge className="mt-2 shrink-0">Public project</Badge>
+            )}
+          </div>
           {isOwner ? (
-            <button
-              type="button"
-              onClick={() => {
-                setNameDraft(name);
-                setEditingName(true);
-              }}
-              title="Rename project"
-              aria-label="Rename project"
-              className="text-textMuted hover:text-text shrink-0 p-2.5 mt-0.5 rounded-lg hover:bg-surface transition-colors"
-            >
-              ✎
-            </button>
-          ) : (
-            <Badge className="mt-2 shrink-0">Public project</Badge>
-          )}
+            <div className="flex items-center gap-1.5 shrink-0 pt-1">
+              <NightlyScoutToggle
+                projectId={project.id}
+                enabled={nightlyEnabled}
+                onEnabledChange={setNightlyEnabled}
+                subscriptionTier={subscriptionTier}
+                compact
+              />
+              <PublicFeedToggle
+                projectId={project.id}
+                enabled={isPublic}
+                onEnabledChange={setIsPublic}
+                compact
+              />
+            </div>
+          ) : null}
         </div>
       )}
-      <p className="text-textMuted text-sm mt-1">{marketLabel}</p>
+      <p className="text-textMuted text-sm mt-1">
+        {marketLabel}
+        {c.strategy ? ` · ${c.strategy}` : ""}
+      </p>
 
       {isOwner && isPro ? (
         <Collapsible
           open={constraintsOpen}
           onOpenChange={setConstraintsOpen}
-          className="bg-surface border border-border rounded-2xl mt-4 mb-4"
+          className="bg-surface border border-border rounded-xl mt-3 mb-3"
         >
           <CollapsibleTrigger asChild>
             <button
               type="button"
-              className="flex w-full items-center justify-between gap-3 p-4 text-left"
+              className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
             >
               <div className="min-w-0">
-                <p className="text-textMuted text-xs mb-2">Search constraints</p>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <Badge>{constraintsDraft.strategy}</Badge>
                   {constraintsDraft.propertyTypes
                     .filter((t) => t !== "any")
@@ -701,17 +724,17 @@ export function ProjectDetailClient({
                     <Badge>≥ {constraintsDraft.bedsMin} bd</Badge>
                   ) : null}
                   <Badge>DSCR ≥ {constraintsDraft.minDSCR.toFixed(2)}</Badge>
+                  {lastScoutAt ? (
+                    <span className="text-textMuted text-[11px] ml-1">
+                      Last scout {formatDate(lastScoutAt)}
+                      {scoutedAgo ? ` · ${scoutedAgo}` : ""}
+                    </span>
+                  ) : null}
                 </div>
-                {lastScoutAt ? (
-                  <p className="text-textMuted text-xs mt-3">
-                    Last scout {formatDate(lastScoutAt)}
-                    {scoutedAgo ? ` · ${scoutedAgo}` : ""}
-                  </p>
-                ) : null}
               </div>
               <ChevronDown
                 className={cn(
-                  "h-5 w-5 shrink-0 text-textMuted transition-transform",
+                  "h-4 w-4 shrink-0 text-textMuted transition-transform",
                   constraintsOpen && "rotate-180",
                 )}
               />
@@ -768,9 +791,8 @@ export function ProjectDetailClient({
           </CollapsibleContent>
         </Collapsible>
       ) : (
-        <div className="bg-surface border border-border rounded-2xl p-4 mt-4 mb-4 space-y-3">
-          <p className="text-textMuted text-xs mb-2">Constraints</p>
-          <div className="flex flex-wrap gap-2">
+        <div className="bg-surface border border-border rounded-xl px-3 py-2.5 mt-3 mb-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Badge>{c.strategy}</Badge>
             {c.propertyTypes
               .filter((t) => t !== "any")
@@ -799,13 +821,13 @@ export function ProjectDetailClient({
             ) : null}
             <Badge>DSCR ≥ {c.minDSCR.toFixed(2)}</Badge>
             <Badge>{(c.mortgage.rateAPR * 100).toFixed(2)}% APR</Badge>
+            {lastScoutAt ? (
+              <span className="text-textMuted text-[11px] ml-1">
+                Last scout {formatDate(lastScoutAt)}
+                {scoutedAgo ? ` · ${scoutedAgo}` : ""}
+              </span>
+            ) : null}
           </div>
-          {lastScoutAt ? (
-            <p className="text-textMuted text-xs mt-3">
-              Last scout {formatDate(lastScoutAt)}
-              {scoutedAgo ? ` · ${scoutedAgo}` : ""}
-            </p>
-          ) : null}
           {isOwner && !isPro ? (
             <ProLockedPanel
               title="Edit search & substitute"
@@ -845,26 +867,12 @@ export function ProjectDetailClient({
 
       {isOwner ? (
         <>
-          <div className="mb-3 space-y-2">
-            <NightlyScoutToggle
-              projectId={project.id}
-              enabled={nightlyEnabled}
-              onEnabledChange={setNightlyEnabled}
-              subscriptionTier={subscriptionTier}
-            />
-            <PublicFeedToggle
-              projectId={project.id}
-              enabled={isPublic}
-              onEnabledChange={setIsPublic}
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               onClick={() => void runScout("append")}
               loading={scouting}
               disabled={scoutFresh && !scouting}
-              className="flex-1 sm:flex-none"
+              className="shrink-0"
               title={
                 scoutFresh
                   ? "Scouted in the last 24 hours — use Scout anyway if you changed filters"
@@ -885,7 +893,7 @@ export function ProjectDetailClient({
               lockProject
               triggerLabel="Import listing"
               triggerVariant="secondary"
-              triggerClassName="flex-1 sm:flex-none"
+              triggerClassName="shrink-0"
             />
             {scoutFresh && !scouting ? (
               <button
@@ -898,13 +906,12 @@ export function ProjectDetailClient({
             ) : null}
           </div>
           {scoutFresh && !scouting ? (
-            <p className="text-textMuted text-xs mt-2 leading-5">
-              Scouted recently — the search already prefers listings from the
-              last day. Nightly Pro catch-up runs overnight
+            <p className="text-textMuted text-[11px] mt-1.5 leading-4 max-w-xl">
+              Prefers last-day listings. Nightly Pro catch-up runs overnight
               {nightlyEnabled && subscriptionTier === "pro"
                 ? " for this project"
                 : ""}
-              , or use Scout anyway if you changed filters.
+              .
             </p>
           ) : null}
           {scoutStatus ? (
@@ -958,7 +965,7 @@ export function ProjectDetailClient({
         </div>
       )}
 
-      <h2 className="text-lg font-semibold mt-8 mb-3">
+      <h2 className="text-lg font-semibold mt-6 mb-2">
         Deals{" "}
         {deals.length
           ? visibleDeals.length !== statusPool.length ||
@@ -968,7 +975,7 @@ export function ProjectDetailClient({
           : ""}
       </h2>
       {isOwner ? (
-        <div className="flex gap-2 overflow-x-auto pb-3 mb-1 -mx-1 px-1 scrollbar-none">
+        <div className="flex gap-2 overflow-x-auto pb-2 mb-1 -mx-1 px-1 scrollbar-none">
           {SHELF_CHIPS.map((chip) => (
             <button
               key={chip.id}
@@ -993,7 +1000,7 @@ export function ProjectDetailClient({
         </div>
       ) : null}
       {deals.length > 0 ? (
-        <div className="flex gap-2 overflow-x-auto pb-3 mb-1 -mx-1 px-1 scrollbar-none">
+        <div className="flex gap-2 overflow-x-auto pb-2 mb-1 -mx-1 px-1 scrollbar-none">
           {STATUS_CHIPS.map((chip) => (
             <button
               key={chip.id}
@@ -1025,110 +1032,145 @@ export function ProjectDetailClient({
           <p className="text-danger text-xs">{error}</p>
         </div>
       ) : null}
-      {deals.length > 0 ? (
-        <DealFiltersBar
-          deals={statusPool}
-          filters={filters}
-          onChange={(next) => {
-            setFilters(next);
-            setFilterSavedNote(null);
-          }}
-          shownCount={visibleDeals.length}
-          onSaveToProject={
-            isOwner ? () => void saveFiltersToProject() : undefined
-          }
-          saving={savingFilters}
-          savedNote={filterSavedNote}
-        />
-      ) : null}
-      {deals.length > 0 && deals.every((d) => !d.price) ? (
-        <div className="bg-surface border border-border rounded-xl p-3 mb-3">
-          <p className="text-textMuted text-xs leading-5">
-            <span className="text-text font-semibold">Off-market data only.</span>{" "}
-            None of these candidates are currently listed on MLS — you're seeing
-            property records ranked by AVM-based DSCR fit. Active for-sale data
-            requires upgrading RealEstateAPI from pay-as-you-go to Starter, or
-            switching providers.
-          </p>
-        </div>
-      ) : null}
-      {deals.length === 0 ? (
-        <div className="bg-surface border border-border rounded-2xl p-6 text-center">
-          {loadFailed || lastScoutAt ? (
-            <>
+
+      <div
+        className={cn(
+          deals.length > 0 &&
+            "lg:grid lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-5 lg:items-start",
+        )}
+      >
+        <div className="min-w-0">
+          {deals.length > 0 ? (
+            <div className="lg:hidden">
+              <DealFiltersBar
+                deals={statusPool}
+                filters={filters}
+                onChange={(next) => {
+                  setFilters(next);
+                  setFilterSavedNote(null);
+                }}
+                shownCount={visibleDeals.length}
+                onSaveToProject={
+                  isOwner ? () => void saveFiltersToProject() : undefined
+                }
+                saving={savingFilters}
+                savedNote={filterSavedNote}
+                layout="toolbar"
+              />
+            </div>
+          ) : null}
+          {deals.length > 0 && deals.every((d) => !d.price) ? (
+            <div className="bg-surface border border-border rounded-xl p-3 mb-3">
+              <p className="text-textMuted text-xs leading-5">
+                <span className="text-text font-semibold">
+                  Off-market data only.
+                </span>{" "}
+                None of these candidates are currently listed on MLS — you&apos;re
+                seeing property records ranked by AVM-based DSCR fit. Active
+                for-sale data requires upgrading RealEstateAPI from pay-as-you-go
+                to Starter, or switching providers.
+              </p>
+            </div>
+          ) : null}
+          {deals.length === 0 ? (
+            <div className="bg-surface border border-border rounded-2xl p-6 text-center">
+              {loadFailed || lastScoutAt ? (
+                <>
+                  <p className="text-textMuted text-sm">
+                    {loadFailed
+                      ? "Couldn't load your scouted deals — they're still saved, this is just a connection hiccup. No need to re-scout."
+                      : "This project has scouted before and deals never expire, so if you expected results here, refresh instead of re-scouting. (An empty grid is also normal when the last scout matched nothing.)"}
+                  </p>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => void refreshDeals()}
+                  >
+                    Refresh deals
+                  </Button>
+                </>
+              ) : (
+                <p className="text-textMuted text-sm">
+                  No deals yet. Click &quot;Scout deals&quot; to find matches, or
+                  &quot;Import listing&quot; to paste a URL or address.
+                </p>
+              )}
+            </div>
+          ) : statusPool.length === 0 ? (
+            <div className="bg-surface border border-border rounded-2xl p-6 text-center">
               <p className="text-textMuted text-sm">
-                {loadFailed
-                  ? "Couldn't load your scouted deals — they're still saved, this is just a connection hiccup. No need to re-scout."
-                  : "This project has scouted before and deals never expire, so if you expected results here, refresh instead of re-scouting. (An empty grid is also normal when the last scout matched nothing.)"}
+                {statusChip === "saved"
+                  ? "No saved deals yet — tap the heart on a listing."
+                  : statusChip === "skipped"
+                    ? "No skipped deals yet."
+                    : "No deals in this view."}
+              </p>
+            </div>
+          ) : visibleDeals.length === 0 && isAnyFilterActive(filters) ? (
+            <div className="bg-surface border border-border rounded-2xl p-6 text-center">
+              <p className="text-textMuted text-sm">
+                No deals match the current filters ({statusPool.length} hidden).
               </p>
               <Button
                 variant="secondary"
                 size="sm"
                 className="mt-3"
-                onClick={() => void refreshDeals()}
+                onClick={() =>
+                  setFilters({ ...DEFAULT_DEAL_FILTERS, sort: filters.sort })
+                }
               >
-                Refresh deals
+                Clear filters
               </Button>
-            </>
+            </div>
           ) : (
-            <p className="text-textMuted text-sm">
-              No deals yet. Click &quot;Scout deals&quot; to find matches, or
-              &quot;Import listing&quot; to paste a URL or address.
-            </p>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {visibleDeals.map((deal) => {
+                const isSkipped = statusChip === "skipped";
+                const isSaved = deal.action === "saved";
+                return (
+                  <DealCard
+                    key={deal.id}
+                    deal={deal}
+                    strategy={project.constraints.strategy}
+                    busy={busyId === deal.id}
+                    saved={isSaved}
+                    onSave={
+                      isSkipped
+                        ? undefined
+                        : () => void (isSaved ? onUnsave(deal) : onSave(deal))
+                    }
+                    onSkip={() =>
+                      void (isSkipped ? onUnskip(deal) : onSkip(deal))
+                    }
+                    skipLabel={isSkipped ? "Restore" : undefined}
+                  />
+                );
+              })}
+            </div>
           )}
         </div>
-      ) : statusPool.length === 0 ? (
-        <div className="bg-surface border border-border rounded-2xl p-6 text-center">
-          <p className="text-textMuted text-sm">
-            {statusChip === "saved"
-              ? "No saved deals yet — tap the heart on a listing."
-              : statusChip === "skipped"
-                ? "No skipped deals yet."
-                : "No deals in this view."}
-          </p>
-        </div>
-      ) : visibleDeals.length === 0 && isAnyFilterActive(filters) ? (
-        <div className="bg-surface border border-border rounded-2xl p-6 text-center">
-          <p className="text-textMuted text-sm">
-            No deals match the current filters ({statusPool.length} hidden).
-          </p>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="mt-3"
-            onClick={() =>
-              setFilters({ ...DEFAULT_DEAL_FILTERS, sort: filters.sort })
-            }
-          >
-            Clear filters
-          </Button>
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {visibleDeals.map((deal) => {
-            const isSkipped = statusChip === "skipped";
-            const isSaved = deal.action === "saved";
-            return (
-              <DealCard
-                key={deal.id}
-                deal={deal}
-                strategy={project.constraints.strategy}
-                busy={busyId === deal.id}
-                saved={isSaved}
-                onSave={
-                  isSkipped
-                    ? undefined
-                    : () => void (isSaved ? onUnsave(deal) : onSave(deal))
-                }
-                onSkip={() =>
-                  void (isSkipped ? onUnskip(deal) : onSkip(deal))
-                }
-                skipLabel={isSkipped ? "Restore" : undefined}
-              />
-            );
-          })}
-        </div>
-      )}
+
+        {deals.length > 0 ? (
+          <aside className="hidden lg:block sticky top-4">
+            <DealFiltersBar
+              deals={statusPool}
+              filters={filters}
+              onChange={(next) => {
+                setFilters(next);
+                setFilterSavedNote(null);
+              }}
+              shownCount={visibleDeals.length}
+              onSaveToProject={
+                isOwner ? () => void saveFiltersToProject() : undefined
+              }
+              saving={savingFilters}
+              savedNote={filterSavedNote}
+              layout="rail"
+            />
+          </aside>
+        ) : null}
+      </div>
 
       {isOwner ? (
         <div className="mt-12">

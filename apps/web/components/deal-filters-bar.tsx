@@ -1,11 +1,20 @@
 "use client";
 
-import { useMemo } from "react";
+import { Filter } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Slider } from "@/components/ui/slider";
 import type { DealWithScore } from "@/lib/deals";
 import { formatMoney } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 /**
  * Client-side filtering + sorting for the scouted-deals grid, designed to
@@ -14,9 +23,9 @@ import { formatMoney } from "@/lib/format";
  * current view into scout-time rules (see saveFiltersToProject in
  * project-detail-client.tsx).
  *
- * Controls are optimized for touch: sort is a horizontally-scrollable
- * pill row, numeric floors/ceilings are sliders with ranges derived from
- * the loaded deals, and everything else is a tap chip.
+ * Layouts:
+ * - `toolbar` (default / mobile): sort pills + Filters sheet for sliders
+ * - `rail` (desktop sidebar): always-visible compact filter panel
  */
 
 export type DealSortKey =
@@ -94,6 +103,17 @@ export function isAnyFilterActive(f: DealFilters): boolean {
   );
 }
 
+export function countActiveFilters(f: DealFilters): number {
+  let n = 0;
+  if (Number(f.minCashflow) > 0) n += 1;
+  if (Number(f.minDscr) > 0) n += 1;
+  if (Number(f.maxPrice) > 0) n += 1;
+  if (Number(f.minBeds) > 0) n += 1;
+  if (f.noHoa) n += 1;
+  n += f.excludedTypes.length;
+  return n;
+}
+
 export function applyDealFilters(
   deals: DealWithScore[],
   f: DealFilters,
@@ -107,10 +127,19 @@ export function applyDealFilters(
   const filtered = deals.filter((d) => {
     // Deals without a computed score can't prove they clear a financial
     // floor — hide them while such a filter is active.
-    if (minCashflow > 0 && !((d.score?.monthly_cashflow ?? null) !== null && d.score!.monthly_cashflow! >= minCashflow)) {
+    if (
+      minCashflow > 0 &&
+      !(
+        (d.score?.monthly_cashflow ?? null) !== null &&
+        d.score!.monthly_cashflow! >= minCashflow
+      )
+    ) {
       return false;
     }
-    if (minDscr > 0 && !(typeof d.score?.dscr === "number" && d.score.dscr >= minDscr)) {
+    if (
+      minDscr > 0 &&
+      !(typeof d.score?.dscr === "number" && d.score.dscr >= minDscr)
+    ) {
       return false;
     }
     const price = d.price ?? d.est_value;
@@ -138,11 +167,13 @@ function sortDeals(deals: DealWithScore[], sort: DealSortKey): DealWithScore[] {
   const byDesc =
     (pick: (d: DealWithScore) => number | null | undefined) =>
     (a: DealWithScore, b: DealWithScore) =>
-      (pick(b) ?? Number.NEGATIVE_INFINITY) - (pick(a) ?? Number.NEGATIVE_INFINITY);
+      (pick(b) ?? Number.NEGATIVE_INFINITY) -
+      (pick(a) ?? Number.NEGATIVE_INFINITY);
   const byAsc =
     (pick: (d: DealWithScore) => number | null | undefined) =>
     (a: DealWithScore, b: DealWithScore) =>
-      (pick(a) ?? Number.POSITIVE_INFINITY) - (pick(b) ?? Number.POSITIVE_INFINITY);
+      (pick(a) ?? Number.POSITIVE_INFINITY) -
+      (pick(b) ?? Number.POSITIVE_INFINITY);
 
   const cmp = {
     score: byDesc((d) => d.score?.score),
@@ -170,6 +201,7 @@ export function DealFiltersBar({
   onSaveToProject,
   saving,
   savedNote,
+  layout = "toolbar",
 }: {
   deals: DealWithScore[];
   filters: DealFilters;
@@ -179,7 +211,10 @@ export function DealFiltersBar({
   onSaveToProject?: () => void;
   saving: boolean;
   savedNote: string | null;
+  /** `toolbar` = mobile progressive disclosure; `rail` = desktop sticky panel. */
+  layout?: "toolbar" | "rail";
 }) {
+  const [sheetOpen, setSheetOpen] = useState(false);
   const patch = (p: Partial<DealFilters>) => onChange({ ...filters, ...p });
 
   /**
@@ -203,7 +238,10 @@ export function DealFiltersBar({
 
     const cashflowMax = roundUpTo(Math.max(1000, ...cashflows, 0), 100);
     const dscrMax = Math.min(3, roundUpTo(Math.max(2, ...dscrs, 0), 0.25));
-    const priceMax = roundUpTo(prices.length ? Math.max(...prices) : 500_000, 10_000);
+    const priceMax = roundUpTo(
+      prices.length ? Math.max(...prices) : 500_000,
+      10_000,
+    );
     const priceStep = Math.max(1000, roundUpTo(priceMax / 50, 1000));
     const bedsMax = Math.min(8, Math.max(5, ...beds, 0));
     return { cashflowMax, dscrMax, priceMax, priceStep, bedsMax };
@@ -215,29 +253,35 @@ export function DealFiltersBar({
   ).sort();
 
   const active = isAnyFilterActive(filters);
+  const activeCount = countActiveFilters(filters);
   const maxPriceVal = Number(filters.maxPrice) || bounds.priceMax;
 
-  return (
-    <div className="bg-surface border border-border rounded-2xl p-3 sm:p-4 mb-4 space-y-3">
-      {/* Sort: horizontally scrollable pill row (never wraps on mobile). */}
-      <div className="flex items-center gap-2">
-        <div className="flex gap-1.5 overflow-x-auto no-scrollbar -my-1 py-1 flex-1 min-w-0">
-          {SORT_OPTIONS.map((o) => (
-            <FilterChip
-              key={o.value}
-              label={o.label}
-              active={filters.sort === o.value}
-              onToggle={() => patch({ sort: o.value })}
-            />
-          ))}
-        </div>
-        <p className="text-textMuted text-[11px] whitespace-nowrap shrink-0">
-          {shownCount}/{deals.length}
-        </p>
+  const sortRow = (
+    <div className="flex items-center gap-2">
+      <div className="flex gap-1.5 overflow-x-auto no-scrollbar -my-1 py-1 flex-1 min-w-0">
+        {SORT_OPTIONS.map((o) => (
+          <FilterChip
+            key={o.value}
+            label={o.label}
+            active={filters.sort === o.value}
+            onToggle={() => patch({ sort: o.value })}
+          />
+        ))}
       </div>
+      <p className="text-textMuted text-[11px] whitespace-nowrap shrink-0 tabular-nums">
+        {shownCount}/{deals.length}
+      </p>
+    </div>
+  );
 
-      {/* Numeric floors/ceilings as sliders. */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-3">
+  const advancedFilters = (
+    <div className="space-y-3">
+      <div
+        className={cn(
+          "grid gap-x-4 gap-y-3",
+          layout === "rail" ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2",
+        )}
+      >
         <FilterSlider
           label="Min cashflow"
           display={
@@ -254,14 +298,18 @@ export function DealFiltersBar({
         <FilterSlider
           label="Min DSCR"
           display={
-            Number(filters.minDscr) > 0 ? `${Number(filters.minDscr).toFixed(2)}+` : "Any"
+            Number(filters.minDscr) > 0
+              ? `${Number(filters.minDscr).toFixed(2)}+`
+              : "Any"
           }
           min={0}
           max={bounds.dscrMax}
           step={0.05}
           value={Number(filters.minDscr) || 0}
           onChange={(v) =>
-            patch({ minDscr: v > 0 ? String(Math.round(v * 100) / 100) : "" })
+            patch({
+              minDscr: v > 0 ? String(Math.round(v * 100) / 100) : "",
+            })
           }
         />
         <FilterSlider
@@ -275,7 +323,9 @@ export function DealFiltersBar({
           max={bounds.priceMax}
           step={bounds.priceStep}
           value={maxPriceVal}
-          onChange={(v) => patch({ maxPrice: v >= bounds.priceMax ? "" : String(v) })}
+          onChange={(v) =>
+            patch({ maxPrice: v >= bounds.priceMax ? "" : String(v) })
+          }
         />
         <FilterSlider
           label="Min beds"
@@ -288,7 +338,6 @@ export function DealFiltersBar({
         />
       </div>
 
-      {/* Toggle chips: HOA + property-type exclusions. */}
       <div className="flex flex-wrap items-center gap-1.5">
         <FilterChip
           label="No HOA"
@@ -300,7 +349,11 @@ export function DealFiltersBar({
           return (
             <FilterChip
               key={t}
-              label={excluded ? `✕ ${homeTypeLabel(t)}` : `No ${homeTypeLabel(t).toLowerCase()}`}
+              label={
+                excluded
+                  ? `✕ ${homeTypeLabel(t)}`
+                  : `No ${homeTypeLabel(t).toLowerCase()}`
+              }
               active={excluded}
               onToggle={() =>
                 patch({
@@ -315,8 +368,10 @@ export function DealFiltersBar({
         {active ? (
           <button
             type="button"
-            className="text-[11px] text-accent hover:underline ml-auto shrink-0"
-            onClick={() => onChange({ ...DEFAULT_DEAL_FILTERS, sort: filters.sort })}
+            className="text-[11px] text-primary hover:underline ml-auto shrink-0"
+            onClick={() =>
+              onChange({ ...DEFAULT_DEAL_FILTERS, sort: filters.sort })
+            }
           >
             Clear
           </button>
@@ -324,7 +379,7 @@ export function DealFiltersBar({
       </div>
 
       {active && onSaveToProject ? (
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border">
+        <div className="flex flex-col gap-2 pt-2 border-t border-border">
           <Button
             size="sm"
             variant="secondary"
@@ -333,15 +388,81 @@ export function DealFiltersBar({
           >
             Save filters to project
           </Button>
-          <p className="text-textMuted text-[11px] flex-1 min-w-[12rem]">
+          <p className="text-textMuted text-[11px] leading-4">
             {savedNote ??
               "Writes these rules into the project, so the next scout only keeps matching deals."}
           </p>
         </div>
       ) : savedNote ? (
-        <p className="text-textMuted text-[11px] pt-2 border-t border-border">{savedNote}</p>
+        <p className="text-textMuted text-[11px] pt-2 border-t border-border">
+          {savedNote}
+        </p>
       ) : null}
     </div>
+  );
+
+  if (layout === "rail") {
+    return (
+      <div className="bg-surface border border-border rounded-xl p-3 space-y-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-textMuted">
+          Sort &amp; filter
+        </p>
+        {sortRow}
+        {advancedFilters}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="bg-surface border border-border rounded-xl p-2.5 mb-3 space-y-2">
+        {sortRow}
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="shrink-0 gap-1.5"
+            onClick={() => setSheetOpen(true)}
+          >
+            <Filter className="h-3.5 w-3.5" />
+            Filters
+            {activeCount > 0 ? (
+              <span className="ml-0.5 rounded-full bg-primary/20 text-primary px-1.5 py-px text-[10px] font-bold tabular-nums">
+                {activeCount}
+              </span>
+            ) : null}
+          </Button>
+          {active ? (
+            <button
+              type="button"
+              className="text-[11px] text-primary hover:underline"
+              onClick={() =>
+                onChange({ ...DEFAULT_DEAL_FILTERS, sort: filters.sort })
+              }
+            >
+              Clear
+            </button>
+          ) : (
+            <p className="text-textMuted text-[11px]">
+              Cashflow, DSCR, price, beds…
+            </p>
+          )}
+        </div>
+      </div>
+
+      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+        <SheetContent side="right">
+          <SheetHeader>
+            <SheetTitle>Filters</SheetTitle>
+            <SheetDescription>
+              Narrow this project&apos;s deal list. Sort stays on the toolbar.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="overflow-y-auto pb-6">{advancedFilters}</div>
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }
 
