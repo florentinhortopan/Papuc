@@ -257,18 +257,22 @@ export function DealFiltersBar({
   const maxPriceVal = Number(filters.maxPrice) || bounds.priceMax;
 
   const sortRow = (
-    <div className="flex items-center gap-2">
-      <div className="flex gap-1.5 overflow-x-auto no-scrollbar -my-1 py-1 flex-1 min-w-0">
-        {SORT_OPTIONS.map((o) => (
-          <FilterChip
-            key={o.value}
-            label={o.label}
-            active={filters.sort === o.value}
-            onToggle={() => patch({ sort: o.value })}
-          />
-        ))}
-      </div>
-      <p className="text-textMuted text-[11px] whitespace-nowrap shrink-0 tabular-nums">
+    <div className="flex flex-wrap items-center gap-1.5">
+      {SORT_OPTIONS.map((o) => (
+        <FilterChip
+          key={o.value}
+          label={o.label}
+          active={filters.sort === o.value}
+          onToggle={() => patch({ sort: o.value })}
+          size={layout === "rail" ? "md" : "sm"}
+        />
+      ))}
+      <p
+        className={cn(
+          "text-textMuted whitespace-nowrap tabular-nums ml-auto",
+          layout === "rail" ? "text-xs" : "text-[11px]",
+        )}
+      >
         {shownCount}/{deals.length}
       </p>
     </div>
@@ -343,6 +347,7 @@ export function DealFiltersBar({
           label="No HOA"
           active={filters.noHoa}
           onToggle={() => patch({ noHoa: !filters.noHoa })}
+          size={layout === "rail" ? "md" : "sm"}
         />
         {presentTypes.map((t) => {
           const excluded = filters.excludedTypes.includes(t);
@@ -362,13 +367,17 @@ export function DealFiltersBar({
                     : [...filters.excludedTypes, t],
                 })
               }
+              size={layout === "rail" ? "md" : "sm"}
             />
           );
         })}
         {active ? (
           <button
             type="button"
-            className="text-[11px] text-primary hover:underline ml-auto shrink-0"
+            className={cn(
+              "text-primary hover:underline ml-auto shrink-0",
+              layout === "rail" ? "text-xs" : "text-[11px]",
+            )}
             onClick={() =>
               onChange({ ...DEFAULT_DEAL_FILTERS, sort: filters.sort })
             }
@@ -403,10 +412,12 @@ export function DealFiltersBar({
 
   if (layout === "rail") {
     return (
-      <div className="bg-surface border border-border rounded-xl p-3 space-y-3">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-textMuted">
-          Sort &amp; filter
-        </p>
+      <div className="space-y-4">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-textMuted">
+            Sort &amp; filter
+          </p>
+        </div>
         {sortRow}
         {advancedFilters}
       </div>
@@ -487,12 +498,12 @@ function FilterSlider({
   return (
     <div>
       <div className="flex items-baseline justify-between gap-2 mb-1.5">
-        <span className="text-textMuted text-[11px]">{label}</span>
+        <span className="text-textMuted text-xs">{label}</span>
         <span
           className={
             engaged
-              ? "text-primary text-[11px] font-semibold whitespace-nowrap"
-              : "text-textMuted text-[11px] whitespace-nowrap"
+              ? "text-primary text-xs font-semibold whitespace-nowrap"
+              : "text-textMuted text-xs whitespace-nowrap"
           }
         >
           {display}
@@ -514,20 +525,24 @@ function FilterChip({
   label,
   active,
   onToggle,
+  size = "sm",
 }: {
   label: string;
   active: boolean;
   onToggle: () => void;
+  size?: "sm" | "md";
 }) {
   return (
     <button
       type="button"
       onClick={onToggle}
-      className={
+      className={cn(
+        "rounded-full border font-medium whitespace-nowrap shrink-0 transition-colors",
+        size === "md" ? "text-xs px-3 py-1.5" : "text-[11px] px-2.5 py-1.5",
         active
-          ? "text-[11px] px-2.5 py-1.5 rounded-full border border-primary/50 bg-primary/15 text-primary font-medium whitespace-nowrap shrink-0"
-          : "text-[11px] px-2.5 py-1.5 rounded-full border border-border bg-surfaceAlt text-textMuted hover:text-text whitespace-nowrap shrink-0"
-      }
+          ? "border-primary/50 bg-primary/15 text-primary"
+          : "border-border bg-surfaceAlt text-textMuted hover:text-text",
+      )}
     >
       {label}
     </button>
