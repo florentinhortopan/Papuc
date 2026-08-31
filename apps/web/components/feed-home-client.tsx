@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { FeedDealCard } from "@/components/feed-deal-card";
+import { FollowButton } from "@/components/follow-button";
+import { UserAvatar } from "@/components/user-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -108,6 +110,36 @@ export function FeedHomeClient({
         ? { ...prev, deals: prev.deals.filter((d) => d.id !== dealId) }
         : prev,
     );
+  }
+
+  function stampOwnerFollow(ownerId: string, following: boolean) {
+    const stamp = (list: FeedDeal[]) =>
+      list.map((d) =>
+        d.project.owner_id === ownerId
+          ? { ...d, isFollowingOwner: following }
+          : d,
+      );
+    setFeed((prev) => ({
+      ...prev,
+      forYou: stamp(prev.forYou),
+      newForYou: stamp(prev.newForYou),
+      basedOnSearches: stamp(prev.basedOnSearches),
+      bestRated: stamp(prev.bestRated),
+      mostProfitable: stamp(prev.mostProfitable),
+      saved: stamp(prev.saved),
+      skipped: stamp(prev.skipped),
+      friends: stamp(prev.friends),
+      suggestedInvestors: following
+        ? prev.suggestedInvestors.filter((s) => s.id !== ownerId)
+        : prev.suggestedInvestors.map((s) =>
+            s.id === ownerId ? { ...s, isFollowing: false } : s,
+          ),
+    }));
+    setSearchResult((prev) =>
+      prev ? { ...prev, deals: stamp(prev.deals) } : prev,
+    );
+    // Refetch so Friends chip fills with their public deals.
+    if (following) void refresh();
   }
 
   async function onSave(deal: FeedDeal) {
@@ -432,6 +464,7 @@ export function FeedHomeClient({
               onSave={onSave}
               onSkip={onSkip}
               onUnsave={onUnsave}
+              onFollowChange={stampOwnerFollow}
             />
           )}
         </div>
@@ -449,6 +482,7 @@ export function FeedHomeClient({
                 onSave={onSave}
                 onSkip={onSkip}
                 onUnsave={onUnsave}
+                onFollowChange={stampOwnerFollow}
                 empty="Nothing new in the last 48 hours — run Scout or Nightly to refill."
               />
               <FeedSection
@@ -459,6 +493,7 @@ export function FeedHomeClient({
                 onSave={onSave}
                 onSkip={onSkip}
                 onUnsave={onUnsave}
+                onFollowChange={stampOwnerFollow}
                 empty="Scout a project so we can learn your markets and filters."
               />
               <FeedSection
@@ -469,6 +504,7 @@ export function FeedHomeClient({
                 onSave={onSave}
                 onSkip={onSkip}
                 onUnsave={onUnsave}
+                onFollowChange={stampOwnerFollow}
               />
               <FeedSection
                 title="Most profitable"
@@ -478,6 +514,7 @@ export function FeedHomeClient({
                 onSave={onSave}
                 onSkip={onSkip}
                 onUnsave={onUnsave}
+                onFollowChange={stampOwnerFollow}
               />
               <FeedSection
                 title="Friends' deals"
@@ -487,28 +524,81 @@ export function FeedHomeClient({
                 onSave={onSave}
                 onSkip={onSkip}
                 onUnsave={onUnsave}
-                empty="Follow investors or watch a public scout to fill Friends."
+                onFollowChange={stampOwnerFollow}
+                empty="Tap Follow on a public deal card above to fill Friends."
               />
             </div>
           )}
         </>
       ) : chip === "friends" ? (
         chipDeals.length === 0 ? (
-          <div className="py-6 space-y-3 max-w-lg">
-            <p className="text-text font-semibold">No friends deals yet</p>
-            <p className="text-textMuted text-sm">
-              Friends only shows deals from investors you Follow or scouts you
-              Watch — and only when those projects have{" "}
-              <span className="text-text">Show on Discover</span> on.
-            </p>
-            <ol className="text-textMuted text-sm list-decimal pl-5 space-y-1">
-              <li>
-                Open a public deal on Discover (or someone&apos;s shared project
-                link).
-              </li>
-              <li>Tap Follow on the investor, or Watch on the project.</li>
-              <li>New public finds from them land in this Friends chip.</li>
-            </ol>
+          <div className="py-6 space-y-5 max-w-lg">
+            <div className="space-y-3">
+              <p className="text-text font-semibold">No friends deals yet</p>
+              <p className="text-textMuted text-sm">
+                Friends only shows deals from investors you Follow or scouts you
+                Watch — and only when those projects have{" "}
+                <span className="text-text">Show on Discover</span> on.
+              </p>
+            </div>
+            {feed.suggestedInvestors.length > 0 ? (
+              <div className="space-y-3">
+                <p className="text-text text-sm font-semibold">
+                  Suggested investors
+                </p>
+                <ul className="space-y-2">
+                  {feed.suggestedInvestors.map((inv) => (
+                    <li
+                      key={inv.id}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surfaceAlt/40 px-3 py-2.5"
+                    >
+                      <div className="min-w-0 flex items-center gap-2.5">
+                        <UserAvatar
+                          url={inv.avatarUrl}
+                          name={inv.displayName}
+                          size="sm"
+                        />
+                        <div className="min-w-0">
+                          <Link
+                            href={`/u/${inv.id}`}
+                            className="text-text text-sm font-medium hover:text-primary truncate block"
+                          >
+                            {inv.displayName}
+                          </Link>
+                          <p className="text-textMuted text-xs">
+                            {inv.publicProjectCount} public{" "}
+                            {inv.publicProjectCount === 1 ? "scout" : "scouts"}
+                          </p>
+                        </div>
+                      </div>
+                      <FollowButton
+                        userId={inv.id}
+                        initialFollowing={inv.isFollowing}
+                        className="shrink-0"
+                        onChange={(following) =>
+                          stampOwnerFollow(inv.id, following)
+                        }
+                      />
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-textMuted text-xs">
+                  After you Follow, their Discover deals land here.
+                </p>
+              </div>
+            ) : (
+              <ol className="text-textMuted text-sm list-decimal pl-5 space-y-1">
+                <li>
+                  On For you, find a public deal with an investor badge on the
+                  photo.
+                </li>
+                <li>Tap Follow on the card (or open their profile).</li>
+                <li>
+                  Their public Discover deals land here (project must have Show
+                  on Discover on).
+                </li>
+              </ol>
+            )}
             <p className="text-textMuted text-xs">
               Tip: turn on Show on Discover on your own projects so others can
               follow you back.
@@ -527,6 +617,7 @@ export function FeedHomeClient({
               onSave={onSave}
               onSkip={onSkip}
               onUnsave={onUnsave}
+              onFollowChange={stampOwnerFollow}
             />
           </div>
         )
@@ -548,6 +639,7 @@ export function FeedHomeClient({
               onSkip={onSkip}
               onUnsave={onUnsave}
               onUnskip={onUnskip}
+              onFollowChange={stampOwnerFollow}
             />
           )}
         </div>
@@ -582,6 +674,7 @@ export function FeedHomeClient({
               onSave={onSave}
               onSkip={onSkip}
               onUnsave={onUnsave}
+              onFollowChange={stampOwnerFollow}
             />
           )}
         </div>
@@ -638,6 +731,7 @@ function DealGrid({
   onSkip,
   onUnsave,
   onUnskip,
+  onFollowChange,
 }: {
   deals: FeedDeal[];
   busyId: string | null;
@@ -647,6 +741,7 @@ function DealGrid({
   onSkip: (d: FeedDeal) => void;
   onUnsave: (d: FeedDeal) => void;
   onUnskip?: (d: FeedDeal) => void;
+  onFollowChange?: (ownerId: string, following: boolean) => void;
 }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -670,6 +765,7 @@ function DealGrid({
               : () => onSkip(deal)
           }
           skipLabel={mode === "skipped" ? "Restore" : undefined}
+          onFollowChange={onFollowChange}
         />
       ))}
     </div>
@@ -685,6 +781,7 @@ function FeedSection({
   onSave,
   onSkip,
   onUnsave,
+  onFollowChange,
 }: {
   title: string;
   deals: FeedDeal[];
@@ -694,6 +791,7 @@ function FeedSection({
   onSave: (d: FeedDeal) => void;
   onSkip: (d: FeedDeal) => void;
   onUnsave: (d: FeedDeal) => void;
+  onFollowChange?: (ownerId: string, following: boolean) => void;
 }) {
   if (deals.length === 0) {
     return (
@@ -718,6 +816,7 @@ function FeedSection({
               savedIds.has(deal.id) ? onUnsave(deal) : onSave(deal)
             }
             onSkip={() => onSkip(deal)}
+            onFollowChange={onFollowChange}
           />
         ))}
       </div>

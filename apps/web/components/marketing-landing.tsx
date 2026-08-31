@@ -197,8 +197,17 @@ export function MarketingLanding() {
             <Link href="/support" className="hover:text-text">
               Support
             </Link>
+            <Link href="/terms" className="hover:text-text">
+              Terms
+            </Link>
             <Link href="/privacy" className="hover:text-text">
               Privacy
+            </Link>
+            <Link href="/acceptable-use" className="hover:text-text">
+              Acceptable use
+            </Link>
+            <Link href="/data-disclaimer" className="hover:text-text">
+              Data disclaimer
             </Link>
             <Link href="#faq" className="hover:text-text">
               FAQ

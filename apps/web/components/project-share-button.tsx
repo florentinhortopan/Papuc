@@ -67,7 +67,7 @@ export function ProjectShareButton({
         try {
           // URL only — do not pass `text` (WhatsApp glues it onto the path).
           await nav.share({ title, url: shareUrl });
-          setFlash("Shared");
+          setFlash("Shared — they can Follow you");
           return;
         } catch {
           // User cancel or unsupported payload — fall through to clipboard.
@@ -75,7 +75,7 @@ export function ProjectShareButton({
       }
 
       await navigator.clipboard.writeText(url);
-      setFlash("Link copied");
+      setFlash("Copied — they can Follow you");
     } catch {
       setFlash("Share failed");
     } finally {

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import { FollowButton } from "@/components/follow-button";
 import { InvestorProfileEditor } from "@/components/investor-profile-editor";
+import { UserAvatar } from "@/components/user-avatar";
 import { Badge } from "@/components/ui/badge";
 import { formatMarket } from "@/lib/format";
 import { listPublicProjectsForOwner } from "@/lib/projects";
@@ -93,7 +94,9 @@ export default async function InvestorProfilePage({
   return (
     <div className="max-w-3xl mx-auto space-y-8 pb-12">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
+        <div className="flex items-start gap-4 min-w-0">
+          <UserAvatar url={profile.avatar_url} name={name} size="xl" />
+          <div className="min-w-0">
           <h1 className="text-2xl font-bold text-text">{name}</h1>
           <div className="flex flex-wrap items-center gap-2 mt-2">
             {profile.subscription_tier === "pro" ? (
@@ -112,6 +115,7 @@ export default async function InvestorProfilePage({
               </Link>
             </p>
           ) : null}
+          </div>
         </div>
         {profile.isSelf ? (
           <InvestorProfileEditor initialDisplayName={profile.display_name} />

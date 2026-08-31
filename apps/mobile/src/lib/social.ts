@@ -4,6 +4,7 @@ import { supabase } from "./supabase";
 export type PublicProfile = {
   id: string;
   display_name: string | null;
+  avatar_url: string | null;
   subscription_tier: "free" | "pro";
   created_at: string;
 };
@@ -99,7 +100,7 @@ export async function getPublicProfile(
 ): Promise<PublicProfile | null> {
   const { data, error } = await supabase
     .from("public_profiles")
-    .select("id, display_name, subscription_tier, created_at")
+    .select("id, display_name, avatar_url, subscription_tier, created_at")
     .eq("id", userId)
     .maybeSingle();
   if (error) throw error;

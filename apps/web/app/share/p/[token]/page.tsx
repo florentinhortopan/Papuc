@@ -5,9 +5,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache, type ReactNode } from "react";
 
+import { ShareSocialBar } from "@/components/share-social-bar";
 import { formatMarket, formatMoney } from "@/lib/format";
 import { getSiteUrl } from "@/lib/site-url";
 import { sanitizeShareToken } from "@/lib/share-token";
+import {
+  countProjectWatchers,
+  getPublicProfile,
+  isFollowingUser,
+  isWatchingProject,
+  publicDisplayName,
+} from "@/lib/social";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -145,7 +153,36 @@ export default async function ProjectSharePage({
   } = await supabase.auth.getUser();
   const signedIn = user !== null;
   const isOwner = signedIn && user.id === project.owner_id;
-  const signUpHref = `/sign-in?next=${encodeURIComponent(`/share/p/${token}`)}`;
+  const cleanToken = sanitizeShareToken(token) ?? token;
+  const signUpHref = `/sign-in?next=${encodeURIComponent(`/share/p/${cleanToken}`)}`;
+
+  // Share pages are public; resolve display name with admin (anon can't
+  // read public_profiles via the user client).
+  const ownerProfile = await getPublicProfile(admin, project.owner_id);
+  const ownerDisplayName = ownerProfile
+    ? publicDisplayName(ownerProfile)
+    : "Investor";
+
+  let initialFollowing = false;
+  let initialWatching = false;
+  let watcherCount = 0;
+  if (project.is_public) {
+    watcherCount = await countProjectWatchers(admin, project.id);
+  }
+  if (signedIn && !isOwner) {
+    initialFollowing = await isFollowingUser(
+      supabase,
+      user.id,
+      project.owner_id,
+    );
+    if (project.is_public) {
+      initialWatching = await isWatchingProject(
+        supabase,
+        project.id,
+        user.id,
+      );
+    }
+  }
 
   const c = project.constraints;
   const market = formatMarket(c.markets[0]);
@@ -176,8 +213,24 @@ export default async function ProjectSharePage({
 
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
         <p className="text-textMuted text-xs">
-          Someone shared this scout project with you.
+          {ownerDisplayName} shared this scout project with you.
         </p>
+
+        {!isOwner ? (
+          <ShareSocialBar
+            ownerId={project.owner_id}
+            ownerDisplayName={ownerDisplayName}
+            projectId={project.id}
+            projectName={project.name}
+            isPublic={project.is_public}
+            isOwner={isOwner}
+            signedIn={signedIn}
+            initialFollowing={initialFollowing}
+            initialWatching={initialWatching}
+            watcherCount={watcherCount}
+            signInHref={signUpHref}
+          />
+        ) : null}
 
         {photos.length > 0 ? (
           <div
@@ -227,7 +280,9 @@ export default async function ProjectSharePage({
             Papuc scouts and underwrites deals that match this brief.
           </p>
           <p className="text-textMuted text-sm leading-6">
-            Sign in free to clone filters like these and run your own scout.
+            {signedIn && !isOwner
+              ? "Follow the investor and watch this scout so new public finds land in Friends — or open the project if it’s on Discover."
+              : "Sign in free to follow the investor, watch this scout, and clone filters like these."}
           </p>
           {isOwner ? (
             <Link
@@ -236,12 +291,19 @@ export default async function ProjectSharePage({
             >
               Open in your workspace
             </Link>
-          ) : (
+          ) : signedIn && project.is_public ? (
             <Link
-              href={signUpHref}
+              href={`/projects/${project.id}`}
               className="inline-flex items-center justify-center rounded-xl bg-primary text-white text-sm font-semibold px-5 py-2.5 hover:opacity-90"
             >
-              {signedIn ? "Start scouting" : "Sign in to scout free"}
+              Open public scout
+            </Link>
+          ) : (
+            <Link
+              href={signedIn ? "/projects" : signUpHref}
+              className="inline-flex items-center justify-center rounded-xl bg-primary text-white text-sm font-semibold px-5 py-2.5 hover:opacity-90"
+            >
+              {signedIn ? "Go to my projects" : "Sign in to scout free"}
             </Link>
           )}
         </div>

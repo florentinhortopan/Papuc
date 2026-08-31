@@ -1,13 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useRef, useState } from "react";
 
 import { SignOutButton } from "@/components/sign-out-button";
 import { UpgradeDialog } from "@/components/upgrade-dialog";
+import { UserAvatar } from "@/components/user-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { SubscriptionTier } from "@/lib/database.types";
+import { LEGAL_VERSION } from "@/lib/legal";
 import { updateProfileSettings } from "@/lib/profile";
+import {
+  clearProfileAvatar,
+  uploadProfileAvatar,
+} from "@/lib/social";
 import { createClient } from "@/lib/supabase/client";
 
 export function SettingsClient({
@@ -15,15 +22,19 @@ export function SettingsClient({
   tier,
   userId,
   displayName: initialDisplayName,
+  avatarUrl: initialAvatarUrl,
   autoConditionAnalysis: initialAutoCondition,
   nightlyScoutsPaused: initialNightlyPaused,
   emailDigestsEnabled: initialEmailDigests,
   isAdmin = false,
+  legalAcceptedAt = null,
+  legalVersion = null,
 }: {
   email: string | null;
   tier: SubscriptionTier;
   userId: string | null;
   displayName: string | null;
+  avatarUrl: string | null;
   /** Default true when the column is missing / unset. */
   autoConditionAnalysis: boolean;
   /** Default false — nightly scouts run unless paused. */
@@ -32,15 +43,19 @@ export function SettingsClient({
   emailDigestsEnabled: boolean;
   /** True when session email is in ADMIN_EMAILS. */
   isAdmin?: boolean;
+  legalAcceptedAt?: string | null;
+  legalVersion?: string | null;
 }) {
   const isPro = tier === "pro";
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [displayName, setDisplayName] = useState(initialDisplayName ?? "");
+  const [avatarUrl, setAvatarUrl] = useState(initialAvatarUrl);
   const [autoCondition, setAutoCondition] = useState(initialAutoCondition);
   const [nightlyPaused, setNightlyPaused] = useState(initialNightlyPaused);
   const [emailDigests, setEmailDigests] = useState(initialEmailDigests);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   async function persist(
     key: string,
@@ -105,6 +120,38 @@ export function SettingsClient({
     );
   }
 
+  async function onAvatarPicked(file: File | undefined) {
+    if (!file) return;
+    setSavingKey("avatar");
+    setError(null);
+    try {
+      const supabase = createClient();
+      const url = await uploadProfileAvatar(supabase, file);
+      setAvatarUrl(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingKey(null);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function removeAvatar() {
+    setSavingKey("avatar");
+    setError(null);
+    const prev = avatarUrl;
+    setAvatarUrl(null);
+    try {
+      const supabase = createClient();
+      await clearProfileAvatar(supabase);
+    } catch (err) {
+      setAvatarUrl(prev);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
   return (
     <div className="max-w-md">
       <h1 className="text-3xl font-bold mb-6">Settings</h1>
@@ -135,6 +182,45 @@ export function SettingsClient({
             View public profile →
           </a>
         ) : null}
+      </div>
+
+      <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
+        <p className="text-textMuted text-xs mb-3">Profile photo</p>
+        <div className="flex items-center gap-4">
+          <UserAvatar url={avatarUrl} name={displayName || email} size="xl" />
+          <div className="flex flex-col gap-2 min-w-0">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => void onAvatarPicked(e.target.files?.[0])}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              loading={savingKey === "avatar"}
+              onClick={() => fileRef.current?.click()}
+            >
+              {avatarUrl ? "Change photo" : "Upload photo"}
+            </Button>
+            {avatarUrl ? (
+              <button
+                type="button"
+                disabled={savingKey === "avatar"}
+                onClick={() => void removeAvatar()}
+                className="text-textMuted text-xs hover:text-danger text-left disabled:opacity-50"
+              >
+                Use Papuc logo instead
+              </button>
+            ) : (
+              <p className="text-textMuted text-xs leading-5">
+                Without a photo, friends see the Papuc slipper mark.
+              </p>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
@@ -229,6 +315,37 @@ export function SettingsClient({
       {error ? (
         <p className="text-danger text-xs mt-2 mb-2">{error}</p>
       ) : null}
+
+      <p className="text-textMuted text-xs font-semibold uppercase tracking-wide mb-2 mt-5">
+        Legal
+      </p>
+      <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
+        <p className="text-textMuted text-xs">
+          {legalAcceptedAt
+            ? `Accepted version ${legalVersion ?? "—"} on ${new Date(legalAcceptedAt).toLocaleDateString()}`
+            : "Not yet accepted"}
+          {legalVersion && legalVersion !== LEGAL_VERSION
+            ? ` · Current site version is ${LEGAL_VERSION}`
+            : null}
+        </p>
+        <nav className="mt-3 flex flex-col gap-2 text-sm">
+          <Link href="/terms" className="text-primary hover:underline">
+            Terms of Service
+          </Link>
+          <Link href="/privacy" className="text-primary hover:underline">
+            Privacy Policy
+          </Link>
+          <Link href="/acceptable-use" className="text-primary hover:underline">
+            Acceptable Use Policy
+          </Link>
+          <Link
+            href="/data-disclaimer"
+            className="text-primary hover:underline"
+          >
+            Data &amp; Listings Disclaimer
+          </Link>
+        </nav>
+      </div>
 
       <div className="mt-6">
         <SignOutButton />

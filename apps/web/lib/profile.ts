@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { ProfileRow } from "./database.types";
+import { LEGAL_VERSION } from "./legal";
 
 export async function getProfile(
   supabase: SupabaseClient,
@@ -23,6 +24,22 @@ export async function markOnboarded(supabase: SupabaseClient): Promise<void> {
     .from("profiles")
     .update({ onboarded_at: new Date().toISOString() })
     .eq("id", userId);
+}
+
+/** Persist clickwrap acceptance of the current legal document pack. */
+export async function acceptLegalTerms(
+  supabase: SupabaseClient,
+): Promise<void> {
+  const userId = (await supabase.auth.getUser()).data.user?.id;
+  if (!userId) throw new Error("not signed in");
+  const { error } = await supabase
+    .from("profiles")
+    .update({
+      legal_accepted_at: new Date().toISOString(),
+      legal_version: LEGAL_VERSION,
+    })
+    .eq("id", userId);
+  if (error) throw error;
 }
 
 export async function updateProfileSettings(

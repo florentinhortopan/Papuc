@@ -9,10 +9,13 @@ export function WatchProjectButton({
   projectId,
   initialWatching,
   watcherCount: initialCount,
+  compact = false,
 }: {
   projectId: string;
   initialWatching: boolean;
   watcherCount: number;
+  /** Tighter layout for share bars / dense chrome. */
+  compact?: boolean;
 }) {
   const [watching, setWatching] = useState(initialWatching);
   const [count, setCount] = useState(initialCount);
@@ -43,7 +46,7 @@ export function WatchProjectButton({
   }
 
   return (
-    <div className="mb-3">
+    <div className={compact ? undefined : "mb-3"}>
       <div className="flex flex-wrap items-center gap-3">
         <Button
           type="button"
@@ -57,10 +60,12 @@ export function WatchProjectButton({
           {count} {count === 1 ? "watcher" : "watchers"}
         </span>
       </div>
-      <p className="text-textMuted text-xs mt-2 leading-5">
-        Watch to see new public deals from this scout in Friends. You won&apos;t
-        be able to edit filters until collaboration ships.
-      </p>
+      {compact ? null : (
+        <p className="text-textMuted text-xs mt-2 leading-5">
+          Watch to see new public deals from this scout in Friends. You
+          won&apos;t be able to edit filters until collaboration ships.
+        </p>
+      )}
       {error ? <p className="text-danger text-xs mt-1">{error}</p> : null}
     </div>
   );

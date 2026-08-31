@@ -1,11 +1,14 @@
 "use client";
 
-import { Heart, RotateCcw, X } from "lucide-react";
+import { Heart, RotateCcw, UserPlus, X } from "lucide-react";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
+import { UserAvatar } from "@/components/user-avatar";
 import { dealStreetAddress } from "@/lib/deal-address";
 import type { FeedDeal } from "@/lib/feed";
 import { formatMoney } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export function FeedDealCard({
   deal,
@@ -15,6 +18,7 @@ export function FeedDealCard({
   onSave,
   onSkip,
   skipLabel,
+  onFollowChange,
 }: {
   deal: FeedDeal;
   className?: string;
@@ -24,6 +28,8 @@ export function FeedDealCard({
   onSkip?: () => void;
   /** When set (e.g. Restore on Skipped chip), replaces the X icon. */
   skipLabel?: string;
+  /** Soft-follow from Discover — stamps Friends once the owner has public deals. */
+  onFollowChange?: (ownerId: string, following: boolean) => void;
 }) {
   const photo =
     deal.primary_image_url ??
@@ -32,6 +38,38 @@ export function FeedDealCard({
   const place = [deal.city, deal.state].filter(Boolean).join(", ");
   const score = deal.score?.score;
   const cashflow = deal.score?.monthly_cashflow;
+  const ownerName = deal.ownerDisplayName ?? "Investor";
+  const ownerAvatar = deal.ownerAvatarUrl ?? null;
+  const showOwner = !deal.isOwn;
+  const [following, setFollowing] = useState(Boolean(deal.isFollowingOwner));
+  const [followBusy, setFollowBusy] = useState(false);
+  const [followError, setFollowError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFollowing(Boolean(deal.isFollowingOwner));
+  }, [deal.isFollowingOwner, deal.project.owner_id]);
+
+  async function toggleFollow() {
+    if (followBusy || !showOwner) return;
+    setFollowBusy(true);
+    setFollowError(null);
+    const next = !following;
+    setFollowing(next);
+    onFollowChange?.(deal.project.owner_id, next);
+    try {
+      const res = await fetch(`/api/users/${deal.project.owner_id}/follow`, {
+        method: next ? "POST" : "DELETE",
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? "follow failed");
+    } catch (err) {
+      setFollowing(!next);
+      onFollowChange?.(deal.project.owner_id, !next);
+      setFollowError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFollowBusy(false);
+    }
+  }
 
   return (
     <div className={className ?? "w-[240px] shrink-0 snap-start"}>
@@ -60,6 +98,14 @@ export function FeedDealCard({
             {typeof score === "number" ? (
               <div className="absolute right-2 top-2 bg-black/65 rounded-full px-2 py-0.5 z-[1]">
                 <span className="text-white text-xs font-semibold">{score}</span>
+              </div>
+            ) : null}
+            {showOwner ? (
+              <div className="absolute left-2 bottom-2 z-[1] flex items-center gap-1.5 rounded-full bg-black/70 pl-1 pr-2 py-1 max-w-[85%]">
+                <UserAvatar url={ownerAvatar} name={ownerName} size="xs" />
+                <span className="truncate text-[11px] font-medium text-white">
+                  {ownerName}
+                </span>
               </div>
             ) : null}
           </div>
@@ -130,7 +176,7 @@ export function FeedDealCard({
             .join(" · ")}
         </p>
       </Link>
-      <div className="flex flex-wrap gap-1.5 mt-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
         <Link
           href={`/projects/${deal.project.id}`}
           className="inline-flex max-w-full items-center rounded-full border border-border bg-surfaceAlt px-2 py-0.5 text-[11px] text-textMuted hover:text-text hover:border-primary/40 transition-colors"
@@ -141,18 +187,47 @@ export function FeedDealCard({
             {deal.project.name}
           </span>
         </Link>
-        {!deal.isOwn ? (
-          <Link
-            href={`/u/${deal.project.owner_id}`}
-            className="inline-flex max-w-[140px] items-center rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-textMuted hover:text-primary hover:border-primary/40 transition-colors"
-            title="View investor profile"
-          >
-            <span className="truncate">
-              {deal.ownerDisplayName ?? "Investor"}
-            </span>
-          </Link>
+        {showOwner ? (
+          <>
+            <Link
+              href={`/u/${deal.project.owner_id}`}
+              className="inline-flex max-w-[120px] items-center gap-1 rounded-full border border-border bg-surface px-1.5 py-0.5 text-[11px] text-textMuted hover:text-primary hover:border-primary/40 transition-colors"
+              title="View investor profile"
+            >
+              <UserAvatar
+                url={ownerAvatar}
+                name={ownerName}
+                size="xs"
+                className="!h-4 !w-4 border-0"
+              />
+              <span className="truncate">{ownerName}</span>
+            </Link>
+            <button
+              type="button"
+              disabled={followBusy}
+              onClick={() => void toggleFollow()}
+              aria-pressed={following}
+              title={
+                following
+                  ? "Unfollow — remove from Friends"
+                  : "Follow — add their public deals to Friends"
+              }
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors disabled:opacity-50",
+                following
+                  ? "border-primary/40 bg-primary/15 text-primary"
+                  : "border-border bg-surfaceAlt text-textMuted hover:text-primary hover:border-primary/40",
+              )}
+            >
+              <UserPlus className="h-3 w-3" />
+              {following ? "Following" : "Follow"}
+            </button>
+          </>
         ) : null}
       </div>
+      {followError ? (
+        <p className="text-danger text-[10px] mt-1 px-0.5">{followError}</p>
+      ) : null}
     </div>
   );
 }

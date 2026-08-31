@@ -57,7 +57,13 @@ export const PAGE_DESCRIPTIONS = {
   lenders:
     "DSCR lender directory to pair with Papuc deal scenarios (estimates, not quotes).",
   privacy:
-    "How Papuc protects your account, investor follows, and deal scenario data.",
+    "How Papuc collects, uses, and shares account, project, and deal scenario data.",
+  terms:
+    "Papuc Terms of Service — evaluation software, accounts, disclaimers, and acceptable use.",
+  acceptableUse:
+    "Rules for using Papuc, listing data, social features, and exports.",
+  dataDisclaimer:
+    "Papuc is not an MLS, IDX portal, or brokerage — listing and model disclaimers.",
   support:
     "Help with Papuc evaluation, scenarios, sharing, investor friends, and billing.",
   settings: "Account, digests, and preferences for Papuc.",

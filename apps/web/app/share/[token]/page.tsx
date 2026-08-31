@@ -10,10 +10,18 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 
 import { ScoutLikeThisButton } from "@/components/scout-like-this-button";
+import { ShareSocialBar } from "@/components/share-social-bar";
 import type { DealScoresRow, DealsRow } from "@/lib/database.types";
 import { formatDscr, formatMoney, formatPct } from "@/lib/format";
 import { getSiteUrl } from "@/lib/site-url";
 import { sanitizeShareToken } from "@/lib/share-token";
+import {
+  countProjectWatchers,
+  getPublicProfile,
+  isFollowingUser,
+  isWatchingProject,
+  publicDisplayName,
+} from "@/lib/social";
 import { getCachedMarketStrIntel } from "@/lib/str-intel";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -43,7 +51,10 @@ export const runtime = "nodejs";
 type SharedDeal = DealsRow & {
   deal_scores: DealScoresRow[] | DealScoresRow | null;
   projects: {
+    id: string;
+    name: string;
     owner_id: string;
+    is_public: boolean;
     constraints: ProjectConstraints | null;
   } | null;
 };
@@ -99,14 +110,20 @@ const getSharedDeal = cache(async (token: string): Promise<SharedPayload | null>
   if (error || !dealRow) return null;
 
   let ownerId = "";
+  let projectName = "Scout";
+  let projectPublic = false;
+  let projectRowId = "";
   let constraints: ProjectConstraints = fallbackConstraints(dealRow);
   if (dealRow.project_id) {
     const { data: project } = await admin
       .from("projects")
-      .select("owner_id, constraints")
+      .select("id, name, owner_id, constraints, is_public")
       .eq("id", dealRow.project_id as string)
       .maybeSingle();
+    if (project?.id) projectRowId = project.id as string;
+    if (project?.name) projectName = project.name as string;
     if (project?.owner_id) ownerId = project.owner_id as string;
+    if (project?.is_public) projectPublic = true;
     if (project?.constraints) {
       try {
         constraints = ProjectConstraintsSchema.parse(project.constraints);
@@ -120,7 +137,15 @@ const getSharedDeal = cache(async (token: string): Promise<SharedPayload | null>
     ...(dealRow as DealsRow),
     deal_scores: (dealRow as { deal_scores?: SharedDeal["deal_scores"] })
       .deal_scores,
-    projects: { owner_id: ownerId, constraints },
+    projects: projectRowId
+      ? {
+          id: projectRowId,
+          name: projectName,
+          owner_id: ownerId,
+          is_public: projectPublic,
+          constraints,
+        }
+      : null,
   } as SharedDeal;
 
   let marketAdrIntel: StrMarketAdrIntel | null = null;
@@ -277,9 +302,36 @@ export default async function SharePage({
     data: { user },
   } = await supabase.auth.getUser();
   const signedIn = user !== null;
-  const isOwner = signedIn && Boolean(deal.projects?.owner_id) && user.id === deal.projects?.owner_id;
+  const ownerId = deal.projects?.owner_id ?? "";
+  const isOwner = signedIn && Boolean(ownerId) && user.id === ownerId;
   const cleanToken = sanitizeShareToken(token) ?? token;
   const signUpHref = `/sign-in?next=${encodeURIComponent(`/share/${cleanToken}`)}`;
+
+  // Public share pages are often opened logged-out — read identity via admin
+  // (public_profiles is authenticated-only on the user client).
+  const admin = createAdminClient();
+  const ownerProfile = ownerId
+    ? await getPublicProfile(admin, ownerId)
+    : null;
+  const ownerDisplayName = ownerProfile
+    ? publicDisplayName(ownerProfile)
+    : "Investor";
+  const projectId = deal.projects?.id ?? deal.project_id ?? null;
+  const projectPublic = Boolean(deal.projects?.is_public);
+  const projectName = deal.projects?.name ?? null;
+
+  let initialFollowing = false;
+  let initialWatching = false;
+  let watcherCount = 0;
+  if (projectId && projectPublic) {
+    watcherCount = await countProjectWatchers(admin, projectId);
+  }
+  if (signedIn && ownerId && !isOwner) {
+    initialFollowing = await isFollowingUser(supabase, user.id, ownerId);
+    if (projectId && projectPublic) {
+      initialWatching = await isWatchingProject(supabase, projectId, user.id);
+    }
+  }
 
   const facts = [
     deal.beds != null ? `${deal.beds} bd` : null,
@@ -315,8 +367,25 @@ export default async function SharePage({
 
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
         <p className="text-textMuted text-xs">
-          Someone shared this deal analysis with you.
+          {ownerDisplayName} shared this deal analysis with you.
         </p>
+
+        {ownerId && !isOwner ? (
+          <ShareSocialBar
+            ownerId={ownerId}
+            ownerDisplayName={ownerDisplayName}
+            projectId={projectId}
+            projectName={projectName}
+            dealId={deal.id}
+            isPublic={projectPublic}
+            isOwner={isOwner}
+            signedIn={signedIn}
+            initialFollowing={initialFollowing}
+            initialWatching={initialWatching}
+            watcherCount={watcherCount}
+            signInHref={signUpHref}
+          />
+        ) : null}
 
         {photos.length > 0 ? (
           <div
@@ -486,6 +555,10 @@ export default async function SharePage({
                 dealId={deal.id}
                 label="Scout like this"
               />
+              <p className="text-textMuted text-[11px] leading-4 max-w-sm">
+                Clones these filters into your workspace and follows{" "}
+                {ownerDisplayName} so their public deals show in Friends.
+              </p>
               <Link
                 href="/projects"
                 className="text-primary text-xs hover:underline"

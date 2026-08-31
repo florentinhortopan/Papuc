@@ -26,6 +26,7 @@ const EMPTY: PersonalizedFeed = {
   saved: [],
   skipped: [],
   friends: [],
+  suggestedInvestors: [],
   taste: null,
   socialError: null,
 };
