@@ -1,6 +1,7 @@
 import { useRouter } from "expo-router";
 import { Image, Pressable, Text, View } from "react-native";
 
+import { UserAvatar } from "@/components/UserAvatar";
 import {
   dealImageUrl,
   dealLabel,
@@ -91,8 +92,9 @@ export function DiscoveryDealCard({ deal, onPress }: Props) {
                     e.stopPropagation?.();
                     router.push(`/(tabs)/u/${ownerId}`);
                   }}
-                  className="rounded-full border border-border bg-surface px-2 py-0.5"
+                  className="flex-row items-center gap-1.5 rounded-full border border-border bg-surface px-1.5 py-0.5"
                 >
+                  <UserAvatar url={deal.ownerAvatarUrl} size="xs" />
                   <Text className="text-[11px] text-primary" numberOfLines={1}>
                     {deal.ownerDisplayName ?? "Investor"}
                   </Text>

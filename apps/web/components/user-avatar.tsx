@@ -13,7 +13,7 @@ const SIZE = {
 
 const MARK = {
   xs: "h-3.5 w-3.5",
-  sm: "h-4.5 w-4.5",
+  sm: "h-4 w-4",
   md: "h-5 w-5",
   lg: "h-7 w-7",
   xl: "h-9 w-9",

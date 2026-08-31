@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Card } from "@/components/Card";
+import { UserAvatar } from "@/components/UserAvatar";
 import { setLastError } from "@/lib/debug";
 import { formatMarket } from "@/lib/format";
 import {
@@ -120,7 +121,9 @@ export default function InvestorProfileScreen() {
               <Text className="text-textMuted">← Back</Text>
             </Pressable>
             <View className="flex-row items-start justify-between gap-3">
-              <View className="flex-1">
+              <View className="flex-1 flex-row items-start gap-3">
+                <UserAvatar url={profile.avatar_url} size="lg" />
+                <View className="flex-1">
                 <Text className="text-2xl font-bold text-text">{name}</Text>
                 <Text className="mt-1 text-sm text-textMuted">
                   {profile.followerCount} followers · {profile.followingCount}{" "}
@@ -133,6 +136,7 @@ export default function InvestorProfileScreen() {
                     </Text>
                   </View>
                 ) : null}
+                </View>
               </View>
               {!profile.isSelf ? (
                 <Pressable

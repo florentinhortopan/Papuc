@@ -29,6 +29,7 @@ export type FeedDeal = {
   } | null;
   project: { id: string; name: string; owner_id: string };
   ownerDisplayName?: string | null;
+  ownerAvatarUrl?: string | null;
   isOwn?: boolean;
 };
 
