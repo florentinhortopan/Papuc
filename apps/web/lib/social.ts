@@ -5,6 +5,7 @@ import type { SubscriptionTier } from "./database.types";
 export type PublicProfile = {
   id: string;
   display_name: string | null;
+  avatar_url: string | null;
   subscription_tier: SubscriptionTier;
   created_at: string;
 };
@@ -34,7 +35,7 @@ export async function getPublicProfile(
 ): Promise<PublicProfile | null> {
   const { data, error } = await supabase
     .from("public_profiles")
-    .select("id, display_name, subscription_tier, created_at")
+    .select("id, display_name, avatar_url, subscription_tier, created_at")
     .eq("id", userId)
     .maybeSingle();
   if (error) throw error;
@@ -51,7 +52,7 @@ export async function getPublicProfiles(
   if (unique.length === 0) return map;
   const { data, error } = await supabase
     .from("public_profiles")
-    .select("id, display_name, subscription_tier, created_at")
+    .select("id, display_name, avatar_url, subscription_tier, created_at")
     .in("id", unique);
   if (error) throw error;
   for (const row of (data ?? []) as PublicProfile[]) {
@@ -247,6 +248,7 @@ export async function updateDisplayName(
 export type SuggestedInvestor = {
   id: string;
   displayName: string;
+  avatarUrl: string | null;
   publicProjectCount: number;
   isFollowing: boolean;
 };
@@ -294,8 +296,92 @@ export async function listSuggestedInvestors(
       displayName: profile
         ? publicDisplayName(profile)
         : `Investor ${id.slice(0, 8)}`,
+      avatarUrl: profile?.avatar_url ?? null,
       publicProjectCount,
       isFollowing: false,
     };
   });
+}
+
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+const AVATAR_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+
+/**
+ * Upload a square-ish profile photo to the public `avatars` bucket and
+ * persist `profiles.avatar_url`. Replaces any prior object for this user.
+ */
+export async function uploadProfileAvatar(
+  supabase: SupabaseClient,
+  file: File,
+): Promise<string> {
+  const userId = (await supabase.auth.getUser()).data.user?.id;
+  if (!userId) throw new Error("not signed in");
+  if (!AVATAR_TYPES.has(file.type)) {
+    throw new Error("Use a JPEG, PNG, WebP, or GIF image");
+  }
+  if (file.size > AVATAR_MAX_BYTES) {
+    throw new Error("Image must be under 2 MB");
+  }
+
+  const ext =
+    file.type === "image/png"
+      ? "png"
+      : file.type === "image/webp"
+        ? "webp"
+        : file.type === "image/gif"
+          ? "gif"
+          : "jpg";
+  const path = `${userId}/avatar.${ext}`;
+
+  // Clear other extensions so we don't leave stale objects.
+  await supabase.storage
+    .from("avatars")
+    .remove([
+      `${userId}/avatar.jpg`,
+      `${userId}/avatar.jpeg`,
+      `${userId}/avatar.png`,
+      `${userId}/avatar.webp`,
+      `${userId}/avatar.gif`,
+    ]);
+
+  const { error: upErr } = await supabase.storage
+    .from("avatars")
+    .upload(path, file, { upsert: true, contentType: file.type, cacheControl: "3600" });
+  if (upErr) throw upErr;
+
+  const { data } = supabase.storage.from("avatars").getPublicUrl(path);
+  const url = `${data.publicUrl}?v=${Date.now()}`;
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({ avatar_url: url })
+    .eq("id", userId);
+  if (error) throw error;
+  return url;
+}
+
+export async function clearProfileAvatar(
+  supabase: SupabaseClient,
+): Promise<void> {
+  const userId = (await supabase.auth.getUser()).data.user?.id;
+  if (!userId) throw new Error("not signed in");
+  await supabase.storage
+    .from("avatars")
+    .remove([
+      `${userId}/avatar.jpg`,
+      `${userId}/avatar.jpeg`,
+      `${userId}/avatar.png`,
+      `${userId}/avatar.webp`,
+      `${userId}/avatar.gif`,
+    ]);
+  const { error } = await supabase
+    .from("profiles")
+    .update({ avatar_url: null })
+    .eq("id", userId);
+  if (error) throw error;
 }

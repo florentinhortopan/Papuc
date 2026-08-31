@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { FeedDealCard } from "@/components/feed-deal-card";
 import { FollowButton } from "@/components/follow-button";
+import { UserAvatar } from "@/components/user-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -551,17 +552,24 @@ export function FeedHomeClient({
                       key={inv.id}
                       className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surfaceAlt/40 px-3 py-2.5"
                     >
-                      <div className="min-w-0">
-                        <Link
-                          href={`/u/${inv.id}`}
-                          className="text-text text-sm font-medium hover:text-primary truncate block"
-                        >
-                          {inv.displayName}
-                        </Link>
-                        <p className="text-textMuted text-xs">
-                          {inv.publicProjectCount} public{" "}
-                          {inv.publicProjectCount === 1 ? "scout" : "scouts"}
-                        </p>
+                      <div className="min-w-0 flex items-center gap-2.5">
+                        <UserAvatar
+                          url={inv.avatarUrl}
+                          name={inv.displayName}
+                          size="sm"
+                        />
+                        <div className="min-w-0">
+                          <Link
+                            href={`/u/${inv.id}`}
+                            className="text-text text-sm font-medium hover:text-primary truncate block"
+                          >
+                            {inv.displayName}
+                          </Link>
+                          <p className="text-textMuted text-xs">
+                            {inv.publicProjectCount} public{" "}
+                            {inv.publicProjectCount === 1 ? "scout" : "scouts"}
+                          </p>
+                        </div>
                       </div>
                       <FollowButton
                         userId={inv.id}

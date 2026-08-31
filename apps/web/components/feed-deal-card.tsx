@@ -4,19 +4,11 @@ import { Heart, RotateCcw, UserPlus, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { UserAvatar } from "@/components/user-avatar";
 import { dealStreetAddress } from "@/lib/deal-address";
 import type { FeedDeal } from "@/lib/feed";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
-
-function ownerInitials(name: string | null | undefined): string {
-  const raw = (name ?? "Investor").trim();
-  const parts = raw.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return `${parts[0]![0] ?? ""}${parts[1]![0] ?? ""}`.toUpperCase();
-  }
-  return raw.slice(0, 2).toUpperCase() || "?";
-}
 
 export function FeedDealCard({
   deal,
@@ -47,6 +39,7 @@ export function FeedDealCard({
   const score = deal.score?.score;
   const cashflow = deal.score?.monthly_cashflow;
   const ownerName = deal.ownerDisplayName ?? "Investor";
+  const ownerAvatar = deal.ownerAvatarUrl ?? null;
   const showOwner = !deal.isOwn;
   const [following, setFollowing] = useState(Boolean(deal.isFollowingOwner));
   const [followBusy, setFollowBusy] = useState(false);
@@ -109,12 +102,7 @@ export function FeedDealCard({
             ) : null}
             {showOwner ? (
               <div className="absolute left-2 bottom-2 z-[1] flex items-center gap-1.5 rounded-full bg-black/70 pl-1 pr-2 py-1 max-w-[85%]">
-                <span
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/90 text-[10px] font-bold text-primaryFg"
-                  aria-hidden
-                >
-                  {ownerInitials(ownerName)}
-                </span>
+                <UserAvatar url={ownerAvatar} name={ownerName} size="xs" />
                 <span className="truncate text-[11px] font-medium text-white">
                   {ownerName}
                 </span>
@@ -206,12 +194,12 @@ export function FeedDealCard({
               className="inline-flex max-w-[120px] items-center gap-1 rounded-full border border-border bg-surface px-1.5 py-0.5 text-[11px] text-textMuted hover:text-primary hover:border-primary/40 transition-colors"
               title="View investor profile"
             >
-              <span
-                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[8px] font-bold text-primary"
-                aria-hidden
-              >
-                {ownerInitials(ownerName)}
-              </span>
+              <UserAvatar
+                url={ownerAvatar}
+                name={ownerName}
+                size="xs"
+                className="!h-4 !w-4 border-0"
+              />
               <span className="truncate">{ownerName}</span>
             </Link>
             <button

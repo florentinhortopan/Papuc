@@ -16,6 +16,8 @@ export type ProfileRow = {
   id: string;
   email: string | null;
   display_name: string | null;
+  /** Public avatar URL; null → Papuc mark fallback in UI. */
+  avatar_url: string | null;
   default_tax_rate: number;
   default_dscr_min: number;
   subscription_tier: SubscriptionTier;
@@ -89,6 +91,7 @@ export type ProjectMembersRow = {
 export type PublicProfileRow = {
   id: string;
   display_name: string | null;
+  avatar_url: string | null;
   subscription_tier: SubscriptionTier;
   created_at: string;
 };

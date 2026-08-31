@@ -105,6 +105,7 @@ export async function attachOwnerDisplayNames(
       ownerDisplayName: profile
         ? publicDisplayName(profile)
         : d.ownerDisplayName ?? null,
+      ownerAvatarUrl: profile?.avatar_url ?? d.ownerAvatarUrl ?? null,
     };
   });
 }
