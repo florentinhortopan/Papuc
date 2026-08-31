@@ -1,15 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { SignOutButton } from "@/components/sign-out-button";
 import { UpgradeDialog } from "@/components/upgrade-dialog";
+import { UserAvatar } from "@/components/user-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { SubscriptionTier } from "@/lib/database.types";
 import { LEGAL_VERSION } from "@/lib/legal";
 import { updateProfileSettings } from "@/lib/profile";
+import {
+  clearProfileAvatar,
+  uploadProfileAvatar,
+} from "@/lib/social";
 import { createClient } from "@/lib/supabase/client";
 
 export function SettingsClient({
@@ -17,6 +22,7 @@ export function SettingsClient({
   tier,
   userId,
   displayName: initialDisplayName,
+  avatarUrl: initialAvatarUrl,
   autoConditionAnalysis: initialAutoCondition,
   nightlyScoutsPaused: initialNightlyPaused,
   emailDigestsEnabled: initialEmailDigests,
@@ -28,6 +34,7 @@ export function SettingsClient({
   tier: SubscriptionTier;
   userId: string | null;
   displayName: string | null;
+  avatarUrl: string | null;
   /** Default true when the column is missing / unset. */
   autoConditionAnalysis: boolean;
   /** Default false — nightly scouts run unless paused. */
@@ -42,11 +49,13 @@ export function SettingsClient({
   const isPro = tier === "pro";
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [displayName, setDisplayName] = useState(initialDisplayName ?? "");
+  const [avatarUrl, setAvatarUrl] = useState(initialAvatarUrl);
   const [autoCondition, setAutoCondition] = useState(initialAutoCondition);
   const [nightlyPaused, setNightlyPaused] = useState(initialNightlyPaused);
   const [emailDigests, setEmailDigests] = useState(initialEmailDigests);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   async function persist(
     key: string,
@@ -111,6 +120,38 @@ export function SettingsClient({
     );
   }
 
+  async function onAvatarPicked(file: File | undefined) {
+    if (!file) return;
+    setSavingKey("avatar");
+    setError(null);
+    try {
+      const supabase = createClient();
+      const url = await uploadProfileAvatar(supabase, file);
+      setAvatarUrl(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingKey(null);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function removeAvatar() {
+    setSavingKey("avatar");
+    setError(null);
+    const prev = avatarUrl;
+    setAvatarUrl(null);
+    try {
+      const supabase = createClient();
+      await clearProfileAvatar(supabase);
+    } catch (err) {
+      setAvatarUrl(prev);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
   return (
     <div className="max-w-md">
       <h1 className="text-3xl font-bold mb-6">Settings</h1>
@@ -141,6 +182,45 @@ export function SettingsClient({
             View public profile →
           </a>
         ) : null}
+      </div>
+
+      <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
+        <p className="text-textMuted text-xs mb-3">Profile photo</p>
+        <div className="flex items-center gap-4">
+          <UserAvatar url={avatarUrl} name={displayName || email} size="xl" />
+          <div className="flex flex-col gap-2 min-w-0">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => void onAvatarPicked(e.target.files?.[0])}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              loading={savingKey === "avatar"}
+              onClick={() => fileRef.current?.click()}
+            >
+              {avatarUrl ? "Change photo" : "Upload photo"}
+            </Button>
+            {avatarUrl ? (
+              <button
+                type="button"
+                disabled={savingKey === "avatar"}
+                onClick={() => void removeAvatar()}
+                className="text-textMuted text-xs hover:text-danger text-left disabled:opacity-50"
+              >
+                Use Papuc logo instead
+              </button>
+            ) : (
+              <p className="text-textMuted text-xs leading-5">
+                Without a photo, friends see the Papuc slipper mark.
+              </p>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
