@@ -243,3 +243,59 @@ export async function updateDisplayName(
     .eq("id", userId);
   if (error) throw error;
 }
+
+export type SuggestedInvestor = {
+  id: string;
+  displayName: string;
+  publicProjectCount: number;
+  isFollowing: boolean;
+};
+
+/**
+ * Public Discover owners the viewer isn't following yet — cold-start for Friends.
+ */
+export async function listSuggestedInvestors(
+  supabase: SupabaseClient,
+  viewerId: string,
+  limit = 6,
+): Promise<SuggestedInvestor[]> {
+  const followingIds = await listFollowingIds(supabase, viewerId);
+  const following = new Set(followingIds);
+
+  const { data: projects, error } = await supabase
+    .from("projects")
+    .select("id, owner_id")
+    .eq("is_public", true)
+    .neq("owner_id", viewerId)
+    .limit(200);
+  if (error) throw error;
+
+  const countByOwner = new Map<string, number>();
+  for (const row of projects ?? []) {
+    const ownerId = row.owner_id as string;
+    if (!ownerId || following.has(ownerId)) continue;
+    countByOwner.set(ownerId, (countByOwner.get(ownerId) ?? 0) + 1);
+  }
+
+  const ranked = [...countByOwner.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit);
+  if (ranked.length === 0) return [];
+
+  const profiles = await getPublicProfiles(
+    supabase,
+    ranked.map(([id]) => id),
+  );
+
+  return ranked.map(([id, publicProjectCount]) => {
+    const profile = profiles.get(id);
+    return {
+      id,
+      displayName: profile
+        ? publicDisplayName(profile)
+        : `Investor ${id.slice(0, 8)}`,
+      publicProjectCount,
+      isFollowing: false,
+    };
+  });
+}

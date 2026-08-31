@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ProjectDetailClient } from "@/components/project-detail-client";
 import { listDeals } from "@/lib/deals";
 import { getProfile } from "@/lib/profile";
+import { getProjectAccess } from "@/lib/project-members";
 import { getProject } from "@/lib/projects";
 import {
   countProjectWatchers,
@@ -46,7 +47,9 @@ export default async function ProjectDetailPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  const isOwner = Boolean(user && user.id === project.owner_id);
+  const access = await getProjectAccess(supabase, project, user?.id);
+  const isOwner = access.role === "owner";
+  const canEdit = access.canEdit;
 
   const [watcherCount, ownerProfile, initialWatching, initialFollowing] =
     await Promise.all([
@@ -66,10 +69,10 @@ export default async function ProjectDetailPage({
   return (
     <div>
       <Link
-        href={isOwner ? "/projects" : "/home"}
+        href={isOwner || canEdit ? "/projects" : "/home"}
         className="text-textMuted text-sm hover:text-text"
       >
-        ← {isOwner ? "Projects" : "Home"}
+        ← {isOwner || canEdit ? "Projects" : "Home"}
       </Link>
       <ProjectDetailClient
         project={project}
@@ -77,6 +80,7 @@ export default async function ProjectDetailPage({
         initialLoadFailed={initialLoadFailed}
         subscriptionTier={profile?.subscription_tier ?? "free"}
         isOwner={isOwner}
+        canEdit={canEdit}
         initialWatching={initialWatching}
         initialFollowing={initialFollowing}
         watcherCount={watcherCount}

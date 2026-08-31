@@ -651,6 +651,9 @@ export function DealDetailClient({
         // URL only (+ short title). Passing `text` makes WhatsApp/Facebook
         // glue the blurb onto the path → 404 OG scrapes.
         await nav.share({ title, url: shareUrl });
+        alert(
+          "Shared. Recipients can Follow you from the link so you show up in Friends.",
+        );
         return;
       } catch {
         // fall through to clipboard
@@ -661,7 +664,7 @@ export function DealDetailClient({
       await navigator.clipboard.writeText(shareUrl ?? title);
       alert(
         shareUrl
-          ? "Share link copied — paste into WhatsApp, Telegram, or Messages."
+          ? "Share link copied — paste into WhatsApp, Telegram, or Messages. Recipients can Follow you from the link."
           : "Deal summary copied to clipboard.",
       );
     } catch {

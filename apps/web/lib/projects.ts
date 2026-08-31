@@ -14,6 +14,7 @@ function hydrate(row: ProjectsRow): ProjectRow {
     nightly_scout_enabled: row.nightly_scout_enabled ?? true,
     source_deal_id: row.source_deal_id ?? null,
     source_project_id: row.source_project_id ?? null,
+    collab_invite_token: row.collab_invite_token ?? null,
     constraints: ProjectConstraintsSchema.parse(row.constraints),
   };
 }

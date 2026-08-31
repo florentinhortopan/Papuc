@@ -6,7 +6,7 @@ import type { ProjectConstraints } from "@papuc/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
-  attachOwnerDisplayNames,
+  attachOwnerSocial,
   listFriendsFeedDeals,
   listPublicFeedPool,
   mergePublicIntoSpine,
@@ -20,6 +20,12 @@ import {
   type FeedTasteSummary,
 } from "./feed-spine";
 import { errorMessage } from "./error-message";
+import {
+  listSuggestedInvestors,
+  type SuggestedInvestor,
+} from "./social";
+
+export type { SuggestedInvestor };
 
 export type {
   FeedDeal,
@@ -59,6 +65,8 @@ export type PersonalizedFeed = {
   saved: FeedDeal[];
   skipped: FeedDeal[];
   friends: FeedDeal[];
+  /** Cold-start Follow targets when Friends is empty. */
+  suggestedInvestors: SuggestedInvestor[];
   taste: FeedTasteSummary | null;
   /** Present when public/Friends/profiles enrichment failed — spine still valid. */
   socialError?: string | null;
@@ -83,6 +91,7 @@ export async function listPersonalizedFeed(
   const spine = await buildSpineSections(supabase, userId);
 
   let friends: FeedDeal[] = [];
+  let suggestedInvestors: SuggestedInvestor[] = [];
   let socialError: string | null = null;
   let chips = {
     forYou: spine.forYou,
@@ -95,10 +104,12 @@ export async function listPersonalizedFeed(
   const social = await Promise.allSettled([
     listPublicFeedPool(supabase, userId),
     listFriendsFeedDeals(supabase, userId),
+    listSuggestedInvestors(supabase, userId),
   ]);
 
   const publicResult = social[0];
   const friendsResult = social[1];
+  const suggestionsResult = social[2];
 
   if (publicResult.status === "fulfilled") {
     chips = mergePublicIntoSpine(chips, publicResult.value);
@@ -113,10 +124,17 @@ export async function listPersonalizedFeed(
     socialError = socialError ? `${socialError}; ${msg}` : msg;
   }
 
+  if (suggestionsResult.status === "fulfilled") {
+    suggestedInvestors = suggestionsResult.value;
+  } else {
+    const msg = errorMessage(suggestionsResult.reason);
+    socialError = socialError ? `${socialError}; ${msg}` : msg;
+  }
+
   const nameSafe = async (deals: FeedDeal[]): Promise<FeedDeal[]> => {
     if (deals.length === 0) return deals;
     try {
-      return await attachOwnerDisplayNames(supabase, deals);
+      return await attachOwnerSocial(supabase, userId, deals);
     } catch (err) {
       const msg = errorMessage(err);
       socialError = socialError ? `${socialError}; ${msg}` : msg;
@@ -153,6 +171,7 @@ export async function listPersonalizedFeed(
     saved,
     skipped,
     friends: friendsNamed,
+    suggestedInvestors,
     taste: spine.taste,
     socialError,
   };

@@ -29,6 +29,8 @@ export type FeedDeal = DealsRow & {
   isNew?: boolean;
   tasteRank?: number;
   ownerDisplayName?: string | null;
+  /** Viewer currently follows this deal's project owner (public cards). */
+  isFollowingOwner?: boolean;
 };
 
 export type FeedTasteSummary = {

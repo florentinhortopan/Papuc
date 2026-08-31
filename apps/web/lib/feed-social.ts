@@ -109,6 +109,24 @@ export async function attachOwnerDisplayNames(
   });
 }
 
+/** Stamp display names + whether the viewer already follows each owner. */
+export async function attachOwnerSocial(
+  supabase: SupabaseClient,
+  viewerId: string,
+  deals: FeedDeal[],
+): Promise<FeedDeal[]> {
+  if (deals.length === 0) return deals;
+  const [named, followingIds] = await Promise.all([
+    attachOwnerDisplayNames(supabase, deals),
+    listFollowingIds(supabase, viewerId),
+  ]);
+  const following = new Set(followingIds);
+  return named.map((d) => ({
+    ...d,
+    isFollowingOwner: following.has(d.project.owner_id),
+  }));
+}
+
 /** Merge public deals into spine chip lists (deduped). Soft enrichment only. */
 export function mergePublicIntoSpine(
   spine: {

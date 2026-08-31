@@ -24,14 +24,19 @@ export async function POST(
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  // Verify the user owns the project before we use the admin client to bypass RLS.
-  const { data: ownedProject, error } = await supabase
+  // Owner or co-scout member may trigger a scout (admin client bypasses RLS).
+  const { data: project, error } = await supabase
     .from("projects")
-    .select("id")
+    .select("id, owner_id")
     .eq("id", id)
-    .eq("owner_id", user.id)
     .single();
-  if (error || !ownedProject) {
+  if (error || !project) {
+    return NextResponse.json({ error: "project not found" }, { status: 404 });
+  }
+
+  const { getProjectAccess } = await import("@/lib/project-members");
+  const access = await getProjectAccess(supabase, project, user.id);
+  if (!access.canEdit) {
     return NextResponse.json({ error: "project not found" }, { status: 404 });
   }
 

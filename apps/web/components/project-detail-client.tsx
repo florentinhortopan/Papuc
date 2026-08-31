@@ -23,6 +23,7 @@ import { ImportListingPanel } from "@/components/import-listing-panel";
 import { NightlyScoutToggle } from "@/components/nightly-scout-toggle";
 import { PublicFeedToggle } from "@/components/public-feed-toggle";
 import { FollowButton } from "@/components/follow-button";
+import { ProjectCollabPanel } from "@/components/project-collab-panel";
 import { WatchProjectButton } from "@/components/watch-project-button";
 import { ProLockedPanel } from "@/components/pro-locked-panel";
 import { Badge } from "@/components/ui/badge";
@@ -117,6 +118,7 @@ export function ProjectDetailClient({
   initialLoadFailed = false,
   subscriptionTier = "free",
   isOwner = true,
+  canEdit = true,
   initialWatching = false,
   initialFollowing = false,
   watcherCount = 0,
@@ -129,6 +131,8 @@ export function ProjectDetailClient({
   subscriptionTier?: SubscriptionTier;
   /** False when viewing someone else's public project (browse mode). */
   isOwner?: boolean;
+  /** Owner or co-scout member — can run scouts and act on deals. */
+  canEdit?: boolean;
   initialWatching?: boolean;
   initialFollowing?: boolean;
   watcherCount?: number;
@@ -669,6 +673,8 @@ export function ProjectDetailClient({
             >
               ✎
             </button>
+          ) : canEdit ? (
+            <Badge className="mt-2 shrink-0">Co-scout</Badge>
           ) : (
             <Badge className="mt-2 shrink-0">Public project</Badge>
           )}
@@ -892,7 +898,7 @@ export function ProjectDetailClient({
             </div>
           )}
 
-          {isOwner ? (
+          {canEdit ? (
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
                 <Button
@@ -949,6 +955,16 @@ export function ProjectDetailClient({
                   <p className="text-danger text-xs">{error}</p>
                 </div>
               ) : null}
+              {isOwner ? (
+                <ProjectCollabPanel
+                  projectId={project.id}
+                  subscriptionTier={subscriptionTier}
+                />
+              ) : (
+                <p className="text-textMuted text-xs">
+                  You&apos;re a co-scout — you can run scouts and act on deals.
+                </p>
+              )}
             </div>
           ) : (
             <div className="space-y-3">
@@ -994,9 +1010,9 @@ export function ProjectDetailClient({
           )}
 
           {/* Shelf + status on one wrapping line; no second "All" chip */}
-          {(isOwner || deals.length > 0) && (
+          {(canEdit || deals.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-border">
-              {isOwner
+              {canEdit
                 ? SHELF_CHIPS.map((chip) => (
                     <button
                       key={chip.id}
@@ -1081,7 +1097,7 @@ export function ProjectDetailClient({
           {actionNote ? (
             <p className="text-textMuted text-xs mb-3">{actionNote}</p>
           ) : null}
-          {!isOwner && error ? (
+          {!canEdit && error ? (
             <div className="bg-danger/10 border border-danger/30 rounded-xl p-3 mb-3">
               <p className="text-danger text-xs">{error}</p>
             </div>

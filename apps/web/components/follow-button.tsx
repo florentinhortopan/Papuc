@@ -9,10 +9,12 @@ export function FollowButton({
   userId,
   initialFollowing,
   className,
+  onChange,
 }: {
   userId: string;
   initialFollowing: boolean;
   className?: string;
+  onChange?: (following: boolean) => void;
 }) {
   const [following, setFollowing] = useState(initialFollowing);
   const [busy, setBusy] = useState(false);
@@ -30,6 +32,7 @@ export function FollowButton({
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(json.error ?? "follow failed");
+      onChange?.(next);
       router.refresh();
     } catch (err) {
       setFollowing(!next);
