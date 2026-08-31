@@ -11,7 +11,7 @@ export const LEGAL_VERSION = "2026-08-31";
 
 export const LEGAL_EFFECTIVE_DATE = "August 31, 2026";
 
-export const LEGAL_CONTACT_EMAIL = "de.barbatosf@gmail.com";
+export const LEGAL_CONTACT_EMAIL = "support@papuc.app";
 
 export type LegalDocId = "terms" | "privacy" | "acceptable-use" | "data-disclaimer";
 

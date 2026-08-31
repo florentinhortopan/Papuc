@@ -86,7 +86,7 @@ Berkeley.xlsx               Source-of-truth pro-forma model
    - `ANTHROPIC_API_KEY` (and optionally `ANTHROPIC_MODEL`)
    - `CRON_SECRET` (any random string, e.g. `openssl rand -hex 32`)
    - `ADMIN_EMAILS` (comma-separated operator emails for `/admin`, e.g.
-     `florentinhortopan@gmail.com`)
+     `you@example.com`)
    - `NEXT_PUBLIC_SITE_URL=http://localhost:3000`
 6. **Install + dev**:
    ```bash

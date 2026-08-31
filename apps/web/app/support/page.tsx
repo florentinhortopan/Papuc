@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { LEGAL_CONTACT_EMAIL } from "@/lib/legal";
 import { PAGE_DESCRIPTIONS, SITE_FAQ } from "@/lib/site-meta";
 
 export const metadata: Metadata = {
@@ -15,9 +16,9 @@ export default function SupportPage() {
         Need help with Papuc web or the iOS app (TestFlight)? Email{" "}
         <a
           className="text-violet-400 underline"
-          href="mailto:de.barbatosf@gmail.com"
+          href={`mailto:${LEGAL_CONTACT_EMAIL}`}
         >
-          de.barbatosf@gmail.com
+          {LEGAL_CONTACT_EMAIL}
         </a>{" "}
         or open an issue in the product chat with screenshots of the Debug
         footer (API URL, build, error).
