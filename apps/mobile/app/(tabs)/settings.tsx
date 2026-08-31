@@ -15,6 +15,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Card } from "@/components/Card";
 import { DebugFooter } from "@/components/DebugFooter";
 import { UpgradeSheet } from "@/components/UpgradeSheet";
+import { UserAvatar } from "@/components/UserAvatar";
 import { useAuth } from "@/lib/auth";
 import { apiBaseUrl } from "@/lib/api";
 import { setLastError } from "@/lib/debug";
@@ -117,6 +118,17 @@ export default function Settings() {
               <Text className="text-sm text-primary">View public profile →</Text>
             </Pressable>
           ) : null}
+        </Card>
+
+        <Card className="mb-3">
+          <Text className="mb-3 text-xs text-textMuted">Profile photo</Text>
+          <View className="flex-row items-center gap-3">
+            <UserAvatar url={profile?.avatar_url} size="lg" />
+            <Text className="flex-1 text-xs leading-5 text-textMuted">
+              Upload or change your photo on papuc.app → Settings. Without a
+              photo, friends see the Papuc slipper mark.
+            </Text>
+          </View>
         </Card>
 
         <Card className="mb-3">
