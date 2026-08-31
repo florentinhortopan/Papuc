@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { DealDetailClient } from "@/components/deal-detail-client";
+import { UserAvatar } from "@/components/user-avatar";
 import { getDeal } from "@/lib/deals";
 import { getProfile } from "@/lib/profile";
 import { getProject } from "@/lib/projects";
@@ -80,8 +81,13 @@ export default async function DealDetailPage({
         {!isOwner ? (
           <Link
             href={`/u/${project.owner_id}`}
-            className="text-primary text-sm hover:underline"
+            className="inline-flex items-center gap-1.5 text-primary text-sm hover:underline"
           >
+            <UserAvatar
+              url={ownerProfile?.avatar_url}
+              name={ownerDisplayName}
+              size="xs"
+            />
             {ownerDisplayName ?? "Investor"}
           </Link>
         ) : null}
