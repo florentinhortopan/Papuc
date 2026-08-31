@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
+import { AppAccessGates } from "@/components/app-access-gates";
 import { AppNav } from "@/components/app-nav";
-import { OnboardingDialog } from "@/components/onboarding-dialog";
 import { isAdminEmail } from "@/lib/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -20,7 +20,7 @@ export default async function AppLayout({
     <div className="min-h-screen flex flex-col">
       <AppNav showAdmin={isAdminEmail(user.email)} />
       <main className="flex-1 container py-6">{children}</main>
-      <OnboardingDialog />
+      <AppAccessGates />
     </div>
   );
 }

@@ -21,6 +21,10 @@ export type ProfileRow = {
   subscription_tier: SubscriptionTier;
   subscription_renews_at: string | null;
   onboarded_at: string | null;
+  /** When the user last accepted Terms + Privacy + AUP. */
+  legal_accepted_at: string | null;
+  /** LEGAL_VERSION from apps/web/lib/legal.ts at acceptance time. */
+  legal_version: string | null;
   /**
    * When true, opening a deal page auto-starts Catch the catch unless a
    * complete estimate is already cached on the deal.
@@ -51,6 +55,8 @@ export type ProjectsRow = {
   is_public: boolean;
   /** Unguessable slug for /share/p/[token]. Null until first project share. */
   share_token: string | null;
+  /** Unguessable slug for /invite/[token] co-scout links. Null until Pro mints. */
+  collab_invite_token: string | null;
   /** Deal that inspired this project via Scout like this. */
   source_deal_id: string | null;
   /** Source project when forked via Scout like this. */

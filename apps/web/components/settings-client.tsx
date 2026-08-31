@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { SignOutButton } from "@/components/sign-out-button";
@@ -7,6 +8,7 @@ import { UpgradeDialog } from "@/components/upgrade-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { SubscriptionTier } from "@/lib/database.types";
+import { LEGAL_VERSION } from "@/lib/legal";
 import { updateProfileSettings } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/client";
 
@@ -19,6 +21,8 @@ export function SettingsClient({
   nightlyScoutsPaused: initialNightlyPaused,
   emailDigestsEnabled: initialEmailDigests,
   isAdmin = false,
+  legalAcceptedAt = null,
+  legalVersion = null,
 }: {
   email: string | null;
   tier: SubscriptionTier;
@@ -32,6 +36,8 @@ export function SettingsClient({
   emailDigestsEnabled: boolean;
   /** True when session email is in ADMIN_EMAILS. */
   isAdmin?: boolean;
+  legalAcceptedAt?: string | null;
+  legalVersion?: string | null;
 }) {
   const isPro = tier === "pro";
   const [showUpgrade, setShowUpgrade] = useState(false);
@@ -229,6 +235,37 @@ export function SettingsClient({
       {error ? (
         <p className="text-danger text-xs mt-2 mb-2">{error}</p>
       ) : null}
+
+      <p className="text-textMuted text-xs font-semibold uppercase tracking-wide mb-2 mt-5">
+        Legal
+      </p>
+      <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
+        <p className="text-textMuted text-xs">
+          {legalAcceptedAt
+            ? `Accepted version ${legalVersion ?? "—"} on ${new Date(legalAcceptedAt).toLocaleDateString()}`
+            : "Not yet accepted"}
+          {legalVersion && legalVersion !== LEGAL_VERSION
+            ? ` · Current site version is ${LEGAL_VERSION}`
+            : null}
+        </p>
+        <nav className="mt-3 flex flex-col gap-2 text-sm">
+          <Link href="/terms" className="text-primary hover:underline">
+            Terms of Service
+          </Link>
+          <Link href="/privacy" className="text-primary hover:underline">
+            Privacy Policy
+          </Link>
+          <Link href="/acceptable-use" className="text-primary hover:underline">
+            Acceptable Use Policy
+          </Link>
+          <Link
+            href="/data-disclaimer"
+            className="text-primary hover:underline"
+          >
+            Data &amp; Listings Disclaimer
+          </Link>
+        </nav>
+      </div>
 
       <div className="mt-6">
         <SignOutButton />

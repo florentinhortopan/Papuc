@@ -29,6 +29,8 @@ export default async function SettingsPage() {
       nightlyScoutsPaused={profile?.nightly_scouts_paused ?? false}
       emailDigestsEnabled={profile?.email_digests_enabled ?? true}
       isAdmin={isAdminEmail(user?.email)}
+      legalAcceptedAt={profile?.legal_accepted_at ?? null}
+      legalVersion={profile?.legal_version ?? null}
     />
   );
 }

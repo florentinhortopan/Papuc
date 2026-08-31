@@ -30,7 +30,7 @@ apps/web/                   Next.js web app (primary, deployed on Vercel)
   components/ui/            Button, Card, Input, Label, Badge, Dialog, Field
   components/               DealCard, DscrBadge, PhotoCarousel (embla),
                             CashflowChart (recharts), StrMatrix, ComparablesPanel,
-                            OnboardingDialog, UpgradeDialog, app shell
+                            AppAccessGates (legal + onboarding), UpgradeDialog, app shell
   lib/supabase/             server / client / admin / middleware
   lib/                      projects, deals, profile, comparables, format,
                             export (browser CSV), lenders, scouting (server),

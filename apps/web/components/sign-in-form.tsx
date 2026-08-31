@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
@@ -29,6 +30,7 @@ const GoogleLogo = () => (
 
 export function SignInForm() {
   const params = useSearchParams();
+  const [agreed, setAgreed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(() =>
     params.get("error") === "auth_callback_failed"
@@ -39,6 +41,10 @@ export function SignInForm() {
   const next = params.get("next") ?? "/home";
 
   async function signInWithGoogle() {
+    if (!agreed) {
+      setError("Please agree to the Terms, Privacy Policy, and Acceptable Use Policy to continue.");
+      return;
+    }
     setError(null);
     setSubmitting(true);
     try {
@@ -62,11 +68,52 @@ export function SignInForm() {
 
   return (
     <div className="flex flex-col gap-3">
+      <label className="flex gap-3 items-start cursor-pointer rounded-xl border border-border bg-background/50 p-3">
+        <input
+          type="checkbox"
+          className="mt-0.5 size-4 shrink-0 rounded border-border"
+          checked={agreed}
+          onChange={(e) => setAgreed(e.target.checked)}
+        />
+        <span className="text-textMuted text-xs leading-5">
+          I agree to the{" "}
+          <Link href="/terms" className="text-primary underline" target="_blank">
+            Terms of Service
+          </Link>
+          ,{" "}
+          <Link
+            href="/privacy"
+            className="text-primary underline"
+            target="_blank"
+          >
+            Privacy Policy
+          </Link>
+          , and{" "}
+          <Link
+            href="/acceptable-use"
+            className="text-primary underline"
+            target="_blank"
+          >
+            Acceptable Use Policy
+          </Link>
+          . See also our{" "}
+          <Link
+            href="/data-disclaimer"
+            className="text-primary underline"
+            target="_blank"
+          >
+            Data &amp; Listings Disclaimer
+          </Link>
+          .
+        </span>
+      </label>
+
       <Button
         variant="secondary"
         size="lg"
         onClick={signInWithGoogle}
         loading={submitting}
+        disabled={!agreed}
         className="w-full"
       >
         <GoogleLogo />

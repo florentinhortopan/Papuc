@@ -34,7 +34,18 @@ export default function SignInPage() {
 
         <p className="text-textMuted text-[11px] text-center mt-6 leading-5">
           Deal scenarios on Papuc are evaluation estimates, not lender quotes.
-          Always verify with a licensed DSCR lender before offering.
+          Always verify with a licensed DSCR lender before offering.{" "}
+          <a href="/terms" className="underline hover:text-text">
+            Terms
+          </a>
+          {" · "}
+          <a href="/privacy" className="underline hover:text-text">
+            Privacy
+          </a>
+          {" · "}
+          <a href="/data-disclaimer" className="underline hover:text-text">
+            Data disclaimer
+          </a>
         </p>
       </div>
     </main>

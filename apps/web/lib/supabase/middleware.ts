@@ -8,7 +8,11 @@ const PUBLIC_PREFIXES = [
   "/auth/callback",
   "/api",
   "/share",
+  "/invite",
   "/privacy",
+  "/terms",
+  "/acceptable-use",
+  "/data-disclaimer",
   "/support",
 ];
 
