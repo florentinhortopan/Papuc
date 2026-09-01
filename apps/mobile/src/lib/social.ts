@@ -103,7 +103,17 @@ export async function getPublicProfile(
     .select("id, display_name, avatar_url, subscription_tier, created_at")
     .eq("id", userId)
     .maybeSingle();
-  if (error) throw error;
+  if (error) {
+    // Partial migration: view may not expose avatar_url yet.
+    const basic = await supabase
+      .from("public_profiles")
+      .select("id, display_name, subscription_tier, created_at")
+      .eq("id", userId)
+      .maybeSingle();
+    if (basic.error) throw basic.error;
+    if (!basic.data) return null;
+    return { ...(basic.data as Omit<PublicProfile, "avatar_url">), avatar_url: null };
+  }
   if (!data) return null;
   return data as PublicProfile;
 }

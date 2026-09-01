@@ -47,21 +47,47 @@ export default async function ProjectDetailPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  const access = await getProjectAccess(supabase, project, user?.id);
+  let access: Awaited<ReturnType<typeof getProjectAccess>> = {
+    role: null,
+    canEdit: false,
+    canManage: false,
+    isMember: false,
+  };
+  try {
+    access = await getProjectAccess(supabase, project, user?.id);
+  } catch {
+    // Collab/membership lookup must not blank the deals grid.
+    if (user?.id === project.owner_id) {
+      access = {
+        role: "owner",
+        canEdit: true,
+        canManage: true,
+        isMember: false,
+      };
+    }
+  }
   const isOwner = access.role === "owner";
   const canEdit = access.canEdit;
 
-  const [watcherCount, ownerProfile, initialWatching, initialFollowing] =
-    await Promise.all([
-      countProjectWatchers(supabase, project.id),
-      getPublicProfile(supabase, project.owner_id),
-      user && !isOwner
-        ? isWatchingProject(supabase, project.id, user.id)
-        : Promise.resolve(false),
-      user && !isOwner
-        ? isFollowingUser(supabase, user.id, project.owner_id)
-        : Promise.resolve(false),
-    ]);
+  let watcherCount = 0;
+  let ownerProfile: Awaited<ReturnType<typeof getPublicProfile>> = null;
+  let initialWatching = false;
+  let initialFollowing = false;
+  try {
+    [watcherCount, ownerProfile, initialWatching, initialFollowing] =
+      await Promise.all([
+        countProjectWatchers(supabase, project.id),
+        getPublicProfile(supabase, project.owner_id),
+        user && !isOwner
+          ? isWatchingProject(supabase, project.id, user.id)
+          : Promise.resolve(false),
+        user && !isOwner
+          ? isFollowingUser(supabase, user.id, project.owner_id)
+          : Promise.resolve(false),
+      ]);
+  } catch {
+    // Social enrichment must not block the deals grid.
+  }
   const ownerDisplayName = ownerProfile
     ? publicDisplayName(ownerProfile)
     : null;
