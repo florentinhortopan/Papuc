@@ -59,12 +59,20 @@ export default async function DealDetailPage({
     data: { user },
   } = await supabase.auth.getUser();
   const isOwner = Boolean(user && user.id === project.owner_id);
-  const [ownerProfile, initialFollowing] = await Promise.all([
-    getPublicProfile(supabase, project.owner_id),
-    user && !isOwner
-      ? isFollowingUser(supabase, user.id, project.owner_id)
-      : Promise.resolve(false),
-  ]);
+  let ownerProfile: Awaited<ReturnType<typeof getPublicProfile>> = null;
+  let initialFollowing = false;
+  try {
+    [ownerProfile, initialFollowing] = await Promise.all([
+      getPublicProfile(supabase, project.owner_id),
+      user && !isOwner
+        ? isFollowingUser(supabase, user.id, project.owner_id)
+        : Promise.resolve(false),
+    ]);
+  } catch {
+    // Social enrichment must not block deal underwriting.
+    ownerProfile = null;
+    initialFollowing = false;
+  }
   const ownerDisplayName = ownerProfile
     ? publicDisplayName(ownerProfile)
     : null;

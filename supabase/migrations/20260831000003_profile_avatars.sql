@@ -13,9 +13,9 @@ as
 select
   id,
   display_name,
-  avatar_url,
   subscription_tier,
-  created_at
+  created_at,
+  avatar_url
 from public.profiles;
 
 comment on view public.public_profiles is

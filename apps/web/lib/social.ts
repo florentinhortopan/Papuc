@@ -33,14 +33,29 @@ export async function getPublicProfile(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<PublicProfile | null> {
-  const { data, error } = await supabase
-    .from("public_profiles")
-    .select("id, display_name, avatar_url, subscription_tier, created_at")
-    .eq("id", userId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) return null;
-  return data as PublicProfile;
+  try {
+    const withAvatar = await supabase
+      .from("public_profiles")
+      .select("id, display_name, avatar_url, subscription_tier, created_at")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (!withAvatar.error) {
+      if (!withAvatar.data) return null;
+      return normalizePublicProfile(withAvatar.data);
+    }
+
+    // Fallback when avatar_url is not on the view yet (partial migration).
+    const basic = await supabase
+      .from("public_profiles")
+      .select("id, display_name, subscription_tier, created_at")
+      .eq("id", userId)
+      .maybeSingle();
+    if (basic.error || !basic.data) return null;
+    return normalizePublicProfile(basic.data);
+  } catch {
+    return null;
+  }
 }
 
 export async function getPublicProfiles(
@@ -50,15 +65,50 @@ export async function getPublicProfiles(
   const unique = [...new Set(userIds.filter(Boolean))];
   const map = new Map<string, PublicProfile>();
   if (unique.length === 0) return map;
-  const { data, error } = await supabase
-    .from("public_profiles")
-    .select("id, display_name, avatar_url, subscription_tier, created_at")
-    .in("id", unique);
-  if (error) throw error;
-  for (const row of (data ?? []) as PublicProfile[]) {
-    map.set(row.id, row);
+
+  try {
+    const withAvatar = await supabase
+      .from("public_profiles")
+      .select("id, display_name, avatar_url, subscription_tier, created_at")
+      .in("id", unique);
+
+    if (!withAvatar.error) {
+      for (const row of withAvatar.data ?? []) {
+        const profile = normalizePublicProfile(row);
+        map.set(profile.id, profile);
+      }
+      return map;
+    }
+
+    const basic = await supabase
+      .from("public_profiles")
+      .select("id, display_name, subscription_tier, created_at")
+      .in("id", unique);
+    if (basic.error) return map;
+    for (const row of basic.data ?? []) {
+      const profile = normalizePublicProfile(row);
+      map.set(profile.id, profile);
+    }
+  } catch {
+    /* never block deal/project pages on social identity */
   }
   return map;
+}
+
+function normalizePublicProfile(row: {
+  id: string;
+  display_name: string | null;
+  subscription_tier: SubscriptionTier | string;
+  created_at: string;
+  avatar_url?: string | null;
+}): PublicProfile {
+  return {
+    id: row.id,
+    display_name: row.display_name,
+    avatar_url: row.avatar_url ?? null,
+    subscription_tier: row.subscription_tier as SubscriptionTier,
+    created_at: row.created_at,
+  };
 }
 
 export async function getInvestorProfile(
