@@ -361,6 +361,34 @@ const AVATAR_TYPES = new Set([
   "image/gif",
 ]);
 
+function resolveAvatarContentType(file: File): string | null {
+  if (AVATAR_TYPES.has(file.type)) return file.type;
+  if (file.type === "image/jpg") return "image/jpeg";
+  // Mobile browsers often omit `type` — infer from the filename.
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".gif")) return "image/gif";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  return null;
+}
+
+function avatarExt(contentType: string): string {
+  if (contentType === "image/png") return "png";
+  if (contentType === "image/webp") return "webp";
+  if (contentType === "image/gif") return "gif";
+  return "jpg";
+}
+
+function asError(err: unknown, fallback: string): Error {
+  if (err instanceof Error && err.message.trim()) return err;
+  if (err && typeof err === "object" && "message" in err) {
+    const msg = String((err as { message?: unknown }).message ?? "").trim();
+    if (msg) return new Error(msg);
+  }
+  return new Error(fallback);
+}
+
 /**
  * Upload a square-ish profile photo to the public `avatars` bucket and
  * persist `profiles.avatar_url`. Replaces any prior object for this user.
@@ -371,47 +399,66 @@ export async function uploadProfileAvatar(
 ): Promise<string> {
   const userId = (await supabase.auth.getUser()).data.user?.id;
   if (!userId) throw new Error("not signed in");
-  if (!AVATAR_TYPES.has(file.type)) {
-    throw new Error("Use a JPEG, PNG, WebP, or GIF image");
+
+  const contentType = resolveAvatarContentType(file);
+  if (!contentType) {
+    throw new Error(
+      "Use a JPEG, PNG, WebP, or GIF (iPhone HEIC photos need to be converted first).",
+    );
   }
   if (file.size > AVATAR_MAX_BYTES) {
     throw new Error("Image must be under 2 MB");
   }
 
-  const ext =
-    file.type === "image/png"
-      ? "png"
-      : file.type === "image/webp"
-        ? "webp"
-        : file.type === "image/gif"
-          ? "gif"
-          : "jpg";
+  const ext = avatarExt(contentType);
   const path = `${userId}/avatar.${ext}`;
+  const stalePaths = [
+    `${userId}/avatar.jpg`,
+    `${userId}/avatar.jpeg`,
+    `${userId}/avatar.png`,
+    `${userId}/avatar.webp`,
+    `${userId}/avatar.gif`,
+  ];
 
-  // Clear other extensions so we don't leave stale objects.
-  await supabase.storage
-    .from("avatars")
-    .remove([
-      `${userId}/avatar.jpg`,
-      `${userId}/avatar.jpeg`,
-      `${userId}/avatar.png`,
-      `${userId}/avatar.webp`,
-      `${userId}/avatar.gif`,
-    ]);
+  // Best-effort cleanup of other extensions; ignore missing/denied removes.
+  await supabase.storage.from("avatars").remove(stalePaths);
 
   const { error: upErr } = await supabase.storage
     .from("avatars")
-    .upload(path, file, { upsert: true, contentType: file.type, cacheControl: "3600" });
-  if (upErr) throw upErr;
+    .upload(path, file, {
+      upsert: true,
+      contentType,
+      cacheControl: "3600",
+    });
+  if (upErr) {
+    const msg = upErr.message || "Upload failed";
+    if (/bucket not found/i.test(msg)) {
+      throw new Error(
+        "Avatar storage isn’t set up yet — apply the avatars migration in Supabase.",
+      );
+    }
+    if (/row-level security|rls|not allowed|unauthorized|403/i.test(msg)) {
+      throw new Error(
+        "Couldn’t write to avatar storage (permission). Check avatars bucket policies.",
+      );
+    }
+    throw asError(upErr, "Upload failed");
+  }
 
   const { data } = supabase.storage.from("avatars").getPublicUrl(path);
+  // Cache-bust so the same path shows the new image immediately.
   const url = `${data.publicUrl}?v=${Date.now()}`;
 
   const { error } = await supabase
     .from("profiles")
     .update({ avatar_url: url })
     .eq("id", userId);
-  if (error) throw error;
+  if (error) {
+    throw asError(
+      error,
+      "Photo uploaded but profile couldn’t be updated. Try again.",
+    );
+  }
   return url;
 }
 
@@ -420,18 +467,16 @@ export async function clearProfileAvatar(
 ): Promise<void> {
   const userId = (await supabase.auth.getUser()).data.user?.id;
   if (!userId) throw new Error("not signed in");
-  await supabase.storage
-    .from("avatars")
-    .remove([
-      `${userId}/avatar.jpg`,
-      `${userId}/avatar.jpeg`,
-      `${userId}/avatar.png`,
-      `${userId}/avatar.webp`,
-      `${userId}/avatar.gif`,
-    ]);
+  await supabase.storage.from("avatars").remove([
+    `${userId}/avatar.jpg`,
+    `${userId}/avatar.jpeg`,
+    `${userId}/avatar.png`,
+    `${userId}/avatar.webp`,
+    `${userId}/avatar.gif`,
+  ]);
   const { error } = await supabase
     .from("profiles")
     .update({ avatar_url: null })
     .eq("id", userId);
-  if (error) throw error;
+  if (error) throw asError(error, "Couldn’t clear profile photo");
 }

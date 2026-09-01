@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { PapucMark } from "@/components/papuc-mark";
 import { cn } from "@/lib/utils";
 
@@ -30,14 +32,17 @@ export function UserAvatar({
   size?: keyof typeof SIZE;
   className?: string;
 }) {
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
   const label = (name ?? "Papuc investor").trim() || "Papuc investor";
+  const showImage = Boolean(url) && brokenUrl !== url;
 
-  if (url) {
+  if (showImage) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={url}
+        src={url!}
         alt={label}
+        onError={() => setBrokenUrl(url!)}
         className={cn(
           SIZE[size],
           "shrink-0 rounded-full object-cover border border-border/60 bg-surfaceAlt",

@@ -55,6 +55,7 @@ export function SettingsClient({
   const [emailDigests, setEmailDigests] = useState(initialEmailDigests);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function persist(
@@ -123,13 +124,19 @@ export function SettingsClient({
   async function onAvatarPicked(file: File | undefined) {
     if (!file) return;
     setSavingKey("avatar");
-    setError(null);
+    setAvatarError(null);
     try {
       const supabase = createClient();
       const url = await uploadProfileAvatar(supabase, file);
       setAvatarUrl(url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message =
+        err instanceof Error
+          ? err.message
+          : err && typeof err === "object" && "message" in err
+            ? String((err as { message: unknown }).message)
+            : String(err);
+      setAvatarError(message || "Upload failed");
     } finally {
       setSavingKey(null);
       if (fileRef.current) fileRef.current.value = "";
@@ -138,7 +145,7 @@ export function SettingsClient({
 
   async function removeAvatar() {
     setSavingKey("avatar");
-    setError(null);
+    setAvatarError(null);
     const prev = avatarUrl;
     setAvatarUrl(null);
     try {
@@ -146,7 +153,7 @@ export function SettingsClient({
       await clearProfileAvatar(supabase);
     } catch (err) {
       setAvatarUrl(prev);
-      setError(err instanceof Error ? err.message : String(err));
+      setAvatarError(err instanceof Error ? err.message : String(err));
     } finally {
       setSavingKey(null);
     }
@@ -192,7 +199,7 @@ export function SettingsClient({
             <input
               ref={fileRef}
               type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
+              accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif"
               className="hidden"
               onChange={(e) => void onAvatarPicked(e.target.files?.[0])}
             />
@@ -216,11 +223,15 @@ export function SettingsClient({
               </button>
             ) : (
               <p className="text-textMuted text-xs leading-5">
-                Without a photo, friends see the Papuc slipper mark.
+                JPEG, PNG, WebP, or GIF under 2 MB. Without a photo, friends see
+                the Papuc slipper mark.
               </p>
             )}
           </div>
         </div>
+        {avatarError ? (
+          <p className="text-danger text-xs mt-3">{avatarError}</p>
+        ) : null}
       </div>
 
       <div className="bg-surface border border-border rounded-2xl p-4 mb-3">
